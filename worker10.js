@@ -1,5 +1,4 @@
 const { createClient } = require('@supabase/supabase-js');
-const WebSocket = require('ws');
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
@@ -12,11 +11,9 @@ if (!supabaseUrl || !supabaseKey) {
   process.exit(1);
 }
 
-// Create Supabase client with WebSocket transport for Node.js
+// Disable realtime – we don't need WebSocket for polling
 const supabase = createClient(supabaseUrl, supabaseKey, {
-  realtime: {
-    webSocketConstructor: WebSocket  // 👈 critical fix for Node.js
-  }
+  realtime: { enabled: false }
 });
 
 async function processJobs() {
