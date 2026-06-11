@@ -1,4 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
+const WebSocket = require('ws');
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
@@ -11,9 +12,11 @@ if (!supabaseUrl || !supabaseKey) {
   process.exit(1);
 }
 
-// Disable realtime – we don't need WebSocket for polling
+// Pass WebSocket constructor to supabase client
 const supabase = createClient(supabaseUrl, supabaseKey, {
-  realtime: { enabled: false }
+  realtime: {
+    webSocketConstructor: WebSocket
+  }
 });
 
 async function processJobs() {
@@ -41,7 +44,6 @@ async function processJobs() {
     const job = jobs[0];
     console.log(`Processing job ${job.id} for quiz ${job.quiz_id}`);
 
-    // Mark as processing
     await supabase
       .from('quiz_queue')
       .update({ status: 'processing', started_at: new Date().toISOString() })
@@ -52,7 +54,6 @@ async function processJobs() {
       console.log('Rendering video (simulated)...');
       await new Promise(resolve => setTimeout(resolve, 10000));
       
-      // Mark as completed
       await supabase
         .from('quiz_queue')
         .update({ status: 'completed', completed_at: new Date().toISOString() })
