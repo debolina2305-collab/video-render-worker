@@ -27,8 +27,15 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-    - name: Run video worker
-  env:
-    SUPABASE_URL: ${{ vars.SUPABASE_URL }}
-    SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-  run: node worker10.js
+      - name: Debug environment (show what secrets/vars are set)
+        run: |
+          echo "SUPABASE_URL secret is set? ${{ secrets.SUPABASE_URL != '' && 'YES' || 'NO' }}"
+          echo "SUPABASE_SERVICE_KEY secret is set? ${{ secrets.SUPABASE_SERVICE_KEY != '' && 'YES' || 'NO' }}"
+          echo "SUPABASE_URL variable is set? ${{ vars.SUPABASE_URL != '' && 'YES' || 'NO' }}"
+
+      - name: Run video worker
+        env:
+          # Try secret first, fallback to variable if secret not set
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node worker10.js
