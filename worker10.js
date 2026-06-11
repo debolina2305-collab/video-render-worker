@@ -1,34 +1,67 @@
-name: Video Render Worker
+const { createClient } = require('@supabase/supabase-js');
 
-on:
-  schedule:
-    - cron: '*/5 * * * *'
-  workflow_dispatch:
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
-jobs:
-  render:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+console.log('SUPABASE_URL exists?', !!supabaseUrl);
+console.log('SUPABASE_SERVICE_KEY exists?', !!supabaseKey);
 
-      - name: Install FFmpeg and Python (for TTS)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg python3 python3-pip
-          pip3 install edge-tts
+if (!supabaseUrl || !supabaseKey) {
+  console.error('Missing Supabase credentials');
+  process.exit(1);
+}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-      - name: Install dependencies
-        run: npm install
+async function processJobs() {
+  console.log('Checking for pending video jobs...');
+  
+  const { data: jobs, error } = await supabase
+    .from('quiz_queue')
+    .select('*')
+    .eq('job_type', 'video_render')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true })
+    .limit(1);
 
-      - name: Run video worker
-        env:
-          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: node worker10.js
+  if (error) {
+    console.error('Database error:', error);
+    return;
+  }
+
+  if (!jobs || jobs.length === 0) {
+    console.log('No pending jobs');
+    return;
+  }
+
+  const job = jobs[0];
+  console.log(`Processing job ${job.id} for quiz ${job.quiz_id}`);
+
+  await supabase
+    .from('quiz_queue')
+    .update({ status: 'processing', started_at: new Date().toISOString() })
+    .eq('id', job.id);
+
+  try {
+    console.log('Rendering video (simulated)...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
+    
+    await supabase
+      .from('quiz_queue')
+      .update({ status: 'completed', completed_at: new Date().toISOString() })
+      .eq('id', job.id);
+      
+    console.log(`Job ${job.id} completed successfully`);
+  } catch (err) {
+    console.error(`Job ${job.id} failed:`, err);
+    await supabase
+      .from('quiz_queue')
+      .update({ status: 'failed', last_error: err.message })
+      .eq('id', job.id);
+  }
+}
+
+processJobs().then(() => {
+  console.log('Worker finished this run');
+  process.exit(0);
+});
