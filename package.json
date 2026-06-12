@@ -1,8 +1,6 @@
 {
   "name": "quiz-video-worker",
   "version": "1.0.0",
-  "description": "Renders quiz videos from database queue",
-  "main": "worker10.js",
   "scripts": {
     "start": "node worker10.js"
   },
