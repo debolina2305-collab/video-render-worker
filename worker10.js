@@ -51,25 +51,45 @@ async function fetchSupabase(path, options = {}) {
 }
 
 // ========================
-// Audio utilities
+// Audio utilities with retry and fallback
 // ========================
 async function getAudioDuration(file) {
   const { stdout } = await execPromise(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${file}"`);
   return parseFloat(stdout.trim());
 }
 
-async function tts(text, voice, outPath, fallbackSec = 1) {
-  if (!text?.trim()) {
-    await execPromise(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${fallbackSec} -q:a 9 -acodec libmp3lame "${outPath}"`);
-    return;
-  }
-  const tmp = outPath + '.txt';
-  await fs.writeFile(tmp, text, 'utf8');
-  await execPromise(`edge-tts --voice "${voice}" --file "${tmp}" --write-media "${outPath}"`);
-  await fs.unlink(tmp).catch(() => {});
+async function generateSilentAudio(outputPath, durationSec = 1) {
+  await execPromise(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${durationSec} -q:a 9 -acodec libmp3lame "${outputPath}"`);
 }
 
-// Fixed phrase cache
+async function ttsWithFallback(text, voice, outPath, fallbackSec = 2) {
+  if (!text?.trim()) {
+    await generateSilentAudio(outPath, fallbackSec);
+    return;
+  }
+
+  const maxRetries = 3;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const tmp = outPath + '.txt';
+      await fs.writeFile(tmp, text, 'utf8');
+      await execPromise(`edge-tts --voice "${voice}" --file "${tmp}" --write-media "${outPath}"`);
+      await fs.unlink(tmp).catch(() => {});
+      console.log(`TTS succeeded for: ${text.substring(0, 50)}...`);
+      return; // success
+    } catch (err) {
+      console.warn(`TTS attempt ${attempt} failed: ${err.message}`);
+      if (attempt === maxRetries) {
+        console.warn(`Falling back to silent audio for: ${text.substring(0, 50)}...`);
+        await generateSilentAudio(outPath, fallbackSec);
+      } else {
+        await new Promise(r => setTimeout(r, 2000 * attempt)); // exponential backoff
+      }
+    }
+  }
+}
+
+// Fixed phrase cache (still uses ttsWithFallback)
 const FIXED_DIR = '/tmp/fixed_audio';
 async function getFixedPhrase(key, text, voice) {
   await fs.mkdir(FIXED_DIR, { recursive: true });
@@ -78,7 +98,7 @@ async function getFixedPhrase(key, text, voice) {
     await fs.access(cachePath);
     return cachePath;
   } catch {
-    await tts(text, voice, cachePath);
+    await ttsWithFallback(text, voice, cachePath);
     return cachePath;
   }
 }
@@ -90,7 +110,6 @@ function getUniqueBackgroundCSS(quiz) {
   if (quiz.quiz_background_css && quiz.quiz_background_css.trim()) {
     return quiz.quiz_background_css;
   }
-  // generate random gradient + subtle pattern
   const hue1 = Math.floor(Math.random() * 360);
   const hue2 = (hue1 + 40) % 360;
   const hue3 = (hue1 + 80) % 360;
@@ -123,13 +142,11 @@ async function buildHTML(quiz, qIdx, workDir, lang, thinkingTimeSec, engagementT
   const options = quiz[`options_${qIdx}`] || [];
   const correct = quiz[`correct_answer_${qIdx}`] || '';
   const hint = quiz[`hint_${qIdx}`] || '';
-  const keep5050 = quiz[`keep_5050_${qIdx}`] || []; // indices to KEEP (0‑3)
+  const keep5050 = quiz[`keep_5050_${qIdx}`] || [];
   const eliminateIdx = [0,1,2,3].filter(i => !keep5050.includes(i) && !keep5050.includes(String(i)));
   const ctaUrl = `jaasblog.online/q/${quiz.niche}/${lang}/${quiz.topic_slug}`;
 
-  // Load base template from repository root
   const templatePath = path.join(__dirname, 'quiz_template.html');
-  console.log(`Loading template from: ${templatePath}`);
   let template = await fs.readFile(templatePath, 'utf8');
 
   const replacements = {
@@ -169,16 +186,15 @@ async function buildHTML(quiz, qIdx, workDir, lang, thinkingTimeSec, engagementT
   }
   const htmlPath = path.join(workDir, 'index.html');
   await fs.writeFile(htmlPath, template);
-  console.log(`HTML written to ${htmlPath}, size: ${template.length} bytes`);
   return htmlPath;
 }
 
 // ========================
-// Main video builder (flow steps 1‑17)
+// Main video builder
 // ========================
 async function buildVideo(quiz, qIdx, lang, workDir) {
   const voice = { en: 'en-US-JennyNeural', hi: 'hi-IN-SwaraNeural', es: 'es-ES-ElviraNeural', pt: 'pt-BR-FranciscaNeural' }[lang] || 'en-US-JennyNeural';
-  const thinkingSec = quiz.thinking_time || 18; // default 18s
+  const thinkingSec = quiz.thinking_time || 18;
   const engagementText = (quiz.quiz_intro_speech || '') + ' ' + (quiz.engagement_prompt || '');
   const customBg = getUniqueBackgroundCSS(quiz);
 
@@ -190,19 +206,10 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920 });
-
-  console.log(`Loading HTML file: ${htmlPath}`);
-  const exists = await fs.access(htmlPath).then(() => true).catch(() => false);
-  console.log(`File exists: ${exists}`);
-  if (!exists) throw new Error('HTML file not found');
-
-  // Load with increased timeout and 'load' event
   await page.goto(`file://${htmlPath}`, { waitUntil: 'load', timeout: 120000 });
-  console.log('Page loaded successfully');
 
   const clips = [];
 
-  // Helper: screenshot a specific .screen class
   async function screenShot(selector, name) {
     await page.evaluate(sel => {
       document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
@@ -215,7 +222,6 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
     return img;
   }
 
-  // Helper: image + audio -> clip
   async function imageClip(img, audioPath, name, durationOverride = null) {
     const dur = durationOverride || await getAudioDuration(audioPath);
     const clip = path.join(workDir, `${name}.mp4`);
@@ -223,29 +229,29 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
     return { path: clip, duration: dur };
   }
 
-  // ===== 1. Hook + brand logo (2‑4s) =====
+  // 1. Hook
   const hookImg = await screenShot('.hook-slide', 'hook');
   const hookAudio = path.join(workDir, 'hook.mp3');
-  await tts(quiz.hook_phrase, voice, hookAudio, 3);
+  await ttsWithFallback(quiz.hook_phrase, voice, hookAudio, 3);
   let hookDur = await getAudioDuration(hookAudio);
   hookDur = Math.max(hookDur, 2.5);
   clips.push(await imageClip(hookImg, hookAudio, 'hook_clip', hookDur));
 
-  // ===== 2. Introduction (4‑8s) =====
+  // 2. Intro
   const introImg = await screenShot('.intro-slide', 'intro');
   const introAudio = path.join(workDir, 'intro.mp3');
-  await tts(quiz.quiz_intro_speech, voice, introAudio, 5);
+  await ttsWithFallback(quiz.quiz_intro_speech, voice, introAudio, 5);
   let introDur = await getAudioDuration(introAudio);
   introDur = Math.max(introDur, 4);
   clips.push(await imageClip(introImg, introAudio, 'intro_clip', introDur));
 
-  // ===== 3. "Here is your challenge" – TTS only, no text on screen =====
+  // 3. Challenge announcement
   const challengeAudio = await getFixedPhrase('challenge', 'Here is your challenge. Solve it.', voice);
   const challengeDur = await getAudioDuration(challengeAudio);
   const challengeImg = await screenShot('.intro-slide', 'challenge_static');
   clips.push(await imageClip(challengeImg, challengeAudio, 'challenge_clip', challengeDur));
 
-  // ===== 4. Question appears – we will record the whole animated question phase =====
+  // 4. Question phase recording
   await page.evaluate(() => {
     document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
     const q = document.querySelector('.question-phase');
@@ -259,67 +265,65 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   await recorder.start(questionVideoRaw);
   await new Promise(r => setTimeout(r, thinkingSec * 1000));
   await recorder.stop();
-  console.log(`Recorded question phase: ${thinkingSec}s`);
 
-  // ===== 5. "and your options are" – TTS only =====
+  // 5. "And your options are"
   const optionsAudio = await getFixedPhrase('options', 'And your options are.', voice);
   const optionsDur = await getAudioDuration(optionsAudio);
   const optionsImg = await screenShot('.question-phase', 'options_static');
   clips.push(await imageClip(optionsImg, optionsAudio, 'options_clip', optionsDur));
 
-  // Add the recorded question phase as a clip
+  // Recorded phase
   const questionDur = await getVideoDuration(questionVideoRaw);
   clips.push({ path: questionVideoRaw, duration: questionDur });
 
-  // ===== 6-9 already in recording =====
-  // ===== 10. "Time up and correct answer is" =====
+  // 6. Time up + correct answer
   const timeupAudio = path.join(workDir, 'timeup.mp3');
-  await tts(`Time's up. The correct answer is ${quiz[`correct_answer_${qIdx}`] || ''}.`, voice, timeupAudio, 3);
+  await ttsWithFallback(`Time's up. The correct answer is ${quiz[`correct_answer_${qIdx}`] || ''}.`, voice, timeupAudio, 3);
   const timeupDur = await getAudioDuration(timeupAudio);
   const answerImg = await screenShot('.answer-slide', 'answer_static');
   clips.push(await imageClip(answerImg, timeupAudio, 'timeup_clip', timeupDur));
 
-  // ===== 12. Explanation =====
+  // 7. Explanation
   const explImg = await screenShot('.explanation-slide', 'explanation');
   const explAudio = path.join(workDir, 'explanation.mp3');
-  await tts(quiz[`explanation_${qIdx}`], voice, explAudio, 5);
+  await ttsWithFallback(quiz[`explanation_${qIdx}`], voice, explAudio, 5);
   const explDur = await getAudioDuration(explAudio);
   clips.push(await imageClip(explImg, explAudio, 'explanation_clip', explDur));
 
-  // ===== 13. CTA 1 – affiliate =====
+  // 8. CTA1 (affiliate)
   const cta1Img = await screenShot('.cta-slide', 'cta1');
   const cta1Audio = path.join(workDir, 'cta1.mp3');
   const cta1Text = `${quiz.affiliate_text || 'Want the best credit card?'} Follow the description link: ${quiz.affiliate_url || ''}`;
-  await tts(cta1Text, voice, cta1Audio, 4);
+  await ttsWithFallback(cta1Text, voice, cta1Audio, 4);
   const cta1Dur = await getAudioDuration(cta1Audio);
   clips.push(await imageClip(cta1Img, cta1Audio, 'cta1_clip', cta1Dur));
 
-  // ===== 14. CTA 2 – website challenge =====
-  // Change CTA slide text dynamically
+  // 9. CTA2 (website challenge)
   await page.evaluate(text => {
     const el = document.querySelector('.cta-slide .cta-text');
     if (el) el.textContent = text;
   }, quiz.cta2_text || 'Accept the real challenge – go to our site and earn real ONS tokens!');
   await new Promise(r => setTimeout(r, 200));
-  const cta2ImgCustom = path.join(workDir, 'cta2.png');
-  await page.screenshot({ path: cta2ImgCustom });
+  const cta2Img = path.join(workDir, 'cta2.png');
+  await page.screenshot({ path: cta2Img });
   const cta2Audio = path.join(workDir, 'cta2.mp3');
-  await tts(quiz.cta2_text || 'Accept the real challenge. Go to our site and earn real ONS tokens.', voice, cta2Audio, 4);
+  await ttsWithFallback(quiz.cta2_text || 'Accept the real challenge. Go to our site and earn real ONS tokens.', voice, cta2Audio, 4);
   const cta2Dur = await getAudioDuration(cta2Audio);
-  clips.push(await imageClip(cta2ImgCustom, cta2Audio, 'cta2_clip', cta2Dur));
+  clips.push(await imageClip(cta2Img, cta2Audio, 'cta2_clip', cta2Dur));
 
-  // ===== 15. Mission Impossible question =====
+  // 10. Mission Impossible question
   const missionQImg = await screenShot('.mission-slide', 'mission_q');
   const missionQAudio = path.join(workDir, 'mission_q.mp3');
-  await tts(quiz.mission_impossible_question, voice, missionQAudio, 3);
+  await ttsWithFallback(quiz.mission_impossible_question, voice, missionQAudio, 3);
   const missionQDur = await getAudioDuration(missionQAudio);
   clips.push(await imageClip(missionQImg, missionQAudio, 'mission_q_clip', missionQDur));
 
-  // ===== 16. Mission hint after 2.5 sec =====
+  // 11. Gap before hint
   const gapAudio = path.join(workDir, 'gap.mp3');
-  await execPromise(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t 2.5 -q:a 9 -acodec libmp3lame "${gapAudio}"`);
+  await generateSilentAudio(gapAudio, 2.5);
   clips.push(await imageClip(missionQImg, gapAudio, 'gap_clip', 2.5));
 
+  // 12. Mission hint reveal
   await page.evaluate(() => {
     const hintEl = document.querySelector('.mission-hint');
     if (hintEl) hintEl.classList.add('shown');
@@ -328,11 +332,11 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   const missionHintImg = path.join(workDir, 'mission_hint.png');
   await page.screenshot({ path: missionHintImg });
   const missionHintAudio = path.join(workDir, 'mission_hint.mp3');
-  await tts(quiz.mission_impossible_hint + ' ' + quiz.mission_impossible_trigger_line, voice, missionHintAudio, 3);
+  await ttsWithFallback(quiz.mission_impossible_hint + ' ' + quiz.mission_impossible_trigger_line, voice, missionHintAudio, 3);
   const missionHintDur = await getAudioDuration(missionHintAudio);
   clips.push(await imageClip(missionHintImg, missionHintAudio, 'mission_hint_clip', missionHintDur));
 
-  // ===== 17. Final CTA: Like, share, subscribe =====
+  // 13. Final CTA
   await page.evaluate(() => {
     const el = document.querySelector('.cta-slide .cta-text');
     if (el) el.textContent = '👍 Like, Share, & Challenge your friend! Subscribe to get the answer to Mission Impossible!';
@@ -341,19 +345,18 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   const finalCtaImg = path.join(workDir, 'final_cta.png');
   await page.screenshot({ path: finalCtaImg });
   const finalAudio = path.join(workDir, 'final.mp3');
-  await tts('Like, share, and challenge your friend! Subscribe to get the answer to the mission impossible question.', voice, finalAudio, 5);
+  await ttsWithFallback('Like, share, and challenge your friend! Subscribe to get the answer to the mission impossible question.', voice, finalAudio, 5);
   const finalDur = await getAudioDuration(finalAudio);
   clips.push(await imageClip(finalCtaImg, finalAudio, 'final_cta_clip', finalDur));
 
   await browser.close();
 
   // Concat all clips
-  const concatList = clips.map((c, i) => `file '${c.path}'`).join('\n');
+  const concatList = clips.map(c => `file '${c.path}'`).join('\n');
   const listPath = path.join(workDir, 'concat.txt');
   await fs.writeFile(listPath, concatList);
   const outputPath = path.join(workDir, 'final.mp4');
   await execPromise(`ffmpeg -y -f concat -safe 0 -i "${listPath}" -c:v libx264 -c:a aac -movflags +faststart "${outputPath}"`);
-  console.log(`Final video assembled: ${outputPath}`);
   return outputPath;
 }
 
