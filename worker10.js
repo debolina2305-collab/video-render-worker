@@ -15,7 +15,6 @@ const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 console.log('SUPABASE_URL from env:', supabaseUrl);
 console.log('SUPABASE_SERVICE_KEY from env:', supabaseKey ? '*** (set)' : 'NOT SET');
 
-// Remove trailing slash if present
 const cleanSupabaseUrl = supabaseUrl ? supabaseUrl.replace(/\/$/, '') : null;
 
 if (!cleanSupabaseUrl || !supabaseKey) {
@@ -23,47 +22,27 @@ if (!cleanSupabaseUrl || !supabaseKey) {
   process.exit(1);
 }
 
-// Supabase REST API headers
 const baseHeaders = {
   'apikey': supabaseKey,
   'Authorization': `Bearer ${supabaseKey}`,
   'Content-Type': 'application/json'
 };
 
-// ========================
-// Enhanced fetchSupabase with empty response handling
-// ========================
 async function fetchSupabase(path, options = {}) {
   const url = `${cleanSupabaseUrl}/rest/v1/${path}`;
   console.log(`[FETCH] ${options.method || 'GET'} ${url}`);
-
-  // Merge headers
   const headers = { ...baseHeaders, ...(options.headers || {}) };
-
-  // For modifications, ask Supabase to return the updated row (to avoid empty body)
   if (options.method && ['POST', 'PATCH', 'PUT'].includes(options.method)) {
     headers['Prefer'] = 'return=representation';
   }
-
-  const response = await fetch(url, {
-    ...options,
-    headers
-  });
-
+  const response = await fetch(url, { ...options, headers });
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`HTTP ${response.status}: ${errorText}`);
   }
-
-  // Get response as text first
   const text = await response.text();
   console.log(`[FETCH] Response length: ${text.length} chars`);
-
-  if (!text || text.trim() === '') {
-    // Empty response (e.g., DELETE, or PATCH without Prefer header fallback)
-    return null;
-  }
-
+  if (!text || text.trim() === '') return null;
   try {
     return JSON.parse(text);
   } catch (err) {
@@ -72,13 +51,9 @@ async function fetchSupabase(path, options = {}) {
   }
 }
 
-// ========================
-// Main job processor
-// ========================
 async function processJobs() {
   console.log('Checking for pending video jobs...');
   try {
-    // Get one pending job
     const jobs = await fetchSupabase(
       'quiz_queue?job_type=eq.video_render&status=eq.pending&order=created_at.asc&limit=1'
     );
@@ -89,13 +64,11 @@ async function processJobs() {
     const job = jobs[0];
     console.log(`Processing job ${job.id} for quiz ${job.quiz_id}`);
 
-    // Mark as processing
     await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'processing', started_at: new Date().toISOString() })
     });
 
-    // Fetch quiz data
     const quizzes = await fetchSupabase(`quiz?id=eq.${job.quiz_id}`);
     if (!quizzes || quizzes.length === 0) throw new Error('Quiz not found');
     const quiz = quizzes[0];
@@ -103,11 +76,9 @@ async function processJobs() {
     const { question_index = 1, video_type = 'short', thinking_time_sec = 16 } = job.payload;
     const lang = quiz.lang_code || 'en';
 
-    // Create temp directory
     const workDir = `/tmp/video_${uuidv4()}`;
     await fs.mkdir(workDir, { recursive: true });
 
-    // Generate slides, TTS, and assemble video
     const slides = await generateSlides(quiz, question_index, thinking_time_sec, workDir, lang);
     const audioPaths = await generateTTS(quiz, question_index, slides, workDir, lang);
     const videoPath = await assembleVideo(slides, audioPaths, workDir);
@@ -115,30 +86,24 @@ async function processJobs() {
     const stats = await fs.stat(videoPath);
     console.log(`Video created: ${videoPath}, size: ${(stats.size / (1024 * 1024)).toFixed(2)} MB`);
 
-    // Mark job as completed
     await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'completed', completed_at: new Date().toISOString() })
     });
 
-    // Save as artifact (for GitHub Actions)
     const artifactPath = `/tmp/${job.id}_video.mp4`;
     await fs.copyFile(videoPath, artifactPath);
     console.log(`Video saved as artifact: ${artifactPath}`);
     await fs.writeFile('/tmp/artifact_ready', artifactPath);
 
-    // Cleanup
     await fs.rm(workDir, { recursive: true, force: true });
     console.log(`Job ${job.id} completed successfully`);
   } catch (err) {
     console.error('Job failed:', err);
-    throw err; // ensure workflow failure
+    throw err;
   }
 }
 
-// ========================
-// Generate slides from HTML/CSS
-// ========================
 async function generateSlides(quiz, questionIndex, thinkingTime, workDir, lang) {
   let html = quiz.quiz_css_video;
   if (!html) throw new Error('quiz_css_video is empty');
@@ -171,7 +136,6 @@ async function generateSlides(quiz, questionIndex, thinkingTime, workDir, lang) 
   await page.setViewport({ width: 1080, height: 1920 });
   await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0' });
 
-  // Define slides – adjust class names to match your CSS
   const slideDefs = [
     { selector: '.hook-slide', duration: 2, name: 'hook' },
     { selector: '.intro-slide', duration: 4, name: 'intro' },
@@ -191,7 +155,8 @@ async function generateSlides(quiz, questionIndex, thinkingTime, workDir, lang) 
       const el = document.querySelector(sel);
       if (el) el.style.display = 'block';
     }, def.selector);
-    await page.waitForTimeout(500);
+    // Fix: replace deprecated page.waitForTimeout with standard setTimeout
+    await new Promise(resolve => setTimeout(resolve, 500));
     const imagePath = path.join(workDir, `slide_${i}.png`);
     await page.screenshot({ path: imagePath, fullPage: true });
     slides.push({ path: imagePath, duration: def.duration, name: def.name });
@@ -201,9 +166,6 @@ async function generateSlides(quiz, questionIndex, thinkingTime, workDir, lang) 
   return slides;
 }
 
-// ========================
-// TTS generation (edge-tts)
-// ========================
 async function generateTTS(quiz, questionIndex, slides, workDir, lang) {
   const voiceMap = {
     en: 'en-US-JennyNeural',
@@ -241,9 +203,6 @@ async function generateTTS(quiz, questionIndex, slides, workDir, lang) {
   return audioPaths;
 }
 
-// ========================
-// Assemble video using FFmpeg
-// ========================
 async function assembleVideo(slides, audioPaths, workDir) {
   const concatList = [];
   for (let i = 0; i < slides.length; i++) {
@@ -260,9 +219,6 @@ async function assembleVideo(slides, audioPaths, workDir) {
   return outputPath;
 }
 
-// ========================
-// Start the worker
-// ========================
 processJobs().then(() => {
   console.log('Worker finished this run');
   process.exit(0);
