@@ -298,15 +298,33 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   const htmlPath = path.join(workDir, 'index.html');
   await fs.writeFile(htmlPath, html);
 
+  // Resolve Chromium executable: puppeteer bundles one, but in CI the path
+  // can vary. We try the bundled path first, fall back to system chromium.
+  let executablePath;
+  try {
+    // puppeteer v19+ exposes executablePath() as a static method
+    executablePath = puppeteer.executablePath();
+  } catch (_) {
+    executablePath = '/usr/bin/chromium-browser';
+  }
+
   const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    headless: 'new',      // use new headless mode (avoids deprecated flag warnings)
+    executablePath,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--disable-extensions',
+      '--run-all-compositor-stages-before-draw',
+    ]
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920 });
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0' });
-
-  const clips = []; // ordered list of { videoPath, audioPath, duration }
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await new Promise(r => setTimeout(r, 300)); // let CSS paint settle // ordered list of { videoPath, audioPath, duration }
 
   // Helper: show only one .screen by selector
   async function showOnly(selector) {
@@ -370,7 +388,8 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   //    timer drains, hint fades in at HINT_TIME, 50/50 fades at FIFTYFIFTY_TIME
   // ---------------------------------------------------------
   // Reload page to reset CSS animation state cleanly, then show question-phase
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0' });
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await new Promise(r => setTimeout(r, 300)); // let CSS paint settle
   await showOnly('.question-phase');
 
   const questionVideoRaw = path.join(workDir, 'question_phase_raw.mp4');
