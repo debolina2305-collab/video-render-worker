@@ -164,7 +164,7 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920 });
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0' });
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
   const clips = [];
 
