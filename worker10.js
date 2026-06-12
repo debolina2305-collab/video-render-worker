@@ -324,7 +324,9 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920 });
   await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await new Promise(r => setTimeout(r, 300)); // let CSS paint settle // ordered list of { videoPath, audioPath, duration }
+  await new Promise(r => setTimeout(r, 300)); // let CSS paint settle
+
+  const clips = []; // ordered list of { path, duration }
 
   // Helper: show only one .screen by selector
   async function showOnly(selector) {
