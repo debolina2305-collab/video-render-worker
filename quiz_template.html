@@ -3,408 +3,609 @@
 <head>
 <meta charset="utf-8">
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; font-family: 'Segoe UI', Arial, sans-serif; }
-  html,body { width:1080px; height:1920px; overflow:hidden; background:#05030f; }
+/*
+  QUIZ VIDEO TEMPLATE  |  1080 × 1920 px  |  9:16
+  Each quiz gets unique colours injected via --t1..--t5 CSS vars.
+  Screens shown/hidden by toggling class="active" via JS in worker.
+*/
 
-  .screen {
-    width:1080px; height:1920px;
-    display:none;
-    flex-direction:column;
-    align-items:center;
-    justify-content:center;
-    position:relative;
-    color:#fff;
-    text-align:center;
-    padding:60px;
-    overflow:hidden;
-  }
-  .screen.active { display:flex; }
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  width:1080px; height:1920px; overflow:hidden;
+  background:#08060f;
+  font-family:'Segoe UI','Arial Rounded MT Bold',Arial,sans-serif;
+  color:#fff;
+}
 
-  /* ===================== ANIMATED BACKGROUND (all screens) ===================== */
-  .bg-anim {
-    position:absolute; inset:0; z-index:0;
-    background:
-      radial-gradient(circle at 20% 20%, rgba(255,0,170,0.35), transparent 40%),
-      radial-gradient(circle at 80% 30%, rgba(0,200,255,0.35), transparent 40%),
-      radial-gradient(circle at 50% 85%, rgba(140,0,255,0.4), transparent 45%),
-      linear-gradient(160deg,#0a0820,#1b0a3d 50%,#05030f);
-    background-size: 200% 200%, 200% 200%, 200% 200%, 100% 100%;
-    animation: bgShift 14s ease-in-out infinite alternate;
-  }
-  @keyframes bgShift {
-    0%   { background-position: 0% 0%, 100% 0%, 50% 100%, 0 0; }
-    100% { background-position: 30% 40%, 60% 50%, 40% 60%, 0 0; }
-  }
-  .bg-grid {
-    position:absolute; inset:0; z-index:1; opacity:0.18;
-    background-image:
-      linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px);
-    background-size: 80px 80px;
-    animation: gridMove 8s linear infinite;
-  }
-  @keyframes gridMove { from{ background-position:0 0,0 0; } to{ background-position:0 80px, 80px 0; } }
+/* ── THEME VARS (overridden per quiz by worker) ───────────── */
+:root {
+  --t1: #ff2ec4;   /* primary accent  */
+  --t2: #7b2ff7;   /* secondary accent*/
+  --t3: #00e0ff;   /* tertiary        */
+  --t4: #ffd166;   /* highlight warm  */
+  --t5: #00ff8c;   /* correct green   */
+  --bg-a: #0a0820;
+  --bg-b: #1b0a3d;
+}
 
-  .bg-orb {
-    position:absolute; border-radius:50%; filter:blur(40px); z-index:1;
-    opacity:0.5;
-  }
-  .orb1 { width:380px; height:380px; background:#ff2ec4; top:-100px; left:-100px; animation: floatA 9s ease-in-out infinite; }
-  .orb2 { width:300px; height:300px; background:#00e0ff; bottom:100px; right:-80px; animation: floatB 11s ease-in-out infinite; }
-  .orb3 { width:260px; height:260px; background:#7b2ff7; bottom:-80px; left:30%; animation: floatA 13s ease-in-out infinite reverse; }
-  @keyframes floatA { 0%,100%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(60px,80px) scale(1.2); } }
-  @keyframes floatB { 0%,100%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(-50px,-60px) scale(1.15); } }
+/* ── SCREEN BASE ──────────────────────────────────────────── */
+.screen {
+  display:none; position:absolute; inset:0;
+  width:1080px; height:1920px;
+  flex-direction:column; align-items:center; justify-content:center;
+  text-align:center; overflow:hidden;
+}
+.screen.active { display:flex; }
 
-  .content { position:relative; z-index:5; width:100%; display:flex; flex-direction:column; align-items:center; }
+/* ── ANIMATED BACKGROUND LAYER (each screen customises this) */
+.bg {
+  position:absolute; inset:0; z-index:0;
+  background:
+    radial-gradient(circle at 20% 18%, color-mix(in srgb, var(--t1) 40%, transparent), transparent 44%),
+    radial-gradient(circle at 80% 28%, color-mix(in srgb, var(--t3) 38%, transparent), transparent 44%),
+    radial-gradient(circle at 50% 87%, color-mix(in srgb, var(--t2) 42%, transparent), transparent 48%),
+    linear-gradient(160deg, var(--bg-a), var(--bg-b) 55%, #05030f);
+  background-size:200% 200%,200% 200%,200% 200%,100% 100%;
+  animation:bgDrift 18s ease-in-out infinite alternate;
+}
+@keyframes bgDrift{
+  0%  {background-position:0% 0%,100% 0%,50% 100%,0 0;}
+  100%{background-position:32% 42%,58% 52%,42% 62%,0 0;}
+}
+/* Per-screen tint shifts so no two slides look identical */
+.s-intro .bg    { animation-delay:-3s; }
+.s-q-appear .bg { animation-delay:-7s; }
+.s-opts .bg     { animation-delay:-2s; }
+.s-timer .bg    { animation-delay:-5s; }
+.s-answer .bg   { animation-delay:-11s; }
+.s-expl .bg     { animation-delay:-1s; }
+.s-cta1 .bg     { animation-delay:-9s;
+  background:
+    radial-gradient(circle at 25% 30%, color-mix(in srgb, var(--t4) 44%, transparent), transparent 46%),
+    radial-gradient(circle at 75% 70%, color-mix(in srgb, var(--t2) 40%, transparent), transparent 46%),
+    linear-gradient(160deg,#140a00,#2e1800 55%,#05030f);
+}
+.s-cta2 .bg { animation-delay:-14s;
+  background:
+    radial-gradient(circle at 70% 25%, color-mix(in srgb, var(--t3) 44%, transparent), transparent 46%),
+    radial-gradient(circle at 30% 75%, color-mix(in srgb, var(--t2) 40%, transparent), transparent 46%),
+    linear-gradient(160deg,#001420,#002a3d 55%,#05030f);
+}
+.s-mission-q .bg, .s-mission-h .bg { animation-delay:-6s;
+  background:
+    radial-gradient(circle at 30% 22%, rgba(255,30,30,.44), transparent 48%),
+    radial-gradient(circle at 70% 78%, rgba(255,100,0,.38), transparent 48%),
+    linear-gradient(160deg,#1a0505,#3a0b0b 55%,#05030f);
+}
+.s-retry .bg { animation-delay:-16s;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(255,59,59,.5), transparent 48%),
+    radial-gradient(circle at 50% 80%, rgba(255,120,0,.4), transparent 48%),
+    linear-gradient(160deg,#1a0505,#3a0b0b 55%,#05030f);
+}
+.s-final .bg { animation-delay:-8s;
+  background:
+    radial-gradient(circle at 30% 30%, color-mix(in srgb, var(--t1) 50%, transparent), transparent 48%),
+    radial-gradient(circle at 70% 70%, color-mix(in srgb, var(--t3) 44%, transparent), transparent 48%),
+    linear-gradient(160deg,var(--bg-a),var(--bg-b) 55%,#05030f);
+}
 
-  /* ===================== SHARED TEXT STYLES ===================== */
-  .glow-text {
-    text-shadow: 0 0 20px rgba(255,255,255,0.6), 0 0 40px rgba(123,47,247,0.6);
-  }
-  .badge-label {
-    display:inline-block; font-size:32px; font-weight:900; letter-spacing:8px;
-    text-transform:uppercase; padding:14px 36px; border-radius:50px;
-    background:linear-gradient(135deg,#ff2ec4,#7b2ff7);
-    box-shadow:0 0 30px rgba(255,46,196,0.6);
-    margin-bottom:40px;
-  }
+.bg-grid {
+  position:absolute; inset:0; z-index:1; opacity:.13;
+  background-image:
+    linear-gradient(rgba(255,255,255,.5) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.5) 1px,transparent 1px);
+  background-size:90px 90px;
+  animation:gridScroll 12s linear infinite;
+}
+@keyframes gridScroll{to{background-position:0 90px,90px 0;}}
 
-  /* ===================== 1. HOOK / BRAND ===================== */
-  .logo-badge {
-    width:280px; height:280px; border-radius:50%;
-    background: linear-gradient(135deg,#00e0ff,#7b2ff7,#ff2ec4);
-    background-size: 300% 300%;
-    display:flex; align-items:center; justify-content:center;
-    font-size:70px; font-weight:900; letter-spacing:2px;
-    box-shadow:0 0 100px rgba(123,47,247,0.8), 0 0 200px rgba(0,224,255,0.4);
-    animation: logoSpin 6s linear infinite, logoIn 0.9s cubic-bezier(.34,1.8,.64,1) forwards;
-    opacity:0; transform:scale(0.3) rotate(-20deg);
-  }
-  @keyframes logoIn { to { opacity:1; transform:scale(1) rotate(0deg); } }
-  @keyframes logoSpin { to { background-position: 300% 300%; } }
+.orb {
+  position:absolute; border-radius:50%; filter:blur(52px);
+  z-index:1; opacity:.42; pointer-events:none;
+}
+.o1{width:380px;height:380px;background:var(--t1);top:-90px;left:-90px;  animation:floatA 11s ease-in-out infinite;}
+.o2{width:300px;height:300px;background:var(--t3);bottom:90px;right:-70px;animation:floatB 14s ease-in-out infinite;}
+.o3{width:260px;height:260px;background:var(--t2);bottom:-70px;left:30%; animation:floatA 16s ease-in-out infinite reverse;}
+@keyframes floatA{0%,100%{transform:translate(0,0)scale(1);}50%{transform:translate(58px,78px)scale(1.22);}}
+@keyframes floatB{0%,100%{transform:translate(0,0)scale(1);}50%{transform:translate(-48px,-58px)scale(1.16);}}
 
-  .hook-text {
-    margin-top:70px; font-size:64px; font-weight:900; line-height:1.35;
-    opacity:0; transform: translateY(60px) scale(0.8);
-    animation: bounceIn 0.9s cubic-bezier(.34,1.8,.64,1) 0.7s forwards;
-  }
-  @keyframes bounceIn { to { opacity:1; transform:translateY(0) scale(1); } }
+/* ── CONTENT WRAPPER ──────────────────────────────────────── */
+.cnt{position:relative;z-index:5;width:100%;display:flex;flex-direction:column;align-items:center;padding:0 68px;}
 
-  .sparkle {
-    position:absolute; font-size:60px; opacity:0;
-    animation: sparkleAppear 2s ease-in-out infinite;
-  }
-  .sparkle.s1 { top:15%; left:12%; animation-delay:0.2s; }
-  .sparkle.s2 { top:25%; right:10%; animation-delay:0.8s; }
-  .sparkle.s3 { bottom:20%; left:15%; animation-delay:1.4s; }
-  .sparkle.s4 { bottom:30%; right:14%; animation-delay:0.5s; }
-  @keyframes sparkleAppear { 0%,100%{opacity:0; transform:scale(0.5) rotate(0deg);} 50%{opacity:1; transform:scale(1.3) rotate(180deg);} }
+/* ── SHARED ANIMATIONS ────────────────────────────────────── */
+@keyframes popIn  {from{opacity:0;transform:scale(.35)rotate(-14deg);}to{opacity:1;transform:scale(1)rotate(0);}}
+@keyframes slideUp{from{opacity:0;transform:translateY(58px);}to{opacity:1;transform:translateY(0);}}
+@keyframes fadeIn {from{opacity:0;}to{opacity:1;}}
+@keyframes pulse  {0%,100%{transform:scale(1);}50%{transform:scale(1.045);}}
+@keyframes shake  {0%,100%{transform:rotate(-1.3deg);}50%{transform:rotate(1.3deg);}}
+@keyframes sparkle{0%,100%{opacity:0;transform:scale(.5)rotate(0);}50%{opacity:1;transform:scale(1.35)rotate(182deg);}}
+@keyframes cfFall {0%{transform:translateY(-40px)rotate(0);opacity:1;}100%{transform:translateY(2100px)rotate(730deg);opacity:.7;}}
 
-  /* ===================== 2. INTRO / ENGAGEMENT ===================== */
-  .intro-label {
-    font-size:36px; font-weight:900; letter-spacing:8px; text-transform:uppercase;
-    background:linear-gradient(135deg,#00e0ff,#7b2ff7);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    margin-bottom:40px;
-    opacity:0; animation: fadeUp 0.6s ease-out 0.1s forwards;
-  }
-  .intro-topic {
-    font-size:70px; font-weight:900; line-height:1.3;
-    opacity:0; animation: bounceIn 0.9s cubic-bezier(.34,1.8,.64,1) 0.4s forwards;
-  }
-  .intro-sub {
-    margin-top:50px; font-size:42px; font-weight:600; color:#ffd166;
-    opacity:0; animation: fadeUp 0.7s ease-out 0.9s forwards;
-  }
-  @keyframes fadeUp { from{opacity:0; transform:translateY(40px);} to{opacity:1; transform:translateY(0);} }
+/* ── SHARED CHIP ──────────────────────────────────────────── */
+.chip{
+  display:inline-block; padding:15px 42px; border-radius:60px;
+  font-size:33px; font-weight:900; letter-spacing:7px; text-transform:uppercase;
+  background:linear-gradient(135deg,var(--t1),var(--t2));
+  box-shadow:0 0 36px color-mix(in srgb, var(--t1) 60%, transparent);
+  margin-bottom:42px;
+}
 
- 
-  /* ===================== 3. QUESTION PHASE ===================== */
-  .question-phase { justify-content:flex-start; padding-top:90px; }
+/* ── GLOW TEXT ────────────────────────────────────────────── */
+.glow{text-shadow:0 0 26px rgba(255,255,255,.5),0 0 54px color-mix(in srgb,var(--t2) 60%,transparent);}
 
-  .qp-card-question {
-    width:100%; background:rgba(255,255,255,0.06);
-    border:3px solid rgba(255,255,255,0.15); border-radius:32px;
-    padding:44px; margin-bottom:40px; backdrop-filter: blur(6px);
-    box-shadow:0 0 50px rgba(123,47,247,0.35);
-  }
-  .qp-question { font-size:52px; font-weight:800; line-height:1.4; }
+/* ================================================================
+   S-HOOK  —  Screen 1: brand logo + hook phrase
+   ================================================================ */
+.s-hook .logo{
+  width:290px;height:290px;border-radius:50%;
+  background:linear-gradient(135deg,var(--t3),var(--t2),var(--t1));
+  background-size:300% 300%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:68px;font-weight:900;letter-spacing:2px;
+  box-shadow:0 0 110px color-mix(in srgb,var(--t2) 80%,transparent),
+             0 0 220px color-mix(in srgb,var(--t3) 40%,transparent);
+  opacity:0;margin-bottom:60px;
+  animation:popIn .9s cubic-bezier(.34,1.8,.64,1) .1s forwards,
+            logoBg 9s linear infinite;
+}
+@keyframes logoBg{to{background-position:300% 300%;}}
+.s-hook .hook-text{
+  font-size:90px;font-weight:900;line-height:1.2;
+  opacity:0;padding:0 20px;
+  animation:slideUp .9s cubic-bezier(.34,1.8,.64,1) .75s forwards;
+}
+.sp{position:absolute;font-size:58px;opacity:0;}
+.sp.a{top:13%;left:10%;animation:sparkle 2.3s .25s infinite;}
+.sp.b{top:23%;right:8%;animation:sparkle 2.3s .95s infinite;}
+.sp.c{bottom:18%;left:13%;animation:sparkle 2.3s 1.55s infinite;}
+.sp.d{bottom:28%;right:12%;animation:sparkle 2.3s .6s infinite;}
 
-  /* Circular timer */
-  .qp-timer-wrap { margin-bottom:50px; position:relative; width:220px; height:220px; }
-  .qp-timer-ring {
-    width:220px; height:220px; transform:rotate(-90deg);
-  }
-  .qp-timer-ring circle {
-    fill:none; stroke-width:18; stroke-linecap:round;
-  }
-  .qp-timer-bg { stroke:rgba(255,255,255,0.12); }
-  .qp-timer-fill {
-    stroke:url(#timerGradient);
-    stroke-dasharray: 628; /* 2*pi*100 */
-    stroke-dashoffset: 0;
-    animation: timerDrain var(--qtime) linear forwards;
-  }
-  @keyframes timerDrain { from { stroke-dashoffset:0; } to { stroke-dashoffset:628; } }
-  .qp-timer-number {
-    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
-    font-size:64px; font-weight:900;
-  }
+/* ================================================================
+   S-INTRO  —  Screen 2: topic introduction
+   ================================================================ */
+.s-intro .eyebrow{
+  font-size:36px;font-weight:900;letter-spacing:9px;text-transform:uppercase;
+  background:linear-gradient(135deg,var(--t3),var(--t2));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  opacity:0;animation:slideUp .6s ease-out .1s forwards;margin-bottom:36px;
+}
+.s-intro .topic{
+  font-size:80px;font-weight:900;line-height:1.22;
+  opacity:0;animation:popIn .9s cubic-bezier(.34,1.8,.64,1) .4s forwards;margin-bottom:52px;
+}
+.s-intro .intro-body{
+  font-size:46px;font-weight:600;color:var(--t4);line-height:1.55;
+  opacity:0;animation:slideUp .7s ease-out .95s forwards;
+}
 
-  .qp-options { width:100%; display:flex; flex-direction:column; gap:28px; }
-  .qp-option {
-    display:flex; align-items:center; gap:28px;
-    background:rgba(255,255,255,0.07); border:3px solid rgba(255,255,255,0.18);
-    border-radius:24px; padding:34px; font-size:42px; font-weight:700;
-    text-align:left; transition: opacity 0.6s ease;
-    box-shadow:0 8px 24px rgba(0,0,0,0.35);
-  }
-  .qp-option-badge {
-    flex-shrink:0; width:70px; height:70px; border-radius:50%;
-    display:flex; align-items:center; justify-content:center;
-    font-size:38px; font-weight:900;
-    background:linear-gradient(135deg,#00e0ff,#7b2ff7);
-    box-shadow:0 0 20px rgba(0,224,255,0.5);
-  }
-  .qp-option.eliminate {
-    animation: eliminateOpt 0.6s ease forwards;
-    animation-delay: var(--fiftyfifty-time);
-  }
-  @keyframes eliminateOpt { to { opacity:0.08; transform:scale(0.96); } }
+/* ================================================================
+   S-Q-APPEAR  —  Screen 3: question card (no options)
+   ================================================================ */
+.s-q-appear{justify-content:center;}
+.q-card{
+  width:100%;
+  background:rgba(255,255,255,.07);
+  border:3px solid rgba(255,255,255,.18);
+  border-radius:36px;padding:54px;
+  box-shadow:0 0 64px color-mix(in srgb,var(--t2) 40%,transparent);
+  margin-bottom:40px;
+  opacity:0;animation:slideUp .7s ease-out .15s forwards;
+}
+.q-label{
+  font-size:33px;font-weight:900;letter-spacing:7px;text-transform:uppercase;
+  color:var(--t4);margin-bottom:28px;
+}
+.q-text{font-size:58px;font-weight:800;line-height:1.45;}
 
-  .qp-hint {
-    margin-top:46px; font-size:38px; font-weight:600; color:#ffd166;
-    background:rgba(255,209,102,0.12); border:2px dashed #ffd166;
-    border-radius:20px; padding:28px; opacity:0;
-    animation: hintIn 0.6s cubic-bezier(.34,1.8,.64,1) forwards;
-    animation-delay: var(--hint-time);
-    box-shadow:0 0 30px rgba(255,209,102,0.3);
-  }
-  @keyframes hintIn { to { opacity:1; transform:scale(1.02); } }
+/* ================================================================
+   S-OPTS  —  Screen 4: question + options (no timer)
+   ================================================================ */
+.s-opts{justify-content:flex-start;padding-top:90px;}
+.s-opts .q-card{padding:42px;margin-bottom:32px;}
+.s-opts .q-text{font-size:50px;}
+.opts-list{width:100%;display:flex;flex-direction:column;gap:24px;}
+.opt{
+  display:flex;align-items:center;gap:24px;
+  background:rgba(255,255,255,.07);
+  border:3px solid rgba(255,255,255,.2);
+  border-radius:28px;padding:30px 34px;
+  font-size:42px;font-weight:700;text-align:left;
+  box-shadow:0 8px 28px rgba(0,0,0,.35);
+  opacity:0;
+}
+.opt.i0{animation:slideUp .45s ease-out .05s forwards;}
+.opt.i1{animation:slideUp .45s ease-out .18s forwards;}
+.opt.i2{animation:slideUp .45s ease-out .31s forwards;}
+.opt.i3{animation:slideUp .45s ease-out .44s forwards;}
+.obadge{
+  flex-shrink:0;width:66px;height:66px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:34px;font-weight:900;
+  background:linear-gradient(135deg,var(--t3),var(--t2));
+  box-shadow:0 0 20px color-mix(in srgb,var(--t3) 50%,transparent);
+}
 
-  /* ===================== 4. ANSWER REVEAL ===================== */
-  .answer-badge {
-    font-size:64px; font-weight:900; margin-bottom:50px;
-    background:linear-gradient(135deg,#00ff8c,#00e0ff);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    text-shadow:none;
-    animation: bounceIn 0.7s cubic-bezier(.34,1.8,.64,1) forwards;
-  }
-  .answer-slide .qp-options { width:100%; display:flex; flex-direction:column; gap:28px; }
-  .answer-slide .qp-option {
-    display:flex; align-items:center; gap:28px;
-    background:rgba(255,255,255,0.07); border:3px solid rgba(255,255,255,0.18);
-    border-radius:24px; padding:34px; font-size:42px; font-weight:700; text-align:left;
-  }
-  .answer-slide .qp-option.correct {
-    background:rgba(0,255,140,0.2); border-color:#00ff8c;
-    box-shadow:0 0 40px rgba(0,255,140,0.5);
-    animation: pulseCorrect 1.2s ease-in-out infinite;
-  }
-  @keyframes pulseCorrect { 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.03); } }
-  .answer-slide .qp-option.wrong { opacity:0.2; }
+/* ================================================================
+   S-TIMER  —  Screen 5: live timer phase (screen-recorded)
+   CSS vars: --qt (total), --qhint (1/3), --q5050 (2/3)
+   ================================================================ */
+.s-timer{justify-content:flex-start;padding-top:68px;}
+.s-timer .q-card{padding:40px;margin-bottom:24px;opacity:1;animation:none;}
+.s-timer .q-text{font-size:48px;}
 
-  /* Confetti */
-  .confetti-piece {
-    position:absolute; top:-40px; border-radius:3px; opacity:0.9;
-    animation-name: confettiFall; animation-timing-function: linear;
-    animation-iteration-count: infinite;
-  }
-  @keyframes confettiFall {
-    0% { transform: translateY(-40px) rotate(0deg); opacity:1; }
-    100% { transform: translateY(2000px) rotate(720deg); opacity:0.9; }
-  }
+/* Donut */
+.donut-wrap{position:relative;width:210px;height:210px;margin:0 auto 28px;}
+.donut-svg{transform:rotate(-90deg);}
+.d-bg {fill:none;stroke:rgba(255,255,255,.12);stroke-width:18;}
+.d-fill{
+  fill:none;stroke:url(#dg);stroke-width:18;stroke-linecap:round;
+  stroke-dasharray:565;stroke-dashoffset:0;
+  animation:timerDrain var(--qt,18s) linear forwards;
+}
+@keyframes timerDrain{to{stroke-dashoffset:565;}}
+.donut-num{
+  position:absolute;inset:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:64px;font-weight:900;
+}
 
-  /* ===================== 5. EXPLANATION ===================== */
-  .explanation-card {
-    width:100%; background:rgba(255,255,255,0.06);
-    border:3px solid rgba(255,255,255,0.15); border-radius:32px;
-    padding:60px; backdrop-filter: blur(6px);
-    box-shadow:0 0 50px rgba(0,224,255,0.3);
-    opacity:0; animation: fadeUp 0.8s ease-out 0.2s forwards;
-  }
-  .explanation-text { font-size:46px; line-height:1.7; font-weight:600; }
+/* Options in timer phase */
+.s-timer .opts-list{margin-bottom:24px;}
+.s-timer .opt{opacity:1;animation:none;}
+.s-timer .opt.elim{
+  animation:elimOpt .6s ease var(--q5050,12s) forwards;
+}
+@keyframes elimOpt{to{opacity:.07;transform:scale(.96);}}
 
-  /* ===================== 6. MISSION IMPOSSIBLE ===================== */
-  .mission-slide .bg-anim {
-    background:
-      radial-gradient(circle at 30% 20%, rgba(255,30,30,0.4), transparent 45%),
-      radial-gradient(circle at 70% 80%, rgba(255,120,0,0.35), transparent 45%),
-      linear-gradient(160deg,#1a0505,#3a0b0b 50%,#05030f);
-  }
-  .mission-label {
-    font-size:38px; font-weight:900; letter-spacing:8px; text-transform:uppercase;
-    color:#ff3b3b; margin-bottom:40px;
-    text-shadow:0 0 30px rgba(255,59,59,0.8);
-    animation: shakeLabel 0.6s ease-in-out infinite alternate;
-  }
-  @keyframes shakeLabel { from{ transform:rotate(-1deg);} to{ transform:rotate(1deg);} }
-  .mission-question { font-size:52px; font-weight:800; line-height:1.4; margin-bottom:46px; }
-  .mission-hint {
-    font-size:40px; font-weight:600; color:#ffd166;
-    background:rgba(255,209,102,0.12); border:2px dashed #ffd166;
-    border-radius:20px; padding:30px; opacity:0;
-    transition: opacity 0.5s ease, transform 0.5s ease;
-    transform: scale(0.9);
-  }
-  .mission-hint.shown { opacity:1; transform:scale(1); }
+/* Hint bar */
+.hint-bar{
+  width:100%;
+  background:rgba(255,209,102,.12);
+  border:2px dashed var(--t4);
+  border-radius:22px;padding:24px 34px;
+  font-size:38px;font-weight:600;color:var(--t4);
+  box-shadow:0 0 32px rgba(255,209,102,.28);
+  opacity:0;transform:scale(.93);
+  animation:hintPop .5s cubic-bezier(.34,1.8,.64,1) var(--qhint,6s) forwards;
+}
+@keyframes hintPop{to{opacity:1;transform:scale(1);}}
 
-  /* ===================== 7. CTA ===================== */
-  .cta-slide .bg-anim {
-    background:
-      radial-gradient(circle at 30% 30%, rgba(255,46,196,0.45), transparent 45%),
-      radial-gradient(circle at 70% 70%, rgba(0,224,255,0.4), transparent 45%),
-      linear-gradient(160deg,#1b0a3d,#3a0b6e 50%,#05030f);
-  }
-  .cta-text {
-    font-size:50px; font-weight:900; line-height:1.6; margin-bottom:50px;
-    animation: bounceIn 0.8s cubic-bezier(.34,1.8,.64,1) forwards;
-  }
-  .cta-url {
-    font-size:38px; font-weight:800; background:linear-gradient(135deg,#ff2ec4,#7b2ff7);
-    border-radius:50px; padding:28px 50px;
-    box-shadow:0 0 40px rgba(255,46,196,0.6);
-    animation: ctaPulse 1.4s ease-in-out infinite;
-  }
-  @keyframes ctaPulse { 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.05); } }
-  .cta-icons { margin-top:50px; font-size:64px; letter-spacing:30px; }
+/* ================================================================
+   S-ANSWER  —  Screen 6: correct answer highlighted
+   ================================================================ */
+.s-answer{justify-content:flex-start;padding-top:88px;}
+.answer-badge{
+  font-size:66px;font-weight:900;margin-bottom:44px;
+  background:linear-gradient(135deg,var(--t5),var(--t3));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:popIn .7s cubic-bezier(.34,1.8,.64,1) forwards;
+}
+.s-answer .opts-list{width:100%;}
+.s-answer .opt{opacity:1;animation:none;}
+.s-answer .opt.correct{
+  background:rgba(0,255,140,.2);border-color:var(--t5);
+  box-shadow:0 0 52px color-mix(in srgb,var(--t5) 55%,transparent);
+  animation:pulse 1.3s ease-in-out infinite;
+}
+.s-answer .opt.wrong{opacity:.18;}
+/* confetti */
+.cf{position:absolute;top:-42px;border-radius:3px;opacity:.9;}
+
+/* ================================================================
+   S-EXPL  —  Screen 7: explanation
+   ================================================================ */
+.s-expl{justify-content:center;}
+.expl-card{
+  width:100%;
+  background:rgba(255,255,255,.07);
+  border:3px solid rgba(255,255,255,.16);
+  border-radius:36px;padding:60px;
+  box-shadow:0 0 52px color-mix(in srgb,var(--t3) 30%,transparent);
+  opacity:0;animation:slideUp .8s ease-out .2s forwards;
+}
+.expl-label{
+  font-size:34px;font-weight:900;letter-spacing:7px;text-transform:uppercase;
+  color:var(--t3);margin-bottom:34px;
+}
+.expl-text{font-size:46px;line-height:1.7;font-weight:600;}
+
+/* ================================================================
+   S-CTA1  —  Screen 8: affiliate CTA
+   ================================================================ */
+.s-cta1 .cta-head{
+  font-size:56px;font-weight:900;line-height:1.4;margin-bottom:44px;
+  opacity:0;animation:popIn .8s cubic-bezier(.34,1.8,.64,1) .1s forwards;
+}
+.s-cta1 .cta-url{
+  font-size:38px;font-weight:800;
+  background:linear-gradient(135deg,var(--t4),var(--t1));
+  border-radius:60px;padding:26px 52px;
+  box-shadow:0 0 44px color-mix(in srgb,var(--t4) 60%,transparent);
+  opacity:0;animation:slideUp .7s ease-out .55s forwards;
+  margin-bottom:44px;
+}
+.cta-icon{font-size:80px;letter-spacing:24px;opacity:0;animation:slideUp .6s ease-out .9s forwards;}
+
+/* ================================================================
+   S-CTA2  —  Screen 9: ONS / live challenge CTA
+   ================================================================ */
+.s-cta2 .cta-head{
+  font-size:56px;font-weight:900;line-height:1.4;margin-bottom:44px;
+  opacity:0;animation:popIn .8s cubic-bezier(.34,1.8,.64,1) .1s forwards;
+}
+.s-cta2 .cta-url{
+  font-size:38px;font-weight:800;
+  background:linear-gradient(135deg,var(--t3),var(--t2));
+  border-radius:60px;padding:26px 52px;
+  box-shadow:0 0 44px color-mix(in srgb,var(--t3) 60%,transparent);
+  opacity:0;animation:slideUp .7s ease-out .55s forwards;
+  margin-bottom:44px;
+}
+
+/* ================================================================
+   S-MISSION-Q  —  Screen 10: Mission Impossible question
+   ================================================================ */
+.mission-label{
+  font-size:40px;font-weight:900;letter-spacing:8px;text-transform:uppercase;
+  color:#ff3b3b;text-shadow:0 0 34px rgba(255,59,59,.8);
+  animation:shake .5s ease-in-out infinite alternate;
+  margin-bottom:44px;
+}
+.mission-q{
+  font-size:62px;font-weight:900;line-height:1.35;
+  background:rgba(255,255,255,.07);
+  border:3px solid rgba(255,59,59,.4);border-radius:32px;padding:48px;
+  box-shadow:0 0 62px rgba(255,59,59,.28);
+  opacity:0;animation:popIn .7s cubic-bezier(.34,1.8,.64,1) .1s forwards;
+}
+
+/* ================================================================
+   S-MISSION-H  —  Screen 11: Mission Impossible hint revealed
+   ================================================================ */
+.s-mission-h .mission-q{font-size:52px;padding:38px;margin-bottom:32px;opacity:1;animation:none;}
+.hint-reveal{
+  width:100%;
+  font-size:44px;font-weight:600;color:var(--t4);
+  background:rgba(255,209,102,.12);
+  border:2px dashed var(--t4);border-radius:24px;padding:32px 40px;
+  box-shadow:0 0 32px rgba(255,209,102,.32);
+  opacity:0;transform:scale(.93);
+  animation:hintPop .5s cubic-bezier(.34,1.8,.64,1) .3s forwards;
+}
+.trigger-line{color:#ffa0a0;font-size:36px;display:block;margin-top:16px;}
+
+/* ================================================================
+   S-RETRY  —  Screen 12: insist reply/save/retry
+   ================================================================ */
+.s-retry .retry-head{
+  font-size:72px;font-weight:900;line-height:1.25;margin-bottom:44px;
+  opacity:0;animation:popIn .8s cubic-bezier(.34,1.8,.64,1) .1s forwards;
+}
+.s-retry .retry-body{
+  font-size:48px;font-weight:700;color:var(--t4);line-height:1.55;
+  opacity:0;animation:slideUp .7s ease-out .55s forwards;
+  margin-bottom:48px;
+}
+.s-retry .retry-icons{
+  font-size:74px;letter-spacing:22px;
+  opacity:0;animation:slideUp .6s ease-out 1s forwards;
+}
+
+/* ================================================================
+   S-FINAL  —  Screen 13: final CTA
+   ================================================================ */
+.s-final .final-head{
+  font-size:70px;font-weight:900;line-height:1.25;margin-bottom:46px;
+  opacity:0;animation:popIn .8s cubic-bezier(.34,1.8,.64,1) .1s forwards;
+}
+.s-final .final-sub{
+  font-size:46px;font-weight:700;color:var(--t4);line-height:1.5;
+  opacity:0;animation:slideUp .7s ease-out .55s forwards;
+  margin-bottom:48px;
+}
+.s-final .final-url{
+  font-size:40px;font-weight:800;
+  background:linear-gradient(135deg,var(--t1),var(--t2));
+  border-radius:60px;padding:26px 52px;
+  box-shadow:0 0 44px color-mix(in srgb,var(--t1) 60%,transparent);
+  opacity:0;animation:slideUp .7s ease-out .95s forwards;
+  margin-bottom:50px;
+}
+.s-final .final-icons{
+  font-size:72px;letter-spacing:24px;
+  opacity:0;animation:slideUp .6s ease-out 1.3s forwards;
+}
+
 </style>
 </head>
-<body>
+<body style="--t1:{{t1}};--t2:{{t2}};--t3:{{t3}};--t4:{{t4}};--t5:{{t5}};--bg-a:{{bg-a}};--bg-b:{{bg-b}};">
 
-  <!-- 1. HOOK / BRAND (0-3s) -->
-  <div class="screen hook-slide active">
-    <div class="bg-anim"></div>
-    <div class="bg-grid"></div>
-    <div class="bg-orb orb1"></div>
-    <div class="bg-orb orb2"></div>
-    <div class="bg-orb orb3"></div>
-    <div class="sparkle s1">✨</div>
-    <div class="sparkle s2">⭐</div>
-    <div class="sparkle s3">💫</div>
-    <div class="sparkle s4">✨</div>
-    <div class="content">
-      <div class="logo-badge">JAAS</div>
-      <div class="hook-text glow-text">{{hook_phrase}}</div>
+<!-- ── SCREEN 1: HOOK ───────────────────────────────────────── -->
+<div class="screen s-hook" id="s-hook">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>
+  <div class="sp a">✨</div><div class="sp b">⭐</div><div class="sp c">💫</div><div class="sp d">✨</div>
+  <div class="cnt">
+    <div class="logo">JAAS</div>
+    <div class="hook-text glow">{{hook_phrase}}</div>
+  </div>
+</div>
+
+<!-- ── SCREEN 2: INTRO ──────────────────────────────────────── -->
+<div class="screen s-intro" id="s-intro">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o1"></div><div class="orb o2"></div>
+  <div class="cnt">
+    <div class="eyebrow">🎯 Today's Quiz Topic</div>
+    <div class="topic glow">{{topic}}</div>
+    <div class="intro-body">{{quiz_intro_speech}}</div>
+  </div>
+</div>
+
+<!-- ── SCREEN 3: QUESTION APPEARS (no options) ──────────────── -->
+<div class="screen s-q-appear" id="s-q-appear">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o1"></div><div class="orb o2"></div>
+  <div class="cnt">
+    <div class="q-card">
+      <div class="q-label">🧩 Your Challenge</div>
+      <div class="q-text">{{question}}</div>
     </div>
   </div>
+</div>
 
-  <!-- 2. INTRO (3-9s) -->
-  <div class="screen intro-slide">
-    <div class="bg-anim"></div>
-    <div class="bg-grid"></div>
-    <div class="bg-orb orb1"></div>
-    <div class="bg-orb orb2"></div>
-    <div class="content">
-      <div class="intro-label">🎯 Today's Quiz Topic</div>
-      <div class="intro-topic glow-text">{{topic}}</div>
-      <div class="intro-sub">{{engagement_text}}</div>
+<!-- ── SCREEN 4: OPTIONS APPEAR ─────────────────────────────── -->
+<div class="screen s-opts" id="s-opts">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o1"></div><div class="orb o2"></div>
+  <div class="cnt">
+    <div class="q-card"><div class="q-text">{{question}}</div></div>
+    <div class="opts-list">
+      <div class="opt i0"><span class="obadge">A</span>{{opt0}}</div>
+      <div class="opt i1"><span class="obadge">B</span>{{opt1}}</div>
+      <div class="opt i2"><span class="obadge">C</span>{{opt2}}</div>
+      <div class="opt i3"><span class="obadge">D</span>{{opt3}}</div>
     </div>
   </div>
+</div>
 
-  <!-- 3. QUESTION PHASE (this whole block is screen-recorded) -->
-  <div class="screen question-phase" style="--qtime: {{qtime}}s; --hint-time: {{hint_time}}s; --fiftyfifty-time: {{fiftyfifty_time}}s;">
-    <div class="bg-anim"></div>
-    <div class="bg-grid"></div>
-    <div class="bg-orb orb1"></div>
-    <div class="bg-orb orb2"></div>
-    <div class="content">
-      <div class="qp-card-question">
-        <div class="qp-question">{{question}}</div>
-      </div>
+<!-- ── SCREEN 5: TIMER PHASE (screen-recorded) ──────────────── -->
+<div class="screen s-timer" id="s-timer"
+     style="--qt:{{thinking_time}}s;--qhint:{{hint_time}}s;--q5050:{{fiftyfifty_time}}s;">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o1"></div><div class="orb o2"></div>
+  <div class="cnt">
+    <div class="q-card"><div class="q-text">{{question}}</div></div>
+    <div class="donut-wrap">
+      <svg class="donut-svg" viewBox="0 0 220 220" width="210" height="210">
+        <defs>
+          <linearGradient id="dg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%"   stop-color="#00ffa3"/>
+            <stop offset="50%"  stop-color="#ffcc00"/>
+            <stop offset="100%" stop-color="#ff3b3b"/>
+          </linearGradient>
+        </defs>
+        <circle class="d-bg"   cx="110" cy="110" r="90"/>
+        <circle class="d-fill" cx="110" cy="110" r="90"/>
+      </svg>
+      <div class="donut-num">⏱</div>
+    </div>
+    <div class="opts-list">
+      <div class="opt {{e0}}"><span class="obadge">A</span>{{opt0}}</div>
+      <div class="opt {{e1}}"><span class="obadge">B</span>{{opt1}}</div>
+      <div class="opt {{e2}}"><span class="obadge">C</span>{{opt2}}</div>
+      <div class="opt {{e3}}"><span class="obadge">D</span>{{opt3}}</div>
+    </div>
+    <div class="hint-bar">💡 {{hint}}</div>
+  </div>
+</div>
 
-      <div class="qp-timer-wrap">
-        <svg class="qp-timer-ring" viewBox="0 0 220 220">
-          <defs>
-            <linearGradient id="timerGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#00ffa3"/>
-              <stop offset="50%" stop-color="#ffcc00"/>
-              <stop offset="100%" stop-color="#ff3b3b"/>
-            </linearGradient>
-          </defs>
-          <circle class="qp-timer-bg" cx="110" cy="110" r="100"/>
-          <circle class="qp-timer-fill" cx="110" cy="110" r="100"/>
-        </svg>
-        <div class="qp-timer-number">⏱️</div>
-      </div>
-
-      <div class="qp-options">
-        <div class="qp-option {{opt0_class}}"><span class="qp-option-badge">A</span>{{options[0]}}</div>
-        <div class="qp-option {{opt1_class}}"><span class="qp-option-badge">B</span>{{options[1]}}</div>
-        <div class="qp-option {{opt2_class}}"><span class="qp-option-badge">C</span>{{options[2]}}</div>
-        <div class="qp-option {{opt3_class}}"><span class="qp-option-badge">D</span>{{options[3]}}</div>
-      </div>
-      <div class="qp-hint">💡 {{hint}}</div>
+<!-- ── SCREEN 6: ANSWER REVEAL ──────────────────────────────── -->
+<div class="screen s-answer" id="s-answer">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o1"></div><div class="orb o2"></div>
+  <div class="cf" style="left:7%;  width:18px;height:30px;background:var(--t1);animation:cfFall 2.4s 0s    linear infinite;"></div>
+  <div class="cf" style="left:19%; width:14px;height:24px;background:var(--t3);animation:cfFall 2.0s 0.2s  linear infinite;"></div>
+  <div class="cf" style="left:34%; width:20px;height:34px;background:var(--t4);animation:cfFall 2.6s 0.05s linear infinite;"></div>
+  <div class="cf" style="left:52%; width:16px;height:28px;background:var(--t2);animation:cfFall 2.2s 0.3s  linear infinite;"></div>
+  <div class="cf" style="left:67%; width:18px;height:30px;background:var(--t5);animation:cfFall 2.5s 0.1s  linear infinite;"></div>
+  <div class="cf" style="left:82%; width:14px;height:24px;background:var(--t1);animation:cfFall 2.1s 0.25s linear infinite;"></div>
+  <div class="cf" style="left:91%; width:20px;height:34px;background:var(--t3);animation:cfFall 2.7s 0.15s linear infinite;"></div>
+  <div class="cnt">
+    <div class="answer-badge">✅ {{correct_answer}}</div>
+    <div class="opts-list">
+      <div class="opt {{r0}}"><span class="obadge">A</span>{{opt0}}</div>
+      <div class="opt {{r1}}"><span class="obadge">B</span>{{opt1}}</div>
+      <div class="opt {{r2}}"><span class="obadge">C</span>{{opt2}}</div>
+      <div class="opt {{r3}}"><span class="obadge">D</span>{{opt3}}</div>
     </div>
   </div>
+</div>
 
-  <!-- 4. ANSWER REVEAL (after question phase) -->
-  <div class="screen answer-slide">
-    <div class="bg-anim"></div>
-    <div class="bg-grid"></div>
-    <div class="bg-orb orb1"></div>
-    <div class="bg-orb orb2"></div>
-    <!-- confetti pieces -->
-    <div class="confetti-piece" style="left:8%;  width:18px; height:30px; background:#ff2ec4; animation-duration:2.4s; animation-delay:0s;"></div>
-    <div class="confetti-piece" style="left:20%; width:14px; height:24px; background:#00e0ff; animation-duration:2.0s; animation-delay:0.2s;"></div>
-    <div class="confetti-piece" style="left:35%; width:20px; height:34px; background:#ffd166; animation-duration:2.6s; animation-delay:0.05s;"></div>
-    <div class="confetti-piece" style="left:50%; width:16px; height:28px; background:#7b2ff7; animation-duration:2.2s; animation-delay:0.3s;"></div>
-    <div class="confetti-piece" style="left:65%; width:18px; height:30px; background:#00ff8c; animation-duration:2.5s; animation-delay:0.1s;"></div>
-    <div class="confetti-piece" style="left:80%; width:14px; height:24px; background:#ff2ec4; animation-duration:2.1s; animation-delay:0.25s;"></div>
-    <div class="confetti-piece" style="left:90%; width:20px; height:34px; background:#00e0ff; animation-duration:2.7s; animation-delay:0.15s;"></div>
-    <div class="confetti-piece" style="left:14%; width:16px; height:28px; background:#ffcc00; animation-duration:2.3s; animation-delay:0.4s;"></div>
-    <div class="confetti-piece" style="left:60%; width:18px; height:30px; background:#ff6b6b; animation-duration:2.45s; animation-delay:0.35s;"></div>
-    <div class="content">
-      <div class="answer-badge">✅ {{correct_answer}}</div>
-      <div class="qp-options">
-        <div class="qp-option {{rev0_class}}"><span class="qp-option-badge">A</span>{{options[0]}}</div>
-        <div class="qp-option {{rev1_class}}"><span class="qp-option-badge">B</span>{{options[1]}}</div>
-        <div class="qp-option {{rev2_class}}"><span class="qp-option-badge">C</span>{{options[2]}}</div>
-        <div class="qp-option {{rev3_class}}"><span class="qp-option-badge">D</span>{{options[3]}}</div>
-      </div>
+<!-- ── SCREEN 7: EXPLANATION ────────────────────────────────── -->
+<div class="screen s-expl" id="s-expl">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o1"></div><div class="orb o3"></div>
+  <div class="cnt">
+    <div class="chip">🧠 Why?</div>
+    <div class="expl-card">
+      <div class="expl-label">Explanation</div>
+      <div class="expl-text">{{explanation}}</div>
     </div>
   </div>
+</div>
 
-  <!-- 5. EXPLANATION -->
-  <div class="screen explanation-slide">
-    <div class="bg-anim"></div>
-    <div class="bg-grid"></div>
-    <div class="bg-orb orb1"></div>
-    <div class="bg-orb orb3"></div>
-    <div class="content">
-      <div class="badge-label">🧠 Why?</div>
-      <div class="explanation-card">
-        <div class="explanation-text">{{explanation}}</div>
-      </div>
+<!-- ── SCREEN 8: CTA 1 — AFFILIATE ──────────────────────────── -->
+<div class="screen s-cta1" id="s-cta1">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o1"></div><div class="orb o2"></div>
+  <div class="cnt">
+    <div class="chip">🎁 Special Offer</div>
+    <div class="cta-head glow">{{cta1_text}}</div>
+    <div class="cta-url">🔗 {{cta1_url}}</div>
+    <div class="cta-icon">💰</div>
+  </div>
+</div>
+
+<!-- ── SCREEN 9: CTA 2 — ONS / LIVE CHALLENGE ───────────────── -->
+<div class="screen s-cta2" id="s-cta2">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o2"></div><div class="orb o3"></div>
+  <div class="cnt">
+    <div class="chip">🏆 Live Challenge</div>
+    <div class="cta-head glow">{{cta2_text}}</div>
+    <div class="cta-url">🌐 {{blog_page_url}}</div>
+    <div class="cta-icon">🪙</div>
+  </div>
+</div>
+
+<!-- ── SCREEN 10: MISSION IMPOSSIBLE — question only ─────────── -->
+<div class="screen s-mission-q" id="s-mission-q">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o1"></div><div class="orb o2"></div>
+  <div class="cnt">
+    <div class="mission-label">🔥 Mission Impossible</div>
+    <div class="mission-q">{{mission_question}}</div>
+  </div>
+</div>
+
+<!-- ── SCREEN 11: MISSION IMPOSSIBLE — hint revealed ─────────── -->
+<div class="screen s-mission-h" id="s-mission-h">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o1"></div><div class="orb o2"></div>
+  <div class="cnt">
+    <div class="mission-label">🔥 Mission Impossible</div>
+    <div class="mission-q">{{mission_question}}</div>
+    <div class="hint-reveal">
+      💡 {{mission_hint}}
+      <span class="trigger-line">{{mission_trigger}}</span>
     </div>
   </div>
+</div>
 
-  <!-- 6. MISSION IMPOSSIBLE (two-stage: question, then +hint) -->
-  <div class="screen mission-slide">
-    <div class="bg-anim"></div>
-    <div class="bg-grid"></div>
-    <div class="bg-orb orb1"></div>
-    <div class="bg-orb orb2"></div>
-    <div class="content">
-      <div class="mission-label">🔥 Mission Impossible</div>
-      <div class="mission-question">{{mission_question}}</div>
-      <div class="mission-hint">💡 {{mission_hint}}<br>{{mission_trigger}}</div>
-    </div>
+<!-- ── SCREEN 12: RETRY / REPLY / SAVE ──────────────────────── -->
+<div class="screen s-retry" id="s-retry">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o1"></div><div class="orb o2"></div>
+  <div class="cnt">
+    <div class="retry-head glow">🤔 Can you solve it?</div>
+    <div class="retry-body">Reply with your answer!<br>Save this video &amp; retry later.<br>Challenge your friends! 👇</div>
+    <div class="retry-icons">💬 🔖 📤</div>
   </div>
+</div>
 
-  <!-- 7. CTA -->
-  <div class="screen cta-slide">
-    <div class="bg-anim"></div>
-    <div class="bg-grid"></div>
-    <div class="bg-orb orb1"></div>
-    <div class="bg-orb orb2"></div>
-    <div class="bg-orb orb3"></div>
-    <div class="content">
-      <div class="cta-text glow-text">{{cta_text}}</div>
-      <div class="cta-url">🌐 {{cta_url}}</div>
-      <div class="cta-icons">👍 🔔 🔁</div>
-    </div>
+<!-- ── SCREEN 13: FINAL CTA ──────────────────────────────────── -->
+<div class="screen s-final" id="s-final">
+  <div class="bg"></div><div class="bg-grid"></div>
+  <div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>
+  <div class="cnt">
+    <div class="final-head glow">👆 Subscribe for the Answer!</div>
+    <div class="final-sub">{{final_cta_text}}</div>
+    <div class="final-url">🌐 {{blog_page_url}}</div>
+    <div class="final-icons">❤️ 🔔 📤 🏆</div>
   </div>
+</div>
 
 </body>
 </html>
