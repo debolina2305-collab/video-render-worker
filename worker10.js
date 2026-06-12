@@ -12,12 +12,15 @@ const { v4: uuidv4 } = require('uuid');
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
-if (!supabaseUrl || !supabaseKey) {
+console.log('SUPABASE_URL from env:', supabaseUrl);
+console.log('SUPABASE_SERVICE_KEY from env:', supabaseKey ? '*** (set)' : 'NOT SET');
+
+const cleanSupabaseUrl = supabaseUrl ? supabaseUrl.replace(/\/$/, '') : null;
+if (!cleanSupabaseUrl || !supabaseKey) {
   console.error('Missing Supabase credentials');
   process.exit(1);
 }
 
-const cleanSupabaseUrl = supabaseUrl.replace(/\/$/, '');
 const baseHeaders = {
   'apikey': supabaseKey,
   'Authorization': `Bearer ${supabaseKey}`,
@@ -26,15 +29,25 @@ const baseHeaders = {
 
 async function fetchSupabase(path, options = {}) {
   const url = `${cleanSupabaseUrl}/rest/v1/${path}`;
+  console.log(`[FETCH] ${options.method || 'GET'} ${url}`);
   const headers = { ...baseHeaders, ...(options.headers || {}) };
   if (options.method && ['POST', 'PATCH', 'PUT'].includes(options.method)) {
     headers['Prefer'] = 'return=representation';
   }
-  const res = await fetch(url, { ...options, headers });
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-  const text = await res.text();
-  if (!text.trim()) return null;
-  return JSON.parse(text);
+  const response = await fetch(url, { ...options, headers });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`HTTP ${response.status}: ${errorText}`);
+  }
+  const text = await response.text();
+  console.log(`[FETCH] Response length: ${text.length} chars`);
+  if (!text || text.trim() === '') return null;
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    console.error(`[FETCH] Failed to parse JSON. Raw response: ${text.substring(0, 200)}`);
+    throw err;
+  }
 }
 
 // ========================
@@ -60,17 +73,23 @@ async function tts(text, voice, outPath, fallbackSec = 1) {
 const FIXED_DIR = '/tmp/fixed_audio';
 async function getFixedPhrase(key, text, voice) {
   await fs.mkdir(FIXED_DIR, { recursive: true });
-  const path = `${FIXED_DIR}/${key}_${voice}.mp3`;
-  try { await fs.access(path); return path; } catch { /* generate */ }
-  await tts(text, voice, path);
-  return path;
+  const cachePath = `${FIXED_DIR}/${key}_${voice}.mp3`;
+  try {
+    await fs.access(cachePath);
+    return cachePath;
+  } catch {
+    await tts(text, voice, cachePath);
+    return cachePath;
+  }
 }
 
 // ========================
 // Unique background CSS
 // ========================
 function getUniqueBackgroundCSS(quiz) {
-  if (quiz.quiz_background_css) return quiz.quiz_background_css;
+  if (quiz.quiz_background_css && quiz.quiz_background_css.trim()) {
+    return quiz.quiz_background_css;
+  }
   // generate random gradient + subtle pattern
   const hue1 = Math.floor(Math.random() * 360);
   const hue2 = (hue1 + 40) % 360;
@@ -108,8 +127,10 @@ async function buildHTML(quiz, qIdx, workDir, lang, thinkingTimeSec, engagementT
   const eliminateIdx = [0,1,2,3].filter(i => !keep5050.includes(i) && !keep5050.includes(String(i)));
   const ctaUrl = `jaasblog.online/q/${quiz.niche}/${lang}/${quiz.topic_slug}`;
 
-  // Load base template (from earlier – must exist in repo as quiz_template.html)
-  let template = await fs.readFile(path.join(__dirname, 'quiz_template.html'), 'utf8');
+  // Load base template from repository root
+  const templatePath = path.join(__dirname, 'quiz_template.html');
+  console.log(`Loading template from: ${templatePath}`);
+  let template = await fs.readFile(templatePath, 'utf8');
 
   const replacements = {
     '{{hook_phrase}}': quiz.hook_phrase || '🔥 STOP SCROLLING!',
@@ -148,6 +169,7 @@ async function buildHTML(quiz, qIdx, workDir, lang, thinkingTimeSec, engagementT
   }
   const htmlPath = path.join(workDir, 'index.html');
   await fs.writeFile(htmlPath, template);
+  console.log(`HTML written to ${htmlPath}, size: ${template.length} bytes`);
   return htmlPath;
 }
 
@@ -161,10 +183,22 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   const customBg = getUniqueBackgroundCSS(quiz);
 
   const htmlPath = await buildHTML(quiz, qIdx, workDir, lang, thinkingSec, engagementText, customBg);
-  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+  
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+  });
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920 });
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+  console.log(`Loading HTML file: ${htmlPath}`);
+  const exists = await fs.access(htmlPath).then(() => true).catch(() => false);
+  console.log(`File exists: ${exists}`);
+  if (!exists) throw new Error('HTML file not found');
+
+  // Load with increased timeout and 'load' event
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'load', timeout: 120000 });
+  console.log('Page loaded successfully');
 
   const clips = [];
 
@@ -205,15 +239,13 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   introDur = Math.max(introDur, 4);
   clips.push(await imageClip(introImg, introAudio, 'intro_clip', introDur));
 
-  // ===== 3. "Here is your challenge" – TTS only, no text = static screen? Use current slide (still intro) or black? We'll use a simple blank with logo or just keep intro frame longer? Better: add a small silent gap? I'll use a 0.5s pause after intro speech, but we already have natural gap from audio. The user wants TTS without text – we can use a transparent slide? I'll add a short silent frame after intro. =====
+  // ===== 3. "Here is your challenge" – TTS only, no text on screen =====
   const challengeAudio = await getFixedPhrase('challenge', 'Here is your challenge. Solve it.', voice);
   const challengeDur = await getAudioDuration(challengeAudio);
-  // Use the intro image again (no new text on screen)
-  const challengeImg = await screenShot('.intro-slide', 'challenge_static'); // reuses intro slide background
+  const challengeImg = await screenShot('.intro-slide', 'challenge_static');
   clips.push(await imageClip(challengeImg, challengeAudio, 'challenge_clip', challengeDur));
 
-  // ===== 4. Question appears with animation (we rely on CSS animation on .question-phase) – we will screen‑record the question phase =====
-  // Show question phase, let CSS timer and lifelines animate
+  // ===== 4. Question appears – we will record the whole animated question phase =====
   await page.evaluate(() => {
     document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
     const q = document.querySelector('.question-phase');
@@ -227,30 +259,26 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   await recorder.start(questionVideoRaw);
   await new Promise(r => setTimeout(r, thinkingSec * 1000));
   await recorder.stop();
+  console.log(`Recorded question phase: ${thinkingSec}s`);
 
-  // ===== 5. "and your options are" – TTS only, not on screen. Use a short frame (still the question screen) =====
+  // ===== 5. "and your options are" – TTS only =====
   const optionsAudio = await getFixedPhrase('options', 'And your options are.', voice);
   const optionsDur = await getAudioDuration(optionsAudio);
   const optionsImg = await screenShot('.question-phase', 'options_static');
   clips.push(await imageClip(optionsImg, optionsAudio, 'options_clip', optionsDur));
 
-  // Now add the recorded question phase as a clip (it already contains timer, hint, 50‑50 animations and correct/wrong highlighting at end)
+  // Add the recorded question phase as a clip
   const questionDur = await getVideoDuration(questionVideoRaw);
   clips.push({ path: questionVideoRaw, duration: questionDur });
 
-  // ===== 6. Question and options already on screen – done above =====
-  // ===== 7. Thinking time with timer – included in recording =====
-  // ===== 8. Hint at 1/3 – CSS handles it =====
-  // ===== 9. 50‑50 at 2/3 – CSS handles it =====
-  // ===== 10. After countdown, TTS "time up and correct answer is" – no text on screen =====
+  // ===== 6-9 already in recording =====
+  // ===== 10. "Time up and correct answer is" =====
   const timeupAudio = path.join(workDir, 'timeup.mp3');
   await tts(`Time's up. The correct answer is ${quiz[`correct_answer_${qIdx}`] || ''}.`, voice, timeupAudio, 3);
   const timeupDur = await getAudioDuration(timeupAudio);
-  // Use the answer‑slide (already styled) but without extra text? We'll use a static screenshot of answer‑slide (which shows the correct answer highlighted)
   const answerImg = await screenShot('.answer-slide', 'answer_static');
   clips.push(await imageClip(answerImg, timeupAudio, 'timeup_clip', timeupDur));
 
-  // ===== 11. Correct answer highlighted and wrong dimmed – already in answer‑slide CSS =====
   // ===== 12. Explanation =====
   const explImg = await screenShot('.explanation-slide', 'explanation');
   const explAudio = path.join(workDir, 'explanation.mp3');
@@ -267,8 +295,7 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   clips.push(await imageClip(cta1Img, cta1Audio, 'cta1_clip', cta1Dur));
 
   // ===== 14. CTA 2 – website challenge =====
-  const cta2Img = await screenShot('.cta-slide', 'cta2'); // reuse same slide but different text overlay? We'll use a separate div in template for CTA2. For simplicity, we'll use same slide but with cta2_text placeholder.
-  // Actually we need a separate HTML slide for CTA2. I'll modify template to include second CTA slide. But to avoid template change, we'll use a new screenshot after changing content via evaluate. Simpler: we'll create a second CTA slide in the template. Let's assume template has .cta2-slide. I'll include it. For now, I'll reuse the same slide but change text via JS.
+  // Change CTA slide text dynamically
   await page.evaluate(text => {
     const el = document.querySelector('.cta-slide .cta-text');
     if (el) el.textContent = text;
@@ -281,20 +308,18 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   const cta2Dur = await getAudioDuration(cta2Audio);
   clips.push(await imageClip(cta2ImgCustom, cta2Audio, 'cta2_clip', cta2Dur));
 
-  // ===== 15. Mission Impossible question (large bold) =====
+  // ===== 15. Mission Impossible question =====
   const missionQImg = await screenShot('.mission-slide', 'mission_q');
   const missionQAudio = path.join(workDir, 'mission_q.mp3');
   await tts(quiz.mission_impossible_question, voice, missionQAudio, 3);
   const missionQDur = await getAudioDuration(missionQAudio);
   clips.push(await imageClip(missionQImg, missionQAudio, 'mission_q_clip', missionQDur));
 
-  // ===== 16. Mission hint after 2.5 sec – we add a short pause then hint =====
-  // First, a short silence gap (2.5 sec) using the same image
+  // ===== 16. Mission hint after 2.5 sec =====
   const gapAudio = path.join(workDir, 'gap.mp3');
   await execPromise(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t 2.5 -q:a 9 -acodec libmp3lame "${gapAudio}"`);
   clips.push(await imageClip(missionQImg, gapAudio, 'gap_clip', 2.5));
 
-  // Now show hint
   await page.evaluate(() => {
     const hintEl = document.querySelector('.mission-hint');
     if (hintEl) hintEl.classList.add('shown');
@@ -307,18 +332,18 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   const missionHintDur = await getAudioDuration(missionHintAudio);
   clips.push(await imageClip(missionHintImg, missionHintAudio, 'mission_hint_clip', missionHintDur));
 
-  // ===== 17. Final CTA: Like, share, subscribe, and get answer =====
-  const finalCtaImg = await screenShot('.cta-slide', 'final_cta'); // reuse slide but change text
+  // ===== 17. Final CTA: Like, share, subscribe =====
   await page.evaluate(() => {
     const el = document.querySelector('.cta-slide .cta-text');
     if (el) el.textContent = '👍 Like, Share, & Challenge your friend! Subscribe to get the answer to Mission Impossible!';
   });
-  const finalCtaImgCustom = path.join(workDir, 'final_cta.png');
-  await page.screenshot({ path: finalCtaImgCustom });
+  await new Promise(r => setTimeout(r, 200));
+  const finalCtaImg = path.join(workDir, 'final_cta.png');
+  await page.screenshot({ path: finalCtaImg });
   const finalAudio = path.join(workDir, 'final.mp3');
   await tts('Like, share, and challenge your friend! Subscribe to get the answer to the mission impossible question.', voice, finalAudio, 5);
   const finalDur = await getAudioDuration(finalAudio);
-  clips.push(await imageClip(finalCtaImgCustom, finalAudio, 'final_cta_clip', finalDur));
+  clips.push(await imageClip(finalCtaImg, finalAudio, 'final_cta_clip', finalDur));
 
   await browser.close();
 
@@ -328,11 +353,17 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   await fs.writeFile(listPath, concatList);
   const outputPath = path.join(workDir, 'final.mp4');
   await execPromise(`ffmpeg -y -f concat -safe 0 -i "${listPath}" -c:v libx264 -c:a aac -movflags +faststart "${outputPath}"`);
+  console.log(`Final video assembled: ${outputPath}`);
   return outputPath;
 }
 
+async function getVideoDuration(videoPath) {
+  const { stdout } = await execPromise(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`);
+  return parseFloat(stdout.trim());
+}
+
 // ========================
-// Job processor (same as before)
+// Job processor
 // ========================
 async function processJobs() {
   console.log('Checking pending video jobs...');
