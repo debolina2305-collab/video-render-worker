@@ -23,39 +23,73 @@ if (!cleanSupabaseUrl || !supabaseKey) {
   process.exit(1);
 }
 
-// Supabase REST API helpers
-const headers = {
+// Supabase REST API headers
+const baseHeaders = {
   'apikey': supabaseKey,
   'Authorization': `Bearer ${supabaseKey}`,
   'Content-Type': 'application/json'
 };
 
+// ========================
+// Enhanced fetchSupabase with empty response handling
+// ========================
 async function fetchSupabase(path, options = {}) {
   const url = `${cleanSupabaseUrl}/rest/v1/${path}`;
-  console.log('Fetching:', url);
-  const res = await fetch(url, { headers, ...options });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HTTP ${res.status}: ${text}`);
+  console.log(`[FETCH] ${options.method || 'GET'} ${url}`);
+
+  // Merge headers
+  const headers = { ...baseHeaders, ...(options.headers || {}) };
+
+  // For modifications, ask Supabase to return the updated row (to avoid empty body)
+  if (options.method && ['POST', 'PATCH', 'PUT'].includes(options.method)) {
+    headers['Prefer'] = 'return=representation';
   }
-  return res.json();
+
+  const response = await fetch(url, {
+    ...options,
+    headers
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`HTTP ${response.status}: ${errorText}`);
+  }
+
+  // Get response as text first
+  const text = await response.text();
+  console.log(`[FETCH] Response length: ${text.length} chars`);
+
+  if (!text || text.trim() === '') {
+    // Empty response (e.g., DELETE, or PATCH without Prefer header fallback)
+    return null;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    console.error(`[FETCH] Failed to parse JSON. Raw response: ${text.substring(0, 200)}`);
+    throw err;
+  }
 }
 
 // ========================
-// Main worker
+// Main job processor
 // ========================
 async function processJobs() {
   console.log('Checking for pending video jobs...');
   try {
+    // Get one pending job
     const jobs = await fetchSupabase(
       'quiz_queue?job_type=eq.video_render&status=eq.pending&order=created_at.asc&limit=1'
     );
-    if (!jobs.length) {
+    if (!jobs || jobs.length === 0) {
       console.log('No pending jobs');
       return;
     }
     const job = jobs[0];
     console.log(`Processing job ${job.id} for quiz ${job.quiz_id}`);
+
+    // Mark as processing
     await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'processing', started_at: new Date().toISOString() })
@@ -63,48 +97,52 @@ async function processJobs() {
 
     // Fetch quiz data
     const quizzes = await fetchSupabase(`quiz?id=eq.${job.quiz_id}`);
-    if (!quizzes.length) throw new Error('Quiz not found');
+    if (!quizzes || quizzes.length === 0) throw new Error('Quiz not found');
     const quiz = quizzes[0];
 
     const { question_index = 1, video_type = 'short', thinking_time_sec = 16 } = job.payload;
     const lang = quiz.lang_code || 'en';
 
+    // Create temp directory
     const workDir = `/tmp/video_${uuidv4()}`;
     await fs.mkdir(workDir, { recursive: true });
 
+    // Generate slides, TTS, and assemble video
     const slides = await generateSlides(quiz, question_index, thinking_time_sec, workDir, lang);
     const audioPaths = await generateTTS(quiz, question_index, slides, workDir, lang);
     const videoPath = await assembleVideo(slides, audioPaths, workDir);
 
     const stats = await fs.stat(videoPath);
-    console.log(`Video created: ${videoPath}, size: ${(stats.size / (1024*1024)).toFixed(2)} MB`);
+    console.log(`Video created: ${videoPath}, size: ${(stats.size / (1024 * 1024)).toFixed(2)} MB`);
 
+    // Mark job as completed
     await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'completed', completed_at: new Date().toISOString() })
     });
 
-    // Save as artifact
+    // Save as artifact (for GitHub Actions)
     const artifactPath = `/tmp/${job.id}_video.mp4`;
     await fs.copyFile(videoPath, artifactPath);
     console.log(`Video saved as artifact: ${artifactPath}`);
     await fs.writeFile('/tmp/artifact_ready', artifactPath);
 
+    // Cleanup
     await fs.rm(workDir, { recursive: true, force: true });
     console.log(`Job ${job.id} completed successfully`);
   } catch (err) {
     console.error('Job failed:', err);
-    // Optionally mark job as failed in DB (but we don't have job.id here if error before)
-    throw err;
+    throw err; // ensure workflow failure
   }
 }
 
 // ========================
-// Slide generation (unchanged, but included for completeness)
+// Generate slides from HTML/CSS
 // ========================
 async function generateSlides(quiz, questionIndex, thinkingTime, workDir, lang) {
   let html = quiz.quiz_css_video;
   if (!html) throw new Error('quiz_css_video is empty');
+
   const qIdx = questionIndex;
   const replacements = {
     '{{hook_phrase}}': quiz.hook_phrase || '',
@@ -124,13 +162,16 @@ async function generateSlides(quiz, questionIndex, thinkingTime, workDir, lang) 
   for (const [key, value] of Object.entries(replacements)) {
     html = html.split(key).join(value);
   }
+
   const htmlPath = path.join(workDir, 'index.html');
   await fs.writeFile(htmlPath, html);
+
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920 });
   await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0' });
-  // slide definitions – adjust class names to match your CSS
+
+  // Define slides – adjust class names to match your CSS
   const slideDefs = [
     { selector: '.hook-slide', duration: 2, name: 'hook' },
     { selector: '.intro-slide', duration: 4, name: 'intro' },
@@ -142,6 +183,7 @@ async function generateSlides(quiz, questionIndex, thinkingTime, workDir, lang) 
     { selector: '.cta-slide', duration: 5, name: 'cta' },
     { selector: '.mission-slide', duration: 1.5, name: 'mission' }
   ];
+
   const slides = [];
   for (let i = 0; i < slideDefs.length; i++) {
     const def = slideDefs[i];
@@ -154,10 +196,14 @@ async function generateSlides(quiz, questionIndex, thinkingTime, workDir, lang) 
     await page.screenshot({ path: imagePath, fullPage: true });
     slides.push({ path: imagePath, duration: def.duration, name: def.name });
   }
+
   await browser.close();
   return slides;
 }
 
+// ========================
+// TTS generation (edge-tts)
+// ========================
 async function generateTTS(quiz, questionIndex, slides, workDir, lang) {
   const voiceMap = {
     en: 'en-US-JennyNeural',
@@ -167,6 +213,7 @@ async function generateTTS(quiz, questionIndex, slides, workDir, lang) {
   };
   const voice = voiceMap[lang] || voiceMap.en;
   const qIdx = questionIndex;
+
   const texts = {
     hook: quiz.hook_phrase || '',
     intro: quiz.quiz_intro_speech || '',
@@ -178,6 +225,7 @@ async function generateTTS(quiz, questionIndex, slides, workDir, lang) {
     cta: quiz.cta_text || '',
     mission: `${quiz.mission_impossible_question || ''} Hint: ${quiz.mission_impossible_hint || ''}`
   };
+
   const audioPaths = [];
   for (const slide of slides) {
     const text = texts[slide.name] || '';
@@ -193,6 +241,9 @@ async function generateTTS(quiz, questionIndex, slides, workDir, lang) {
   return audioPaths;
 }
 
+// ========================
+// Assemble video using FFmpeg
+// ========================
 async function assembleVideo(slides, audioPaths, workDir) {
   const concatList = [];
   for (let i = 0; i < slides.length; i++) {
@@ -209,6 +260,9 @@ async function assembleVideo(slides, audioPaths, workDir) {
   return outputPath;
 }
 
+// ========================
+// Start the worker
+// ========================
 processJobs().then(() => {
   console.log('Worker finished this run');
   process.exit(0);
