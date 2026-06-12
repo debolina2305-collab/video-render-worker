@@ -234,6 +234,22 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   const allIdx = [0, 1, 2, 3];
   const eliminateIdx = allIdx.filter(i => !keep5050.includes(i) && !keep5050.includes(String(i)));
 
+  // ---- Fetch engagement prompt early so it can be embedded in the template ----
+  let engagementPrompt = null;
+  try {
+    const prompts = await fetchSupabase(
+      `introduction_prompts?language_code=eq.${lang}&is_active=eq.true&select=id,prompt_text,usage_count&limit=20`
+    );
+    if (prompts && prompts.length > 0) {
+      engagementPrompt = prompts[Math.floor(Math.random() * prompts.length)];
+    }
+  } catch (e) {
+    console.warn('Could not fetch introduction_prompts, using fallback:', e.message);
+  }
+  const engagementText = engagementPrompt
+    ? engagementPrompt.prompt_text
+    : 'Pause the video and write your answer before time ends!';
+
   // ---- Build HTML from template ----
   let html = await fs.readFile(path.join(__dirname, 'quiz_template.html'), 'utf8');
 
@@ -249,6 +265,7 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   const replacements = {
     '{{hook_phrase}}': quiz.hook_phrase || quiz.topic || 'Can you beat this quiz?',
     '{{topic}}': quiz.topic || '',
+    '{{engagement_text}}': engagementText,
     '{{question}}': question,
     '{{options[0]}}': options[0] || '',
     '{{options[1]}}': options[1] || '',
@@ -314,42 +331,20 @@ async function buildVideo(quiz, qIdx, lang, workDir) {
   clips.push(await imageToClip(hookImg, hookAudio, hookDur, workDir, 'clip_hook'));
 
   // ---------------------------------------------------------
-  // 2. INTRO (3-9s) - static screenshot + TTS intro speech
+  // 2. INTRO + ENGAGEMENT (3-13s) - single rich screenshot,
+  //    TTS = intro speech followed by the engagement prompt
   // ---------------------------------------------------------
   await showOnly('.intro-slide');
-  await new Promise(r => setTimeout(r, 800));
+  await new Promise(r => setTimeout(r, 900)); // allow entrance animations to play
   const introImg = path.join(workDir, 'intro.png');
   await page.screenshot({ path: introImg });
+
+  const introSpeechText = quiz.quiz_intro_speech || `Today's topic: ${quiz.topic}`;
+  const combinedIntroText = `${introSpeechText} ${engagementText}`.trim();
   const introAudio = path.join(workDir, 'intro.mp3');
-  await generateTTS(quiz.quiz_intro_speech || `Today's topic: ${quiz.topic}`, voice, introAudio, 4);
-  const introDur = Math.max(await getAudioDuration(introAudio), 4);
+  await generateTTS(combinedIntroText, voice, introAudio, 6);
+  const introDur = Math.max(await getAudioDuration(introAudio), 6);
   clips.push(await imageToClip(introImg, introAudio, introDur, workDir, 'clip_intro'));
-
-  // ---------------------------------------------------------
-  // 2b. ENGAGEMENT PROMPT - random row from introduction_prompts
-  // ---------------------------------------------------------
-  let engagementPrompt = null;
-  try {
-    const prompts = await fetchSupabase(
-      `introduction_prompts?language_code=eq.${lang}&is_active=eq.true&select=id,prompt_text&limit=20`
-    );
-    if (prompts && prompts.length > 0) {
-      engagementPrompt = prompts[Math.floor(Math.random() * prompts.length)];
-    }
-  } catch (e) {
-    console.warn('Could not fetch introduction_prompts, using fallback:', e.message);
-  }
-  const engagementText = engagementPrompt
-    ? engagementPrompt.prompt_text
-    : 'Pause the video and write your answer before time ends!';
-
-  await showOnly('.intro-slide'); // reuse intro slide background for engagement text
-  const engImg = path.join(workDir, 'engagement.png');
-  await page.screenshot({ path: engImg });
-  const engAudio = path.join(workDir, 'engagement.mp3');
-  await generateTTS(engagementText, voice, engAudio, 4);
-  const engDur = Math.max(await getAudioDuration(engAudio), 4);
-  clips.push(await imageToClip(engImg, engAudio, engDur, workDir, 'clip_engagement'));
 
   if (engagementPrompt) {
     await fetchSupabase(`introduction_prompts?id=eq.${engagementPrompt.id}`, {
