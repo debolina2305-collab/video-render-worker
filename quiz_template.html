@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family: 'Arial', sans-serif; }
+  html,body { width:1080px; height:1920px; overflow:hidden; background:#0b1020; }
+
+  .screen {
+    width:1080px; height:1920px;
+    display:none;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    position:relative;
+    color:#fff;
+    text-align:center;
+    padding:60px;
+  }
+  .screen.active { display:flex; }
+
+  /* ---------- BRAND / HOOK ---------- */
+  .hook-slide {
+    background: radial-gradient(circle at center, #1a2a6c, #0b1020 70%);
+  }
+  .logo-badge {
+    width:260px; height:260px; border-radius:50%;
+    background: linear-gradient(135deg,#00d4ff,#7b2ff7);
+    display:flex; align-items:center; justify-content:center;
+    font-size:64px; font-weight:900; letter-spacing:2px;
+    box-shadow:0 0 80px rgba(123,47,247,0.6);
+    animation: logoIn 1s ease-out forwards;
+    opacity:0; transform:scale(0.4);
+  }
+  @keyframes logoIn {
+    to { opacity:1; transform:scale(1); }
+  }
+  .hook-text {
+    margin-top:60px; font-size:54px; font-weight:800; line-height:1.4;
+    opacity:0; animation: fadeUp 0.8s ease-out 0.8s forwards;
+  }
+  @keyframes fadeUp { from{opacity:0; transform:translateY(40px);} to{opacity:1; transform:translateY(0);} }
+
+  /* ---------- INTRO ---------- */
+  .intro-slide {
+    background: linear-gradient(160deg,#1a2a6c,#0b1020);
+  }
+  .intro-label {
+    font-size:36px; letter-spacing:6px; text-transform:uppercase;
+    color:#00d4ff; margin-bottom:30px; opacity:0;
+    animation: fadeUp 0.6s ease-out 0.2s forwards;
+  }
+  .intro-topic {
+    font-size:64px; font-weight:900; line-height:1.3;
+    opacity:0; animation: fadeUp 0.8s ease-out 0.6s forwards;
+  }
+
+  /* ---------- QUESTION PHASE (single continuous animated block) ---------- */
+  .question-phase {
+    background: linear-gradient(160deg,#0b1020,#1a2a6c);
+    justify-content:flex-start; padding-top:120px;
+  }
+  .qp-question {
+    font-size:50px; font-weight:800; line-height:1.4; margin-bottom:50px;
+  }
+  .qp-timerbar-track {
+    width:100%; height:24px; background:rgba(255,255,255,0.15);
+    border-radius:12px; overflow:hidden; margin-bottom:60px;
+  }
+  .qp-timerbar-fill {
+    height:100%; width:100%; background:linear-gradient(90deg,#00ffa3,#ffcc00,#ff3b3b);
+    animation: timerDrain var(--qtime) linear forwards;
+  }
+  @keyframes timerDrain { from{width:100%;} to{width:0%;} }
+
+  .qp-options { width:100%; display:flex; flex-direction:column; gap:30px; }
+  .qp-option {
+    background:rgba(255,255,255,0.08); border:3px solid rgba(255,255,255,0.2);
+    border-radius:20px; padding:36px; font-size:42px; font-weight:700;
+    text-align:left; transition: opacity 0.6s ease;
+  }
+  /* 50-50: options at indices NOT in keep_5050 fade out at 2/3 mark */
+  .qp-option.eliminate {
+    animation: eliminateOpt 0.6s ease forwards;
+    animation-delay: var(--fiftyfifty-time);
+  }
+  @keyframes eliminateOpt { to { opacity:0.08; } }
+
+  .qp-hint {
+    margin-top:50px; font-size:38px; font-style:italic; color:#ffd166;
+    background:rgba(255,209,102,0.1); border:2px dashed #ffd166;
+    border-radius:16px; padding:24px; opacity:0;
+    animation: hintIn 0.6s ease forwards;
+    animation-delay: var(--hint-time);
+  }
+  @keyframes hintIn { to { opacity:1; } }
+
+  /* ---------- ANSWER REVEAL (overlay shown after question phase recording) ---------- */
+  .answer-slide {
+    background: linear-gradient(160deg,#0b1020,#163a1a);
+  }
+  .answer-slide .qp-options { width:100%; display:flex; flex-direction:column; gap:30px; margin-bottom:40px; }
+  .answer-slide .qp-option { background:rgba(255,255,255,0.08); border:3px solid rgba(255,255,255,0.2);
+    border-radius:20px; padding:36px; font-size:42px; font-weight:700; text-align:left; }
+  .answer-slide .qp-option.correct { background:rgba(0,255,140,0.25); border-color:#00ff8c; }
+  .answer-slide .qp-option.wrong { opacity:0.25; }
+  .answer-badge {
+    font-size:60px; font-weight:900; color:#00ff8c; margin-bottom:30px;
+  }
+
+  /* ---------- EXPLANATION ---------- */
+  .explanation-slide {
+    background: linear-gradient(160deg,#1a2a6c,#0b1020);
+  }
+  .explanation-label {
+    font-size:36px; letter-spacing:6px; color:#00d4ff; margin-bottom:30px;
+  }
+  .explanation-text { font-size:44px; line-height:1.6; font-weight:600; }
+
+  /* ---------- CTA ---------- */
+  .cta-slide {
+    background: linear-gradient(160deg,#1a2a6c,#7b2ff7);
+  }
+  .cta-text { font-size:46px; font-weight:800; line-height:1.6; margin-bottom:40px; }
+  .cta-url {
+    font-size:36px; font-weight:700; background:rgba(255,255,255,0.15);
+    border-radius:16px; padding:24px 40px;
+  }
+
+  /* ---------- MISSION IMPOSSIBLE (two-stage capture) ---------- */
+  .mission-slide {
+    background: radial-gradient(circle at center,#3a0b0b,#0b1020 70%);
+  }
+  .mission-label {
+    font-size:36px; letter-spacing:6px; color:#ff3b3b; margin-bottom:30px;
+  }
+  .mission-question { font-size:50px; font-weight:800; line-height:1.4; margin-bottom:40px; }
+  .mission-hint {
+    font-size:38px; font-style:italic; color:#ffd166;
+    background:rgba(255,209,102,0.1); border:2px dashed #ffd166;
+    border-radius:16px; padding:24px; opacity:0;
+  }
+  /* shown=true class applied by puppeteer before 2nd screenshot */
+  .mission-hint.shown { opacity:1; }
+</style>
+</head>
+<body>
+
+  <!-- 1. HOOK / BRAND (0-3s) -->
+  <div class="screen hook-slide active">
+    <div class="logo-badge">JAAS</div>
+    <div class="hook-text">{{hook_phrase}}</div>
+  </div>
+
+  <!-- 2. INTRO (3-9s) -->
+  <div class="screen intro-slide">
+    <div class="intro-label">Today's Quiz Topic</div>
+    <div class="intro-topic">{{topic}}</div>
+  </div>
+
+  <!-- 3. ENGAGEMENT + QUESTION PHASE (this whole block is screen-recorded) -->
+  <div class="screen question-phase" style="--qtime: {{qtime}}s; --hint-time: {{hint_time}}s; --fiftyfifty-time: {{fiftyfifty_time}}s;">
+    <div class="qp-question">{{question}}</div>
+    <div class="qp-timerbar-track"><div class="qp-timerbar-fill"></div></div>
+    <div class="qp-options">
+      <div class="qp-option {{opt0_class}}">A) {{options[0]}}</div>
+      <div class="qp-option {{opt1_class}}">B) {{options[1]}}</div>
+      <div class="qp-option {{opt2_class}}">C) {{options[2]}}</div>
+      <div class="qp-option {{opt3_class}}">D) {{options[3]}}</div>
+    </div>
+    <div class="qp-hint">💡 {{hint}}</div>
+  </div>
+
+  <!-- 4. ANSWER REVEAL (after question phase) -->
+  <div class="screen answer-slide">
+    <div class="answer-badge">✅ Correct Answer: {{correct_answer}}</div>
+    <div class="qp-options">
+      <div class="qp-option {{rev0_class}}">A) {{options[0]}}</div>
+      <div class="qp-option {{rev1_class}}">B) {{options[1]}}</div>
+      <div class="qp-option {{rev2_class}}">C) {{options[2]}}</div>
+      <div class="qp-option {{rev3_class}}">D) {{options[3]}}</div>
+    </div>
+  </div>
+
+  <!-- 5. EXPLANATION -->
+  <div class="screen explanation-slide">
+    <div class="explanation-label">Why?</div>
+    <div class="explanation-text">{{explanation}}</div>
+  </div>
+
+  <!-- 6. MISSION IMPOSSIBLE (two-stage: question, then +hint) -->
+  <div class="screen mission-slide">
+    <div class="mission-label">🔥 Mission Impossible</div>
+    <div class="mission-question">{{mission_question}}</div>
+    <div class="mission-hint">💡 {{mission_hint}}<br>{{mission_trigger}}</div>
+  </div>
+
+  <!-- 7. CTA -->
+  <div class="screen cta-slide">
+    <div class="cta-text">{{cta_text}}</div>
+    <div class="cta-url">{{cta_url}}</div>
+  </div>
+
+</body>
+</html>
