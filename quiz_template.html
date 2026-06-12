@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; font-family: 'Arial', sans-serif; }
-  html,body { width:1080px; height:1920px; overflow:hidden; background:#0b1020; }
+  * { margin:0; padding:0; box-sizing:border-box; font-family: 'Segoe UI', Arial, sans-serif; }
+  html,body { width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 
   .screen {
     width:1080px; height:1920px;
@@ -16,189 +16,393 @@
     color:#fff;
     text-align:center;
     padding:60px;
+    overflow:hidden;
   }
   .screen.active { display:flex; }
 
-  /* ---------- BRAND / HOOK ---------- */
-  .hook-slide {
-    background: radial-gradient(circle at center, #1a2a6c, #0b1020 70%);
+  /* ===================== ANIMATED BACKGROUND (all screens) ===================== */
+  .bg-anim {
+    position:absolute; inset:0; z-index:0;
+    background:
+      radial-gradient(circle at 20% 20%, rgba(255,0,170,0.35), transparent 40%),
+      radial-gradient(circle at 80% 30%, rgba(0,200,255,0.35), transparent 40%),
+      radial-gradient(circle at 50% 85%, rgba(140,0,255,0.4), transparent 45%),
+      linear-gradient(160deg,#0a0820,#1b0a3d 50%,#05030f);
+    background-size: 200% 200%, 200% 200%, 200% 200%, 100% 100%;
+    animation: bgShift 14s ease-in-out infinite alternate;
   }
+  @keyframes bgShift {
+    0%   { background-position: 0% 0%, 100% 0%, 50% 100%, 0 0; }
+    100% { background-position: 30% 40%, 60% 50%, 40% 60%, 0 0; }
+  }
+  .bg-grid {
+    position:absolute; inset:0; z-index:1; opacity:0.18;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px);
+    background-size: 80px 80px;
+    animation: gridMove 8s linear infinite;
+  }
+  @keyframes gridMove { from{ background-position:0 0,0 0; } to{ background-position:0 80px, 80px 0; } }
+
+  .bg-orb {
+    position:absolute; border-radius:50%; filter:blur(40px); z-index:1;
+    opacity:0.5;
+  }
+  .orb1 { width:380px; height:380px; background:#ff2ec4; top:-100px; left:-100px; animation: floatA 9s ease-in-out infinite; }
+  .orb2 { width:300px; height:300px; background:#00e0ff; bottom:100px; right:-80px; animation: floatB 11s ease-in-out infinite; }
+  .orb3 { width:260px; height:260px; background:#7b2ff7; bottom:-80px; left:30%; animation: floatA 13s ease-in-out infinite reverse; }
+  @keyframes floatA { 0%,100%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(60px,80px) scale(1.2); } }
+  @keyframes floatB { 0%,100%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(-50px,-60px) scale(1.15); } }
+
+  .content { position:relative; z-index:5; width:100%; display:flex; flex-direction:column; align-items:center; }
+
+  /* ===================== SHARED TEXT STYLES ===================== */
+  .glow-text {
+    text-shadow: 0 0 20px rgba(255,255,255,0.6), 0 0 40px rgba(123,47,247,0.6);
+  }
+  .badge-label {
+    display:inline-block; font-size:32px; font-weight:900; letter-spacing:8px;
+    text-transform:uppercase; padding:14px 36px; border-radius:50px;
+    background:linear-gradient(135deg,#ff2ec4,#7b2ff7);
+    box-shadow:0 0 30px rgba(255,46,196,0.6);
+    margin-bottom:40px;
+  }
+
+  /* ===================== 1. HOOK / BRAND ===================== */
   .logo-badge {
-    width:260px; height:260px; border-radius:50%;
-    background: linear-gradient(135deg,#00d4ff,#7b2ff7);
+    width:280px; height:280px; border-radius:50%;
+    background: linear-gradient(135deg,#00e0ff,#7b2ff7,#ff2ec4);
+    background-size: 300% 300%;
     display:flex; align-items:center; justify-content:center;
-    font-size:64px; font-weight:900; letter-spacing:2px;
-    box-shadow:0 0 80px rgba(123,47,247,0.6);
-    animation: logoIn 1s ease-out forwards;
-    opacity:0; transform:scale(0.4);
+    font-size:70px; font-weight:900; letter-spacing:2px;
+    box-shadow:0 0 100px rgba(123,47,247,0.8), 0 0 200px rgba(0,224,255,0.4);
+    animation: logoSpin 6s linear infinite, logoIn 0.9s cubic-bezier(.34,1.8,.64,1) forwards;
+    opacity:0; transform:scale(0.3) rotate(-20deg);
   }
-  @keyframes logoIn {
-    to { opacity:1; transform:scale(1); }
-  }
+  @keyframes logoIn { to { opacity:1; transform:scale(1) rotate(0deg); } }
+  @keyframes logoSpin { to { background-position: 300% 300%; } }
+
   .hook-text {
-    margin-top:60px; font-size:54px; font-weight:800; line-height:1.4;
-    opacity:0; animation: fadeUp 0.8s ease-out 0.8s forwards;
+    margin-top:70px; font-size:64px; font-weight:900; line-height:1.35;
+    opacity:0; transform: translateY(60px) scale(0.8);
+    animation: bounceIn 0.9s cubic-bezier(.34,1.8,.64,1) 0.7s forwards;
+  }
+  @keyframes bounceIn { to { opacity:1; transform:translateY(0) scale(1); } }
+
+  .sparkle {
+    position:absolute; font-size:60px; opacity:0;
+    animation: sparkleAppear 2s ease-in-out infinite;
+  }
+  .sparkle.s1 { top:15%; left:12%; animation-delay:0.2s; }
+  .sparkle.s2 { top:25%; right:10%; animation-delay:0.8s; }
+  .sparkle.s3 { bottom:20%; left:15%; animation-delay:1.4s; }
+  .sparkle.s4 { bottom:30%; right:14%; animation-delay:0.5s; }
+  @keyframes sparkleAppear { 0%,100%{opacity:0; transform:scale(0.5) rotate(0deg);} 50%{opacity:1; transform:scale(1.3) rotate(180deg);} }
+
+  /* ===================== 2. INTRO / ENGAGEMENT ===================== */
+  .intro-label {
+    font-size:36px; font-weight:900; letter-spacing:8px; text-transform:uppercase;
+    background:linear-gradient(135deg,#00e0ff,#7b2ff7);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    margin-bottom:40px;
+    opacity:0; animation: fadeUp 0.6s ease-out 0.1s forwards;
+  }
+  .intro-topic {
+    font-size:70px; font-weight:900; line-height:1.3;
+    opacity:0; animation: bounceIn 0.9s cubic-bezier(.34,1.8,.64,1) 0.4s forwards;
+  }
+  .intro-sub {
+    margin-top:50px; font-size:42px; font-weight:600; color:#ffd166;
+    opacity:0; animation: fadeUp 0.7s ease-out 0.9s forwards;
   }
   @keyframes fadeUp { from{opacity:0; transform:translateY(40px);} to{opacity:1; transform:translateY(0);} }
 
-  /* ---------- INTRO ---------- */
-  .intro-slide {
-    background: linear-gradient(160deg,#1a2a6c,#0b1020);
-  }
-  .intro-label {
-    font-size:36px; letter-spacing:6px; text-transform:uppercase;
-    color:#00d4ff; margin-bottom:30px; opacity:0;
-    animation: fadeUp 0.6s ease-out 0.2s forwards;
-  }
-  .intro-topic {
-    font-size:64px; font-weight:900; line-height:1.3;
-    opacity:0; animation: fadeUp 0.8s ease-out 0.6s forwards;
-  }
+  /* ===================== 3. QUESTION PHASE ===================== */
+  .question-phase { justify-content:flex-start; padding-top:90px; }
 
-  /* ---------- QUESTION PHASE (single continuous animated block) ---------- */
-  .question-phase {
-    background: linear-gradient(160deg,#0b1020,#1a2a6c);
-    justify-content:flex-start; padding-top:120px;
+  .qp-card-question {
+    width:100%; background:rgba(255,255,255,0.06);
+    border:3px solid rgba(255,255,255,0.15); border-radius:32px;
+    padding:44px; margin-bottom:40px; backdrop-filter: blur(6px);
+    box-shadow:0 0 50px rgba(123,47,247,0.35);
   }
-  .qp-question {
-    font-size:50px; font-weight:800; line-height:1.4; margin-bottom:50px;
+  .qp-question { font-size:52px; font-weight:800; line-height:1.4; }
+
+  /* Circular timer */
+  .qp-timer-wrap { margin-bottom:50px; position:relative; width:220px; height:220px; }
+  .qp-timer-ring {
+    width:220px; height:220px; transform:rotate(-90deg);
   }
-  .qp-timerbar-track {
-    width:100%; height:24px; background:rgba(255,255,255,0.15);
-    border-radius:12px; overflow:hidden; margin-bottom:60px;
+  .qp-timer-ring circle {
+    fill:none; stroke-width:18; stroke-linecap:round;
   }
-  .qp-timerbar-fill {
-    height:100%; width:100%; background:linear-gradient(90deg,#00ffa3,#ffcc00,#ff3b3b);
+  .qp-timer-bg { stroke:rgba(255,255,255,0.12); }
+  .qp-timer-fill {
+    stroke:url(#timerGradient);
+    stroke-dasharray: 628; /* 2*pi*100 */
+    stroke-dashoffset: 0;
     animation: timerDrain var(--qtime) linear forwards;
   }
-  @keyframes timerDrain { from{width:100%;} to{width:0%;} }
-
-  .qp-options { width:100%; display:flex; flex-direction:column; gap:30px; }
-  .qp-option {
-    background:rgba(255,255,255,0.08); border:3px solid rgba(255,255,255,0.2);
-    border-radius:20px; padding:36px; font-size:42px; font-weight:700;
-    text-align:left; transition: opacity 0.6s ease;
+  @keyframes timerDrain { from { stroke-dashoffset:0; } to { stroke-dashoffset:628; } }
+  .qp-timer-number {
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-size:64px; font-weight:900;
   }
-  /* 50-50: options at indices NOT in keep_5050 fade out at 2/3 mark */
+
+  .qp-options { width:100%; display:flex; flex-direction:column; gap:28px; }
+  .qp-option {
+    display:flex; align-items:center; gap:28px;
+    background:rgba(255,255,255,0.07); border:3px solid rgba(255,255,255,0.18);
+    border-radius:24px; padding:34px; font-size:42px; font-weight:700;
+    text-align:left; transition: opacity 0.6s ease;
+    box-shadow:0 8px 24px rgba(0,0,0,0.35);
+  }
+  .qp-option-badge {
+    flex-shrink:0; width:70px; height:70px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:38px; font-weight:900;
+    background:linear-gradient(135deg,#00e0ff,#7b2ff7);
+    box-shadow:0 0 20px rgba(0,224,255,0.5);
+  }
   .qp-option.eliminate {
     animation: eliminateOpt 0.6s ease forwards;
     animation-delay: var(--fiftyfifty-time);
   }
-  @keyframes eliminateOpt { to { opacity:0.08; } }
+  @keyframes eliminateOpt { to { opacity:0.08; transform:scale(0.96); } }
 
   .qp-hint {
-    margin-top:50px; font-size:38px; font-style:italic; color:#ffd166;
-    background:rgba(255,209,102,0.1); border:2px dashed #ffd166;
-    border-radius:16px; padding:24px; opacity:0;
-    animation: hintIn 0.6s ease forwards;
+    margin-top:46px; font-size:38px; font-weight:600; color:#ffd166;
+    background:rgba(255,209,102,0.12); border:2px dashed #ffd166;
+    border-radius:20px; padding:28px; opacity:0;
+    animation: hintIn 0.6s cubic-bezier(.34,1.8,.64,1) forwards;
     animation-delay: var(--hint-time);
+    box-shadow:0 0 30px rgba(255,209,102,0.3);
   }
-  @keyframes hintIn { to { opacity:1; } }
+  @keyframes hintIn { to { opacity:1; transform:scale(1.02); } }
 
-  /* ---------- ANSWER REVEAL (overlay shown after question phase recording) ---------- */
-  .answer-slide {
-    background: linear-gradient(160deg,#0b1020,#163a1a);
-  }
-  .answer-slide .qp-options { width:100%; display:flex; flex-direction:column; gap:30px; margin-bottom:40px; }
-  .answer-slide .qp-option { background:rgba(255,255,255,0.08); border:3px solid rgba(255,255,255,0.2);
-    border-radius:20px; padding:36px; font-size:42px; font-weight:700; text-align:left; }
-  .answer-slide .qp-option.correct { background:rgba(0,255,140,0.25); border-color:#00ff8c; }
-  .answer-slide .qp-option.wrong { opacity:0.25; }
+  /* ===================== 4. ANSWER REVEAL ===================== */
   .answer-badge {
-    font-size:60px; font-weight:900; color:#00ff8c; margin-bottom:30px;
+    font-size:64px; font-weight:900; margin-bottom:50px;
+    background:linear-gradient(135deg,#00ff8c,#00e0ff);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    text-shadow:none;
+    animation: bounceIn 0.7s cubic-bezier(.34,1.8,.64,1) forwards;
+  }
+  .answer-slide .qp-options { width:100%; display:flex; flex-direction:column; gap:28px; }
+  .answer-slide .qp-option {
+    display:flex; align-items:center; gap:28px;
+    background:rgba(255,255,255,0.07); border:3px solid rgba(255,255,255,0.18);
+    border-radius:24px; padding:34px; font-size:42px; font-weight:700; text-align:left;
+  }
+  .answer-slide .qp-option.correct {
+    background:rgba(0,255,140,0.2); border-color:#00ff8c;
+    box-shadow:0 0 40px rgba(0,255,140,0.5);
+    animation: pulseCorrect 1.2s ease-in-out infinite;
+  }
+  @keyframes pulseCorrect { 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.03); } }
+  .answer-slide .qp-option.wrong { opacity:0.2; }
+
+  /* Confetti */
+  .confetti-piece {
+    position:absolute; top:-40px; border-radius:3px; opacity:0.9;
+    animation-name: confettiFall; animation-timing-function: linear;
+    animation-iteration-count: infinite;
+  }
+  @keyframes confettiFall {
+    0% { transform: translateY(-40px) rotate(0deg); opacity:1; }
+    100% { transform: translateY(2000px) rotate(720deg); opacity:0.9; }
   }
 
-  /* ---------- EXPLANATION ---------- */
-  .explanation-slide {
-    background: linear-gradient(160deg,#1a2a6c,#0b1020);
+  /* ===================== 5. EXPLANATION ===================== */
+  .explanation-card {
+    width:100%; background:rgba(255,255,255,0.06);
+    border:3px solid rgba(255,255,255,0.15); border-radius:32px;
+    padding:60px; backdrop-filter: blur(6px);
+    box-shadow:0 0 50px rgba(0,224,255,0.3);
+    opacity:0; animation: fadeUp 0.8s ease-out 0.2s forwards;
   }
-  .explanation-label {
-    font-size:36px; letter-spacing:6px; color:#00d4ff; margin-bottom:30px;
-  }
-  .explanation-text { font-size:44px; line-height:1.6; font-weight:600; }
+  .explanation-text { font-size:46px; line-height:1.7; font-weight:600; }
 
-  /* ---------- CTA ---------- */
-  .cta-slide {
-    background: linear-gradient(160deg,#1a2a6c,#7b2ff7);
-  }
-  .cta-text { font-size:46px; font-weight:800; line-height:1.6; margin-bottom:40px; }
-  .cta-url {
-    font-size:36px; font-weight:700; background:rgba(255,255,255,0.15);
-    border-radius:16px; padding:24px 40px;
-  }
-
-  /* ---------- MISSION IMPOSSIBLE (two-stage capture) ---------- */
-  .mission-slide {
-    background: radial-gradient(circle at center,#3a0b0b,#0b1020 70%);
+  /* ===================== 6. MISSION IMPOSSIBLE ===================== */
+  .mission-slide .bg-anim {
+    background:
+      radial-gradient(circle at 30% 20%, rgba(255,30,30,0.4), transparent 45%),
+      radial-gradient(circle at 70% 80%, rgba(255,120,0,0.35), transparent 45%),
+      linear-gradient(160deg,#1a0505,#3a0b0b 50%,#05030f);
   }
   .mission-label {
-    font-size:36px; letter-spacing:6px; color:#ff3b3b; margin-bottom:30px;
+    font-size:38px; font-weight:900; letter-spacing:8px; text-transform:uppercase;
+    color:#ff3b3b; margin-bottom:40px;
+    text-shadow:0 0 30px rgba(255,59,59,0.8);
+    animation: shakeLabel 0.6s ease-in-out infinite alternate;
   }
-  .mission-question { font-size:50px; font-weight:800; line-height:1.4; margin-bottom:40px; }
+  @keyframes shakeLabel { from{ transform:rotate(-1deg);} to{ transform:rotate(1deg);} }
+  .mission-question { font-size:52px; font-weight:800; line-height:1.4; margin-bottom:46px; }
   .mission-hint {
-    font-size:38px; font-style:italic; color:#ffd166;
-    background:rgba(255,209,102,0.1); border:2px dashed #ffd166;
-    border-radius:16px; padding:24px; opacity:0;
+    font-size:40px; font-weight:600; color:#ffd166;
+    background:rgba(255,209,102,0.12); border:2px dashed #ffd166;
+    border-radius:20px; padding:30px; opacity:0;
+    transition: opacity 0.5s ease, transform 0.5s ease;
+    transform: scale(0.9);
   }
-  /* shown=true class applied by puppeteer before 2nd screenshot */
-  .mission-hint.shown { opacity:1; }
+  .mission-hint.shown { opacity:1; transform:scale(1); }
+
+  /* ===================== 7. CTA ===================== */
+  .cta-slide .bg-anim {
+    background:
+      radial-gradient(circle at 30% 30%, rgba(255,46,196,0.45), transparent 45%),
+      radial-gradient(circle at 70% 70%, rgba(0,224,255,0.4), transparent 45%),
+      linear-gradient(160deg,#1b0a3d,#3a0b6e 50%,#05030f);
+  }
+  .cta-text {
+    font-size:50px; font-weight:900; line-height:1.6; margin-bottom:50px;
+    animation: bounceIn 0.8s cubic-bezier(.34,1.8,.64,1) forwards;
+  }
+  .cta-url {
+    font-size:38px; font-weight:800; background:linear-gradient(135deg,#ff2ec4,#7b2ff7);
+    border-radius:50px; padding:28px 50px;
+    box-shadow:0 0 40px rgba(255,46,196,0.6);
+    animation: ctaPulse 1.4s ease-in-out infinite;
+  }
+  @keyframes ctaPulse { 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.05); } }
+  .cta-icons { margin-top:50px; font-size:64px; letter-spacing:30px; }
 </style>
 </head>
 <body>
 
   <!-- 1. HOOK / BRAND (0-3s) -->
   <div class="screen hook-slide active">
-    <div class="logo-badge">JAAS</div>
-    <div class="hook-text">{{hook_phrase}}</div>
+    <div class="bg-anim"></div>
+    <div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div>
+    <div class="bg-orb orb2"></div>
+    <div class="bg-orb orb3"></div>
+    <div class="sparkle s1">✨</div>
+    <div class="sparkle s2">⭐</div>
+    <div class="sparkle s3">💫</div>
+    <div class="sparkle s4">✨</div>
+    <div class="content">
+      <div class="logo-badge">JAAS</div>
+      <div class="hook-text glow-text">{{hook_phrase}}</div>
+    </div>
   </div>
 
   <!-- 2. INTRO (3-9s) -->
   <div class="screen intro-slide">
-    <div class="intro-label">Today's Quiz Topic</div>
-    <div class="intro-topic">{{topic}}</div>
+    <div class="bg-anim"></div>
+    <div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div>
+    <div class="bg-orb orb2"></div>
+    <div class="content">
+      <div class="intro-label">🎯 Today's Quiz Topic</div>
+      <div class="intro-topic glow-text">{{topic}}</div>
+      <div class="intro-sub">{{engagement_text}}</div>
+    </div>
   </div>
 
-  <!-- 3. ENGAGEMENT + QUESTION PHASE (this whole block is screen-recorded) -->
+  <!-- 3. QUESTION PHASE (this whole block is screen-recorded) -->
   <div class="screen question-phase" style="--qtime: {{qtime}}s; --hint-time: {{hint_time}}s; --fiftyfifty-time: {{fiftyfifty_time}}s;">
-    <div class="qp-question">{{question}}</div>
-    <div class="qp-timerbar-track"><div class="qp-timerbar-fill"></div></div>
-    <div class="qp-options">
-      <div class="qp-option {{opt0_class}}">A) {{options[0]}}</div>
-      <div class="qp-option {{opt1_class}}">B) {{options[1]}}</div>
-      <div class="qp-option {{opt2_class}}">C) {{options[2]}}</div>
-      <div class="qp-option {{opt3_class}}">D) {{options[3]}}</div>
+    <div class="bg-anim"></div>
+    <div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div>
+    <div class="bg-orb orb2"></div>
+    <div class="content">
+      <div class="qp-card-question">
+        <div class="qp-question">{{question}}</div>
+      </div>
+
+      <div class="qp-timer-wrap">
+        <svg class="qp-timer-ring" viewBox="0 0 220 220">
+          <defs>
+            <linearGradient id="timerGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#00ffa3"/>
+              <stop offset="50%" stop-color="#ffcc00"/>
+              <stop offset="100%" stop-color="#ff3b3b"/>
+            </linearGradient>
+          </defs>
+          <circle class="qp-timer-bg" cx="110" cy="110" r="100"/>
+          <circle class="qp-timer-fill" cx="110" cy="110" r="100"/>
+        </svg>
+        <div class="qp-timer-number">⏱️</div>
+      </div>
+
+      <div class="qp-options">
+        <div class="qp-option {{opt0_class}}"><span class="qp-option-badge">A</span>{{options[0]}}</div>
+        <div class="qp-option {{opt1_class}}"><span class="qp-option-badge">B</span>{{options[1]}}</div>
+        <div class="qp-option {{opt2_class}}"><span class="qp-option-badge">C</span>{{options[2]}}</div>
+        <div class="qp-option {{opt3_class}}"><span class="qp-option-badge">D</span>{{options[3]}}</div>
+      </div>
+      <div class="qp-hint">💡 {{hint}}</div>
     </div>
-    <div class="qp-hint">💡 {{hint}}</div>
   </div>
 
   <!-- 4. ANSWER REVEAL (after question phase) -->
   <div class="screen answer-slide">
-    <div class="answer-badge">✅ Correct Answer: {{correct_answer}}</div>
-    <div class="qp-options">
-      <div class="qp-option {{rev0_class}}">A) {{options[0]}}</div>
-      <div class="qp-option {{rev1_class}}">B) {{options[1]}}</div>
-      <div class="qp-option {{rev2_class}}">C) {{options[2]}}</div>
-      <div class="qp-option {{rev3_class}}">D) {{options[3]}}</div>
+    <div class="bg-anim"></div>
+    <div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div>
+    <div class="bg-orb orb2"></div>
+    <!-- confetti pieces -->
+    <div class="confetti-piece" style="left:8%;  width:18px; height:30px; background:#ff2ec4; animation-duration:2.4s; animation-delay:0s;"></div>
+    <div class="confetti-piece" style="left:20%; width:14px; height:24px; background:#00e0ff; animation-duration:2.0s; animation-delay:0.2s;"></div>
+    <div class="confetti-piece" style="left:35%; width:20px; height:34px; background:#ffd166; animation-duration:2.6s; animation-delay:0.05s;"></div>
+    <div class="confetti-piece" style="left:50%; width:16px; height:28px; background:#7b2ff7; animation-duration:2.2s; animation-delay:0.3s;"></div>
+    <div class="confetti-piece" style="left:65%; width:18px; height:30px; background:#00ff8c; animation-duration:2.5s; animation-delay:0.1s;"></div>
+    <div class="confetti-piece" style="left:80%; width:14px; height:24px; background:#ff2ec4; animation-duration:2.1s; animation-delay:0.25s;"></div>
+    <div class="confetti-piece" style="left:90%; width:20px; height:34px; background:#00e0ff; animation-duration:2.7s; animation-delay:0.15s;"></div>
+    <div class="confetti-piece" style="left:14%; width:16px; height:28px; background:#ffcc00; animation-duration:2.3s; animation-delay:0.4s;"></div>
+    <div class="confetti-piece" style="left:60%; width:18px; height:30px; background:#ff6b6b; animation-duration:2.45s; animation-delay:0.35s;"></div>
+    <div class="content">
+      <div class="answer-badge">✅ {{correct_answer}}</div>
+      <div class="qp-options">
+        <div class="qp-option {{rev0_class}}"><span class="qp-option-badge">A</span>{{options[0]}}</div>
+        <div class="qp-option {{rev1_class}}"><span class="qp-option-badge">B</span>{{options[1]}}</div>
+        <div class="qp-option {{rev2_class}}"><span class="qp-option-badge">C</span>{{options[2]}}</div>
+        <div class="qp-option {{rev3_class}}"><span class="qp-option-badge">D</span>{{options[3]}}</div>
+      </div>
     </div>
   </div>
 
   <!-- 5. EXPLANATION -->
   <div class="screen explanation-slide">
-    <div class="explanation-label">Why?</div>
-    <div class="explanation-text">{{explanation}}</div>
+    <div class="bg-anim"></div>
+    <div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div>
+    <div class="bg-orb orb3"></div>
+    <div class="content">
+      <div class="badge-label">🧠 Why?</div>
+      <div class="explanation-card">
+        <div class="explanation-text">{{explanation}}</div>
+      </div>
+    </div>
   </div>
 
   <!-- 6. MISSION IMPOSSIBLE (two-stage: question, then +hint) -->
   <div class="screen mission-slide">
-    <div class="mission-label">🔥 Mission Impossible</div>
-    <div class="mission-question">{{mission_question}}</div>
-    <div class="mission-hint">💡 {{mission_hint}}<br>{{mission_trigger}}</div>
+    <div class="bg-anim"></div>
+    <div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div>
+    <div class="bg-orb orb2"></div>
+    <div class="content">
+      <div class="mission-label">🔥 Mission Impossible</div>
+      <div class="mission-question">{{mission_question}}</div>
+      <div class="mission-hint">💡 {{mission_hint}}<br>{{mission_trigger}}</div>
+    </div>
   </div>
 
   <!-- 7. CTA -->
   <div class="screen cta-slide">
-    <div class="cta-text">{{cta_text}}</div>
-    <div class="cta-url">{{cta_url}}</div>
+    <div class="bg-anim"></div>
+    <div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div>
+    <div class="bg-orb orb2"></div>
+    <div class="bg-orb orb3"></div>
+    <div class="content">
+      <div class="cta-text glow-text">{{cta_text}}</div>
+      <div class="cta-url">🌐 {{cta_url}}</div>
+      <div class="cta-icons">👍 🔔 🔁</div>
+    </div>
   </div>
 
 </body>
