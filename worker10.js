@@ -1,6 +1,3 @@
-const { createClient } = require('@supabase/supabase-js');
-const WebSocket = require('ws');
-
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
@@ -12,30 +9,32 @@ if (!supabaseUrl || !supabaseKey) {
   process.exit(1);
 }
 
-// Pass WebSocket constructor to supabase client
-const supabase = createClient(supabaseUrl, supabaseKey, {
-  realtime: {
-    webSocketConstructor: WebSocket
+// Helper for Supabase REST API calls
+const headers = {
+  'apikey': supabaseKey,
+  'Authorization': `Bearer ${supabaseKey}`,
+  'Content-Type': 'application/json'
+};
+
+async function fetchSupabase(path, options = {}) {
+  const url = `${supabaseUrl}/rest/v1/${path}`;
+  const res = await fetch(url, { headers, ...options });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text}`);
   }
-});
+  return res.json();
+}
 
 async function processJobs() {
   console.log('Checking for pending video jobs...');
   
   try {
-    const { data: jobs, error } = await supabase
-      .from('quiz_queue')
-      .select('*')
-      .eq('job_type', 'video_render')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: true })
-      .limit(1);
-
-    if (error) {
-      console.error('Database error:', error);
-      return;
-    }
-
+    // Fetch one pending job
+    const jobs = await fetchSupabase(
+      'quiz_queue?job_type=eq.video_render&status=eq.pending&order=created_at.asc&limit=1'
+    );
+    
     if (!jobs || jobs.length === 0) {
       console.log('No pending jobs');
       return;
@@ -44,28 +43,30 @@ async function processJobs() {
     const job = jobs[0];
     console.log(`Processing job ${job.id} for quiz ${job.quiz_id}`);
 
-    await supabase
-      .from('quiz_queue')
-      .update({ status: 'processing', started_at: new Date().toISOString() })
-      .eq('id', job.id);
+    // Update to processing
+    await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'processing', started_at: new Date().toISOString() })
+    });
 
     try {
       // Simulate video rendering (replace with real FFmpeg later)
       console.log('Rendering video (simulated)...');
       await new Promise(resolve => setTimeout(resolve, 10000));
       
-      await supabase
-        .from('quiz_queue')
-        .update({ status: 'completed', completed_at: new Date().toISOString() })
-        .eq('id', job.id);
-        
+      // Update to completed
+      await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'completed', completed_at: new Date().toISOString() })
+      });
+      
       console.log(`Job ${job.id} completed successfully`);
     } catch (err) {
       console.error(`Job ${job.id} failed:`, err);
-      await supabase
-        .from('quiz_queue')
-        .update({ status: 'failed', last_error: err.message })
-        .eq('id', job.id);
+      await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'failed', last_error: err.message })
+      });
     }
   } catch (err) {
     console.error('Unexpected error:', err);
