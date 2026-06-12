@@ -19,6 +19,12 @@ jobs:
           sudo apt-get install -y ffmpeg python3 python3-pip
           pip3 install edge-tts
 
+      - name: Test edge-tts
+        run: |
+          edge-tts --voice en-US-JennyNeural --text "Hello, this is a test." --write-media /tmp/test.mp3
+          ls -la /tmp/test.mp3
+          file /tmp/test.mp3
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
