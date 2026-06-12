@@ -1,420 +1,439 @@
-const { exec } = require('child_process');
-const util = require('util');
+/**
+ * worker10.js — Quiz Video Renderer
+ * Reads from quiz_queue (job_type=video_render) and quiz table.
+ * Produces a 35-55s MP4 following the 15-step storyboard.
+ *
+ * SYNC STRATEGY
+ * ─────────────
+ * Static slides  → Puppeteer screenshot + imageToClip()
+ *                  clip duration = TTS audio duration (padded to minimum)
+ * Timer phase    → PuppeteerScreenRecorder (CSS animations play in real-time)
+ *                  duration = thinking_time seconds, audio = suspense SFX
+ * All clips are FFmpeg-concatenated in order at the end.
+ */
+
+const { exec }    = require('child_process');
+const util        = require('util');
 const execPromise = util.promisify(exec);
-const fs = require('fs').promises;
-const path = require('path');
-const puppeteer = require('puppeteer');
+const fs          = require('fs').promises;
+const path        = require('path');
+const puppeteer   = require('puppeteer');
+const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
 const { v4: uuidv4 } = require('uuid');
 
-// ========================
-// Environment
-// ========================
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+// ── ENV ───────────────────────────────────────────────────────────
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-console.log('SUPABASE_URL from env:', supabaseUrl);
-console.log('SUPABASE_SERVICE_KEY from env:', supabaseKey ? '*** (set)' : 'NOT SET');
+console.log('SUPABASE_URL from env:', SUPABASE_URL);
+console.log('SUPABASE_SERVICE_KEY from env:', SUPABASE_KEY ? '*** (set)' : 'NOT SET');
 
-const cleanSupabaseUrl = supabaseUrl ? supabaseUrl.replace(/\/$/, '') : null;
-if (!cleanSupabaseUrl || !supabaseKey) {
-  console.error('Missing Supabase credentials');
-  process.exit(1);
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('Missing Supabase credentials'); process.exit(1);
 }
 
-const baseHeaders = {
-  'apikey': supabaseKey,
-  'Authorization': `Bearer ${supabaseKey}`,
+const BASE_HEADERS = {
+  apikey: SUPABASE_KEY,
+  Authorization: `Bearer ${SUPABASE_KEY}`,
   'Content-Type': 'application/json'
 };
 
-async function fetchSupabase(path, options = {}) {
-  const url = `${cleanSupabaseUrl}/rest/v1/${path}`;
-  console.log(`[FETCH] ${options.method || 'GET'} ${url}`);
-  const headers = { ...baseHeaders, ...(options.headers || {}) };
-  if (options.method && ['POST', 'PATCH', 'PUT'].includes(options.method)) {
-    headers['Prefer'] = 'return=representation';
+// ── VOICE MAP ─────────────────────────────────────────────────────
+const VOICE_MAP = {
+  en: 'en-US-JennyNeural',
+  hi: 'hi-IN-SwaraNeural',
+  es: 'es-ES-ElviraNeural',
+  pt: 'pt-BR-FranciscaNeural'
+};
+
+// ── DIRS ──────────────────────────────────────────────────────────
+const FIXED_AUDIO_DIR = path.join(__dirname, 'fixed_audio');
+const SFX_DIR         = path.join(__dirname, 'sfx');
+
+// ── SUPABASE ──────────────────────────────────────────────────────
+async function db(endpoint, opts = {}) {
+  const url = `${SUPABASE_URL}/rest/v1/${endpoint}`;
+  console.log(`[DB] ${opts.method || 'GET'} ${url}`);
+  const headers = { ...BASE_HEADERS, ...(opts.headers || {}) };
+  if (opts.method && ['POST','PATCH','PUT'].includes(opts.method)) {
+    headers.Prefer = 'return=representation';
   }
-  const response = await fetch(url, { ...options, headers });
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`HTTP ${response.status}: ${errorText}`);
-  }
-  const text = await response.text();
-  console.log(`[FETCH] Response length: ${text.length} chars`);
-  if (!text || text.trim() === '') return null;
-  try {
-    return JSON.parse(text);
-  } catch (err) {
-    console.error(`[FETCH] Failed to parse JSON. Raw response: ${text.substring(0, 200)}`);
-    throw err;
-  }
+  const res = await fetch(url, { ...opts, headers });
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+  const txt = await res.text();
+  console.log(`[DB] response ${txt.length} chars`);
+  if (!txt || txt.trim() === '') return null;
+  return JSON.parse(txt);
 }
 
-// ========================
-// Audio utilities with retry and fallback
-// ========================
-async function getAudioDuration(file) {
-  const { stdout } = await execPromise(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${file}"`);
+// ── UTILITIES ─────────────────────────────────────────────────────
+async function ensureDir(d) { await fs.mkdir(d, { recursive: true }); }
+
+async function exists(p) {
+  try { await fs.access(p); return true; } catch { return false; }
+}
+
+async function audioDur(p) {
+  const { stdout } = await execPromise(
+    `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${p}"`
+  );
   return parseFloat(stdout.trim());
 }
 
-async function generateSilentAudio(outputPath, durationSec = 1) {
-  await execPromise(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${durationSec} -q:a 9 -acodec libmp3lame "${outputPath}"`);
-}
-
-async function ttsWithFallback(text, voice, outPath, fallbackSec = 2) {
-  if (!text?.trim()) {
-    await generateSilentAudio(outPath, fallbackSec);
-    return;
-  }
-
-  const maxRetries = 3;
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const tmp = outPath + '.txt';
-      await fs.writeFile(tmp, text, 'utf8');
-      await execPromise(`edge-tts --voice "${voice}" --file "${tmp}" --write-media "${outPath}"`);
-      await fs.unlink(tmp).catch(() => {});
-      console.log(`TTS succeeded for: ${text.substring(0, 50)}...`);
-      return; // success
-    } catch (err) {
-      console.warn(`TTS attempt ${attempt} failed: ${err.message}`);
-      if (attempt === maxRetries) {
-        console.warn(`Falling back to silent audio for: ${text.substring(0, 50)}...`);
-        await generateSilentAudio(outPath, fallbackSec);
-      } else {
-        await new Promise(r => setTimeout(r, 2000 * attempt)); // exponential backoff
-      }
-    }
-  }
-}
-
-// Fixed phrase cache (still uses ttsWithFallback)
-const FIXED_DIR = '/tmp/fixed_audio';
-async function getFixedPhrase(key, text, voice) {
-  await fs.mkdir(FIXED_DIR, { recursive: true });
-  const cachePath = `${FIXED_DIR}/${key}_${voice}.mp3`;
-  try {
-    await fs.access(cachePath);
-    return cachePath;
-  } catch {
-    await ttsWithFallback(text, voice, cachePath);
-    return cachePath;
-  }
-}
-
-// ========================
-// Unique background CSS
-// ========================
-function getUniqueBackgroundCSS(quiz) {
-  if (quiz.quiz_background_css && quiz.quiz_background_css.trim()) {
-    return quiz.quiz_background_css;
-  }
-  const hue1 = Math.floor(Math.random() * 360);
-  const hue2 = (hue1 + 40) % 360;
-  const hue3 = (hue1 + 80) % 360;
-  return `
-    <style>
-      .dynamic-bg {
-        position: fixed; inset: 0; z-index: 0;
-        background: linear-gradient(135deg, hsl(${hue1}, 70%, 10%), hsl(${hue2}, 70%, 20%), hsl(${hue3}, 70%, 15%));
-        background-size: 200% 200%;
-        animation: bgShift 12s ease infinite;
-      }
-      .dynamic-bg::before {
-        content: ''; position: absolute; inset: 0;
-        background-image: radial-gradient(circle at 20% 40%, rgba(255,255,255,0.1) 2%, transparent 2.5%),
-                          radial-gradient(circle at 80% 70%, rgba(255,255,255,0.08) 1.5%, transparent 2%);
-        background-size: 60px 60px, 40px 40px;
-        animation: floatDots 20s linear infinite;
-      }
-      @keyframes bgShift { 0%{background-position:0% 0%;} 50%{background-position:100% 100%;} 100%{background-position:0% 0%;} }
-      @keyframes floatDots { from { transform: translate(0,0); } to { transform: translate(40px, 40px); } }
-    </style>
-    <div class="dynamic-bg"></div>
-  `;
-}
-
-// ========================
-// Build full HTML for one question
-// ========================
-async function buildHTML(quiz, qIdx, workDir, lang, thinkingTimeSec, engagementText, customBgCSS) {
-  const options = quiz[`options_${qIdx}`] || [];
-  const correct = quiz[`correct_answer_${qIdx}`] || '';
-  const hint = quiz[`hint_${qIdx}`] || '';
-  const keep5050 = quiz[`keep_5050_${qIdx}`] || [];
-  const eliminateIdx = [0,1,2,3].filter(i => !keep5050.includes(i) && !keep5050.includes(String(i)));
-  const ctaUrl = `jaasblog.online/q/${quiz.niche}/${lang}/${quiz.topic_slug}`;
-
-  const templatePath = path.join(__dirname, 'quiz_template.html');
-  let template = await fs.readFile(templatePath, 'utf8');
-
-  const replacements = {
-    '{{hook_phrase}}': quiz.hook_phrase || '🔥 STOP SCROLLING!',
-    '{{topic}}': quiz.topic || '',
-    '{{engagement_text}}': engagementText,
-    '{{question_appearance_text}}': quiz.question_appearance_text || 'Here Is Your Challenge – Solve It',
-    '{{question}}': quiz[`question_${qIdx}`] || '',
-    '{{options[0]}}': options[0] || '',
-    '{{options[1]}}': options[1] || '',
-    '{{options[2]}}': options[2] || '',
-    '{{options[3]}}': options[3] || '',
-    '{{opt0_class}}': eliminateIdx.includes(0) ? 'eliminate' : '',
-    '{{opt1_class}}': eliminateIdx.includes(1) ? 'eliminate' : '',
-    '{{opt2_class}}': eliminateIdx.includes(2) ? 'eliminate' : '',
-    '{{opt3_class}}': eliminateIdx.includes(3) ? 'eliminate' : '',
-    '{{rev0_class}}': options[0] === correct ? 'correct' : 'wrong',
-    '{{rev1_class}}': options[1] === correct ? 'correct' : 'wrong',
-    '{{rev2_class}}': options[2] === correct ? 'correct' : 'wrong',
-    '{{rev3_class}}': options[3] === correct ? 'correct' : 'wrong',
-    '{{hint}}': hint,
-    '{{correct_answer}}': correct,
-    '{{explanation}}': quiz[`explanation_${qIdx}`] || '',
-    '{{cta_text}}': quiz.cta_text || 'Like, Share & Subscribe!',
-    '{{cta2_text}}': quiz.cta2_text || 'Accept the real challenge – earn ONS tokens!',
-    '{{blog_page_url}}': quiz.blog_page_url || ctaUrl,
-    '{{affiliate_text}}': quiz.affiliate_text || 'Want the best credit card? Follow the description link!',
-    '{{affiliate_url}}': quiz.affiliate_url || quiz.cta_affiliate_url || '',
-    '{{mission_question}}': quiz.mission_impossible_question || '',
-    '{{mission_hint}}': quiz.mission_impossible_hint || '',
-    '{{mission_trigger}}': quiz.mission_impossible_trigger_line || 'Comment your answer below!',
-    '{{thinking_time}}': thinkingTimeSec,
-    '{{unique_bg}}': customBgCSS
-  };
-  for (const [k, v] of Object.entries(replacements)) {
-    template = template.split(k).join(String(v));
-  }
-  const htmlPath = path.join(workDir, 'index.html');
-  await fs.writeFile(htmlPath, template);
-  return htmlPath;
-}
-
-// ========================
-// Main video builder
-// ========================
-async function buildVideo(quiz, qIdx, lang, workDir) {
-  const voice = { en: 'en-US-JennyNeural', hi: 'hi-IN-SwaraNeural', es: 'es-ES-ElviraNeural', pt: 'pt-BR-FranciscaNeural' }[lang] || 'en-US-JennyNeural';
-  const thinkingSec = quiz.thinking_time || 18;
-  const engagementText = (quiz.quiz_intro_speech || '') + ' ' + (quiz.engagement_prompt || '');
-  const customBg = getUniqueBackgroundCSS(quiz);
-
-  const htmlPath = await buildHTML(quiz, qIdx, workDir, lang, thinkingSec, engagementText, customBg);
-  
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-  });
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1080, height: 1920 });
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'load', timeout: 120000 });
-
-  const clips = [];
-
-  async function screenShot(selector, name) {
-    await page.evaluate(sel => {
-      document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
-      const target = document.querySelector(sel);
-      if (target) target.classList.add('active');
-    }, selector);
-    await new Promise(r => setTimeout(r, 500));
-    const img = path.join(workDir, `${name}.png`);
-    await page.screenshot({ path: img });
-    return img;
-  }
-
-  async function imageClip(img, audioPath, name, durationOverride = null) {
-    const dur = durationOverride || await getAudioDuration(audioPath);
-    const clip = path.join(workDir, `${name}.mp4`);
-    await execPromise(`ffmpeg -y -loop 1 -i "${img}" -i "${audioPath}" -c:v libx264 -t ${dur} -pix_fmt yuv420p -c:a aac -shortest "${clip}"`);
-    return { path: clip, duration: dur };
-  }
-
-  // 1. Hook
-  const hookImg = await screenShot('.hook-slide', 'hook');
-  const hookAudio = path.join(workDir, 'hook.mp3');
-  await ttsWithFallback(quiz.hook_phrase, voice, hookAudio, 3);
-  let hookDur = await getAudioDuration(hookAudio);
-  hookDur = Math.max(hookDur, 2.5);
-  clips.push(await imageClip(hookImg, hookAudio, 'hook_clip', hookDur));
-
-  // 2. Intro
-  const introImg = await screenShot('.intro-slide', 'intro');
-  const introAudio = path.join(workDir, 'intro.mp3');
-  await ttsWithFallback(quiz.quiz_intro_speech, voice, introAudio, 5);
-  let introDur = await getAudioDuration(introAudio);
-  introDur = Math.max(introDur, 4);
-  clips.push(await imageClip(introImg, introAudio, 'intro_clip', introDur));
-
-  // 3. Challenge announcement
-  const challengeAudio = await getFixedPhrase('challenge', 'Here is your challenge. Solve it.', voice);
-  const challengeDur = await getAudioDuration(challengeAudio);
-  const challengeImg = await screenShot('.intro-slide', 'challenge_static');
-  clips.push(await imageClip(challengeImg, challengeAudio, 'challenge_clip', challengeDur));
-
-  // 4. Question phase recording
-  await page.evaluate(() => {
-    document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
-    const q = document.querySelector('.question-phase');
-    if (q) q.classList.add('active');
-  });
-  await new Promise(r => setTimeout(r, 500));
-
-  const questionVideoRaw = path.join(workDir, 'question_phase_raw.mp4');
-  const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
-  const recorder = new PuppeteerScreenRecorder(page, { fps: 30, videoFrame: { width: 1080, height: 1920 }, aspectRatio: '9:16' });
-  await recorder.start(questionVideoRaw);
-  await new Promise(r => setTimeout(r, thinkingSec * 1000));
-  await recorder.stop();
-
-  // 5. "And your options are"
-  const optionsAudio = await getFixedPhrase('options', 'And your options are.', voice);
-  const optionsDur = await getAudioDuration(optionsAudio);
-  const optionsImg = await screenShot('.question-phase', 'options_static');
-  clips.push(await imageClip(optionsImg, optionsAudio, 'options_clip', optionsDur));
-
-  // Recorded phase
-  const questionDur = await getVideoDuration(questionVideoRaw);
-  clips.push({ path: questionVideoRaw, duration: questionDur });
-
-  // 6. Time up + correct answer
-  const timeupAudio = path.join(workDir, 'timeup.mp3');
-  await ttsWithFallback(`Time's up. The correct answer is ${quiz[`correct_answer_${qIdx}`] || ''}.`, voice, timeupAudio, 3);
-  const timeupDur = await getAudioDuration(timeupAudio);
-  const answerImg = await screenShot('.answer-slide', 'answer_static');
-  clips.push(await imageClip(answerImg, timeupAudio, 'timeup_clip', timeupDur));
-
-  // 7. Explanation
-  const explImg = await screenShot('.explanation-slide', 'explanation');
-  const explAudio = path.join(workDir, 'explanation.mp3');
-  await ttsWithFallback(quiz[`explanation_${qIdx}`], voice, explAudio, 5);
-  const explDur = await getAudioDuration(explAudio);
-  clips.push(await imageClip(explImg, explAudio, 'explanation_clip', explDur));
-
-  // 8. CTA1 (affiliate)
-  const cta1Img = await screenShot('.cta-slide', 'cta1');
-  const cta1Audio = path.join(workDir, 'cta1.mp3');
-  const cta1Text = `${quiz.affiliate_text || 'Want the best credit card?'} Follow the description link: ${quiz.affiliate_url || ''}`;
-  await ttsWithFallback(cta1Text, voice, cta1Audio, 4);
-  const cta1Dur = await getAudioDuration(cta1Audio);
-  clips.push(await imageClip(cta1Img, cta1Audio, 'cta1_clip', cta1Dur));
-
-  // 9. CTA2 (website challenge)
-  await page.evaluate(text => {
-    const el = document.querySelector('.cta-slide .cta-text');
-    if (el) el.textContent = text;
-  }, quiz.cta2_text || 'Accept the real challenge – go to our site and earn real ONS tokens!');
-  await new Promise(r => setTimeout(r, 200));
-  const cta2Img = path.join(workDir, 'cta2.png');
-  await page.screenshot({ path: cta2Img });
-  const cta2Audio = path.join(workDir, 'cta2.mp3');
-  await ttsWithFallback(quiz.cta2_text || 'Accept the real challenge. Go to our site and earn real ONS tokens.', voice, cta2Audio, 4);
-  const cta2Dur = await getAudioDuration(cta2Audio);
-  clips.push(await imageClip(cta2Img, cta2Audio, 'cta2_clip', cta2Dur));
-
-  // 10. Mission Impossible question
-  const missionQImg = await screenShot('.mission-slide', 'mission_q');
-  const missionQAudio = path.join(workDir, 'mission_q.mp3');
-  await ttsWithFallback(quiz.mission_impossible_question, voice, missionQAudio, 3);
-  const missionQDur = await getAudioDuration(missionQAudio);
-  clips.push(await imageClip(missionQImg, missionQAudio, 'mission_q_clip', missionQDur));
-
-  // 11. Gap before hint
-  const gapAudio = path.join(workDir, 'gap.mp3');
-  await generateSilentAudio(gapAudio, 2.5);
-  clips.push(await imageClip(missionQImg, gapAudio, 'gap_clip', 2.5));
-
-  // 12. Mission hint reveal
-  await page.evaluate(() => {
-    const hintEl = document.querySelector('.mission-hint');
-    if (hintEl) hintEl.classList.add('shown');
-  });
-  await new Promise(r => setTimeout(r, 200));
-  const missionHintImg = path.join(workDir, 'mission_hint.png');
-  await page.screenshot({ path: missionHintImg });
-  const missionHintAudio = path.join(workDir, 'mission_hint.mp3');
-  await ttsWithFallback(quiz.mission_impossible_hint + ' ' + quiz.mission_impossible_trigger_line, voice, missionHintAudio, 3);
-  const missionHintDur = await getAudioDuration(missionHintAudio);
-  clips.push(await imageClip(missionHintImg, missionHintAudio, 'mission_hint_clip', missionHintDur));
-
-  // 13. Final CTA
-  await page.evaluate(() => {
-    const el = document.querySelector('.cta-slide .cta-text');
-    if (el) el.textContent = '👍 Like, Share, & Challenge your friend! Subscribe to get the answer to Mission Impossible!';
-  });
-  await new Promise(r => setTimeout(r, 200));
-  const finalCtaImg = path.join(workDir, 'final_cta.png');
-  await page.screenshot({ path: finalCtaImg });
-  const finalAudio = path.join(workDir, 'final.mp3');
-  await ttsWithFallback('Like, share, and challenge your friend! Subscribe to get the answer to the mission impossible question.', voice, finalAudio, 5);
-  const finalDur = await getAudioDuration(finalAudio);
-  clips.push(await imageClip(finalCtaImg, finalAudio, 'final_cta_clip', finalDur));
-
-  await browser.close();
-
-  // Concat all clips
-  const concatList = clips.map(c => `file '${c.path}'`).join('\n');
-  const listPath = path.join(workDir, 'concat.txt');
-  await fs.writeFile(listPath, concatList);
-  const outputPath = path.join(workDir, 'final.mp4');
-  await execPromise(`ffmpeg -y -f concat -safe 0 -i "${listPath}" -c:v libx264 -c:a aac -movflags +faststart "${outputPath}"`);
-  return outputPath;
-}
-
-async function getVideoDuration(videoPath) {
-  const { stdout } = await execPromise(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`);
+async function videoDur(p) {
+  const { stdout } = await execPromise(
+    `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${p}"`
+  );
   return parseFloat(stdout.trim());
 }
 
-// ========================
-// Job processor
-// ========================
-async function processJobs() {
-  console.log('Checking pending video jobs...');
-  const jobs = await fetchSupabase('quiz_queue?job_type=eq.video_render&status=eq.pending&order=created_at.asc&limit=1');
-  if (!jobs?.length) { console.log('No pending jobs'); return; }
+async function tts(text, voice, out, minSec = 1) {
+  const clean = (text || '').trim();
+  if (!clean) { await silence(out, minSec); return minSec; }
+  const tmp = out + '.txt';
+  await fs.writeFile(tmp, clean, 'utf8');
+  await execPromise(`edge-tts --voice "${voice}" --file "${tmp}" --write-media "${out}"`);
+  await fs.unlink(tmp).catch(() => {});
+  const d = await audioDur(out);
+  if (d < minSec) {
+    const padded = out + '.pad.mp3';
+    await execPromise(
+      `ffmpeg -y -i "${out}" -af "apad=whole_dur=${minSec}" -acodec libmp3lame "${padded}"`
+    );
+    await fs.rename(padded, out);
+    return minSec;
+  }
+  return d;
+}
+
+async function silence(out, sec) {
+  await execPromise(
+    `ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${sec} -q:a 9 -acodec libmp3lame "${out}"`
+  );
+}
+
+async function fixedPhrase(key, text, voice, lang) {
+  await ensureDir(FIXED_AUDIO_DIR);
+  const p = path.join(FIXED_AUDIO_DIR, `${key}_${lang}.mp3`);
+  if (await exists(p)) return p;
+  await tts(text, voice, p, 1);
+  return p;
+}
+
+async function sfx(niche) {
+  await ensureDir(SFX_DIR);
+  for (const c of [path.join(SFX_DIR, `${niche||'default'}.mp3`), path.join(SFX_DIR, 'default.mp3')]) {
+    if (await exists(c)) return c;
+  }
+  return null;
+}
+
+async function imgClip(imgPath, audioPath, dur, workDir, name) {
+  const out = path.join(workDir, `${name}.mp4`);
+  await execPromise(
+    `ffmpeg -y -loop 1 -i "${imgPath}" -i "${audioPath}" ` +
+    `-c:v libx264 -t ${dur} -pix_fmt yuv420p -c:a aac -shortest "${out}"`
+  );
+  return { path: out, duration: dur };
+}
+
+function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── JOB RUNNER ────────────────────────────────────────────────────
+async function run() {
+  console.log('Checking for pending video jobs...');
+  const jobs = await db(
+    'quiz_queue?job_type=eq.video_render&status=eq.pending&order=created_at.asc&limit=1'
+  );
+  if (!jobs || !jobs.length) { console.log('No pending jobs.'); return; }
+
   const job = jobs[0];
   console.log(`Processing job ${job.id} for quiz ${job.quiz_id}`);
 
-  await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
+  await db(`quiz_queue?id=eq.${job.id}`, {
     method: 'PATCH',
     body: JSON.stringify({ status: 'processing', started_at: new Date().toISOString() })
   });
 
   try {
-    const quizzes = await fetchSupabase(`quiz?id=eq.${job.quiz_id}`);
-    if (!quizzes?.length) throw new Error('Quiz not found');
-    const quiz = quizzes[0];
-    const qIdx = job.payload?.question_index || 1;
-    const lang = quiz.lang_code || 'en';
-    const workDir = `/tmp/video_${uuidv4()}`;
-    await fs.mkdir(workDir, { recursive: true });
+    const rows = await db(`quiz?id=eq.${job.quiz_id}`);
+    if (!rows || !rows.length) throw new Error('Quiz not found');
+    const quiz = rows[0];
 
-    const videoPath = await buildVideo(quiz, qIdx, lang, workDir);
-    const stats = await fs.stat(videoPath);
-    console.log(`Video size: ${(stats.size / (1024*1024)).toFixed(2)} MB`);
+    const qIdx    = (job.payload && job.payload.question_index) || 1;
+    const lang    = quiz.lang_code || 'en';
+    const workDir = `/tmp/vid_${uuidv4()}`;
+    await ensureDir(workDir);
 
-    const artifactPath = `/tmp/${job.id}_video.mp4`;
-    await fs.copyFile(videoPath, artifactPath);
-    await fs.writeFile('/tmp/artifact_ready', artifactPath);
+    const outPath = await buildVideo(quiz, qIdx, lang, workDir);
+    const stats   = await fs.stat(outPath);
+    const dur     = await videoDur(outPath);
 
-    await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
+    console.log(`Video ready: ${outPath} | ${(stats.size/1e6).toFixed(2)} MB | ${dur.toFixed(1)}s`);
+
+    const artifact = `/tmp/${job.id}_video.mp4`;
+    await fs.copyFile(outPath, artifact);
+    await fs.writeFile('/tmp/artifact_ready', artifact);
+
+    await db(`quiz_queue?id=eq.${job.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'completed', completed_at: new Date().toISOString() })
     });
-    await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
+    await db(`quiz?id=eq.${quiz.id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ video_status: 'rendered' })
+      body: JSON.stringify({ render_duration_sec: Math.round(dur), video_status: 'rendered' })
     });
+
     await fs.rm(workDir, { recursive: true, force: true });
-    console.log(`Job ${job.id} completed`);
+    console.log(`Job ${job.id} done.`);
+
   } catch (err) {
     console.error('Job failed:', err);
-    await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
+    await db(`quiz_queue?id=eq.${job.id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ status: 'failed', last_error: err.message })
-    });
+      body: JSON.stringify({
+        status: 'failed',
+        last_error: String(err.message || err),
+        retry_count: (job.retry_count || 0) + 1
+      })
+    }).catch(e => console.error('Queue update failed:', e));
     throw err;
   }
 }
 
-processJobs().then(() => process.exit(0)).catch(err => { console.error(err); process.exit(1); });
+// ── VIDEO BUILDER ─────────────────────────────────────────────────
+async function buildVideo(quiz, qIdx, lang, workDir) {
+  const voice = VOICE_MAP[lang] || VOICE_MAP.en;
+
+  const question    = quiz[`question_${qIdx}`]      || '';
+  const options     = quiz[`options_${qIdx}`]       || [];
+  const correct     = quiz[`correct_answer_${qIdx}`] || '';
+  const hint        = quiz[`hint_${qIdx}`]          || '';
+  const keep5050    = quiz[`keep_5050_${qIdx}`]     || [];
+  const explanation = quiz[`explanation_${qIdx}`]   || '';
+
+  const THINK_TIME = quiz.thinking_time || 18;
+  const HINT_AT    = Math.round(THINK_TIME / 3);
+  const F50_AT     = Math.round((THINK_TIME * 2) / 3);
+
+  const allIdx    = [0,1,2,3];
+  const keepSet   = new Set(keep5050.map(v => parseInt(v, 10)));
+  const eliminate = allIdx.filter(i => !keepSet.has(i));
+  const eClass    = i => eliminate.includes(i) ? 'eliminate' : '';
+  const rClass    = i => (options[i] === correct ? 'correct' : 'wrong');
+
+  const ctaUrl = `jaasblog.online/q/${quiz.niche||'quiz'}/${lang}/${quiz.topic_slug||quiz.blog_slug||''}`;
+
+  // ── Build HTML ───────────────────────────────────────────
+  let html = await fs.readFile(path.join(__dirname, 'quiz_template.html'), 'utf8');
+  const rep = {
+    '{{hook_phrase}}':       quiz.hook_phrase || quiz.topic || 'Think fast!',
+    '{{topic}}':             quiz.topic || '',
+    '{{quiz_intro_speech}}': quiz.quiz_intro_speech || `Today's topic: ${quiz.topic}`,
+    '{{question}}':          question,
+    '{{options[0]}}':  options[0]||'', '{{options[1]}}': options[1]||'',
+    '{{options[2]}}':  options[2]||'', '{{options[3]}}': options[3]||'',
+    '{{e0}}': eClass(0), '{{e1}}': eClass(1), '{{e2}}': eClass(2), '{{e3}}': eClass(3),
+    '{{r0}}': rClass(0), '{{r1}}': rClass(1), '{{r2}}': rClass(2), '{{r3}}': rClass(3),
+    '{{hint}}':              hint,
+    '{{correct_answer}}':    correct,
+    '{{cta_text}}':          quiz.cta_text || 'Like, Share & Subscribe!',
+    '{{cta_url}}':           ctaUrl,
+    '{{final_cta_text}}':    quiz.cta_description_text || 'Play live & earn ONS tokens!',
+    '{{mission_question}}':  quiz.mission_impossible_question  || '',
+    '{{mission_hint}}':      quiz.mission_impossible_hint      || '',
+    '{{mission_trigger}}':   quiz.mission_impossible_trigger_line || '',
+    '{{thinking_time}}':     `${THINK_TIME}`,
+    '{{hint_time}}':         `${HINT_AT}`,
+    '{{fiftyfifty_time}}':   `${F50_AT}`
+  };
+  for (const [k,v] of Object.entries(rep)) html = html.split(k).join(String(v));
+  const htmlPath = path.join(workDir, 'quiz.html');
+  await fs.writeFile(htmlPath, html, 'utf8');
+
+  // ── Launch Puppeteer ─────────────────────────────────────
+  let executablePath;
+  try   { executablePath = puppeteer.executablePath(); }
+  catch { executablePath = '/usr/bin/chromium-browser'; }
+
+  const browser = await puppeteer.launch({
+    headless: 'new', executablePath,
+    args: [
+      '--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage',
+      '--disable-gpu','--disable-software-rasterizer','--disable-extensions',
+      '--run-all-compositor-stages-before-draw'
+    ]
+  });
+
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1080, height: 1920 });
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await wait(300);
+
+  // Show one screen by its HTML id
+  async function show(id) {
+    await page.evaluate(id => {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      const el = document.getElementById(id);
+      if (el) el.classList.add('active');
+    }, id);
+  }
+
+  // Screenshot a screen → audio → clip
+  async function snap(screenId, audioPath, dur, clipName, settleMs = 900) {
+    await show(screenId);
+    await wait(settleMs);
+    const img = path.join(workDir, `${clipName}.png`);
+    await page.screenshot({ path: img });
+    return imgClip(img, audioPath, dur, workDir, clipName);
+  }
+
+  const clips = [];
+
+  // ── STEP 1: HOOK (2-4s) ─────────────────────────────────
+  console.log('[step 1] hook');
+  const hookAudio = path.join(workDir, 'hook.mp3');
+  const hookDur   = Math.min(Math.max(
+    await tts(quiz.hook_phrase || quiz.topic || 'Think fast!', voice, hookAudio, 3),
+    2), 4);
+  clips.push(await snap('s-hook', hookAudio, hookDur, 'c1_hook', 1100));
+
+  // ── STEP 2: INTRODUCTION (4-8s) ─────────────────────────
+  console.log('[step 2] intro');
+  const introAudio = path.join(workDir, 'intro.mp3');
+  const introDur   = Math.min(Math.max(
+    await tts(quiz.quiz_intro_speech || `Today's topic: ${quiz.topic}`, voice, introAudio, 4),
+    4), 8);
+  clips.push(await snap('s-intro', introAudio, introDur, 'c2_intro', 900));
+
+  // ── STEP 3: "HERE IS YOUR CHALLENGE" + question appears ──
+  console.log('[step 3] challenge phrase');
+  const challengeAudio = await fixedPhrase('here_is_your_challenge',
+    'Here is your challenge. Solve it!', voice, lang);
+  const challengeDur = await audioDur(challengeAudio);
+  clips.push(await snap('s-q-appear', challengeAudio, challengeDur, 'c3_challenge', 700));
+
+  // ── STEP 4+5: "AND YOUR OPTIONS ARE…" + options slide in ─
+  console.log('[step 4+5] options appear');
+  const optionsAudio = await fixedPhrase('and_your_options_are',
+    'And your options are…', voice, lang);
+  const optionsDur = await audioDur(optionsAudio);
+  clips.push(await snap('s-opts-appear', optionsAudio, optionsDur, 'c4_options', 700));
+
+  // ── STEP 6: "YOUR TIME STARTS NOW!" ─────────────────────
+  console.log('[step 6] time starts now');
+  const startsAudio = await fixedPhrase('your_time_starts_now',
+    'Your time starts now!', voice, lang);
+  const startsDur = await audioDur(startsAudio);
+  // Reuse the already-taken options screenshot
+  const optsImg = path.join(workDir, 'c4_options.png');
+  clips.push(await imgClip(optsImg, startsAudio, startsDur, workDir, 'c5_starts'));
+
+  // ── STEPS 7-9: TIMER PHASE (screen-recorded) ─────────────
+  console.log(`[steps 7-9] timer phase — ${THINK_TIME}s`);
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await wait(200);
+  await show('s-timer');
+  await wait(150);
+
+  const sfxFile    = await sfx(quiz.niche);
+  const timerAudio = path.join(workDir, 'timer_sfx.mp3');
+  if (sfxFile) {
+    await execPromise(
+      `ffmpeg -y -stream_loop -1 -i "${sfxFile}" -t ${THINK_TIME} -af "volume=0.65" -acodec libmp3lame "${timerAudio}"`
+    );
+  } else {
+    await silence(timerAudio, THINK_TIME);
+  }
+
+  const rawTimerVideo = path.join(workDir, 'timer_raw.mp4');
+  const recorder = new PuppeteerScreenRecorder(page, {
+    fps: 30, videoFrame: { width: 1080, height: 1920 }, aspectRatio: '9:16'
+  });
+  await recorder.start(rawTimerVideo);
+  await wait(THINK_TIME * 1000);
+  await recorder.stop();
+
+  const timerClip = path.join(workDir, 'c6_timer.mp4');
+  await execPromise(
+    `ffmpeg -y -i "${rawTimerVideo}" -i "${timerAudio}" ` +
+    `-c:v libx264 -c:a aac -map 0:v:0 -map 1:a:0 -shortest "${timerClip}"`
+  );
+  clips.push({ path: timerClip, duration: THINK_TIME });
+
+  // ── STEP 10: ANSWER REVEAL ───────────────────────────────
+  console.log('[step 10] answer reveal');
+  await show('s-answer');
+  await wait(300);
+  const answerImg   = path.join(workDir, 'c7_answer.png');
+  await page.screenshot({ path: answerImg });
+  const answerAudio = path.join(workDir, 'answer.mp3');
+  const answerDur   = await tts(
+    `Time's up! The correct answer is ${correct}.`, voice, answerAudio, 3
+  );
+  clips.push(await imgClip(answerImg, answerAudio, answerDur, workDir, 'c7_answer'));
+
+  // Explanation spoken over the answer slide (no separate screen needed)
+  if (explanation) {
+    console.log('[step 10b] explanation');
+    const explAudio = path.join(workDir, 'expl.mp3');
+    const explDur   = await tts(explanation, voice, explAudio, 3);
+    clips.push(await imgClip(answerImg, explAudio, explDur, workDir, 'c8_expl'));
+  }
+
+  // ── STEPS 11-12: CTA ─────────────────────────────────────
+  console.log('[steps 11-12] CTA');
+  const ctaText  = quiz.cta_description_text || quiz.cta_text ||
+    'Like, share, and subscribe! Tap the link in the description for the exclusive offer.';
+  const ctaAudio = path.join(workDir, 'cta.mp3');
+  const ctaDur   = await tts(ctaText, voice, ctaAudio, 4);
+  clips.push(await snap('s-cta', ctaAudio, ctaDur, 'c9_cta', 800));
+
+  // ── STEPS 13-14: MISSION IMPOSSIBLE ─────────────────────
+  if (quiz.mission_impossible_enabled !== false && quiz.mission_impossible_question) {
+    console.log('[steps 13-14] mission impossible');
+
+    const mQAudio = path.join(workDir, 'mq.mp3');
+    const mQDur   = Math.max(await tts(
+      quiz.mission_impossible_question, voice, mQAudio, 2.5), 2.5);
+    clips.push(await snap('s-mission-q', mQAudio, mQDur, 'c10_mq', 600));
+
+    const mHintText  = [quiz.mission_impossible_hint, quiz.mission_impossible_trigger_line]
+      .filter(Boolean).join(' ') || 'Here is your hint!';
+    const mHintAudio = path.join(workDir, 'mhint.mp3');
+    const mHintDur   = Math.max(await tts(mHintText, voice, mHintAudio, 2.5), 2.5);
+    clips.push(await snap('s-mission-hint', mHintAudio, mHintDur, 'c11_mhint', 500));
+  }
+
+  // ── STEP 15: FINAL CTA ───────────────────────────────────
+  console.log('[step 15] final CTA');
+  const fctaText  = `Like this video and subscribe to see the Mission Impossible answer. ` +
+    `Challenge your friends! Play the live quiz and earn ONS tokens at ${ctaUrl}`;
+  const fctaAudio = path.join(workDir, 'fcta.mp3');
+  const fctaDur   = await tts(fctaText, voice, fctaAudio, 4);
+  clips.push(await snap('s-final-cta', fctaAudio, fctaDur, 'c12_fcta', 1000));
+
+  await browser.close();
+
+  // ── CONCAT ───────────────────────────────────────────────
+  console.log(`[concat] ${clips.length} clips`);
+  const listPath = path.join(workDir, 'concat.txt');
+  await fs.writeFile(listPath, clips.map(c => `file '${c.path}'`).join('\n'));
+
+  const finalPath = path.join(workDir, 'final.mp4');
+  await execPromise(
+    `ffmpeg -y -f concat -safe 0 -i "${listPath}" -c:v libx264 -c:a aac -movflags +faststart "${finalPath}"`
+  );
+
+  const total = clips.reduce((s,c) => s + c.duration, 0);
+  console.log(`[done] total duration: ${total.toFixed(1)}s`);
+  if (total < 35 || total > 60) {
+    console.warn(`[warn] ${total.toFixed(1)}s — target 35-55s`);
+  }
+  return finalPath;
+}
+
+// ── ENTRY ─────────────────────────────────────────────────────────
+run()
+  .then(() => { console.log('Worker finished.'); process.exit(0); })
+  .catch(err => { console.error('Fatal:', err); process.exit(1); });
