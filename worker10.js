@@ -12,6 +12,17 @@ const { v4: uuidv4 } = require('uuid');
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
+console.log('SUPABASE_URL from env:', supabaseUrl);
+console.log('SUPABASE_SERVICE_KEY from env:', supabaseKey ? '*** (set)' : 'NOT SET');
+
+// Remove trailing slash if present
+const cleanSupabaseUrl = supabaseUrl ? supabaseUrl.replace(/\/$/, '') : null;
+
+if (!cleanSupabaseUrl || !supabaseKey) {
+  console.error('Missing Supabase credentials (URL or key)');
+  process.exit(1);
+}
+
 // Supabase REST API helpers
 const headers = {
   'apikey': supabaseKey,
@@ -20,9 +31,13 @@ const headers = {
 };
 
 async function fetchSupabase(path, options = {}) {
-  const url = `${supabaseUrl}/rest/v1/${path}`;
+  const url = `${cleanSupabaseUrl}/rest/v1/${path}`;
+  console.log('Fetching:', url);
   const res = await fetch(url, { headers, ...options });
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
   return res.json();
 }
 
@@ -31,21 +46,21 @@ async function fetchSupabase(path, options = {}) {
 // ========================
 async function processJobs() {
   console.log('Checking for pending video jobs...');
-  const jobs = await fetchSupabase(
-    'quiz_queue?job_type=eq.video_render&status=eq.pending&order=created_at.asc&limit=1'
-  );
-  if (!jobs.length) {
-    console.log('No pending jobs');
-    return;
-  }
-  const job = jobs[0];
-  console.log(`Processing job ${job.id} for quiz ${job.quiz_id}`);
-  await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ status: 'processing', started_at: new Date().toISOString() })
-  });
-
   try {
+    const jobs = await fetchSupabase(
+      'quiz_queue?job_type=eq.video_render&status=eq.pending&order=created_at.asc&limit=1'
+    );
+    if (!jobs.length) {
+      console.log('No pending jobs');
+      return;
+    }
+    const job = jobs[0];
+    console.log(`Processing job ${job.id} for quiz ${job.quiz_id}`);
+    await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'processing', started_at: new Date().toISOString() })
+    });
+
     // Fetch quiz data
     const quizzes = await fetchSupabase(`quiz?id=eq.${job.quiz_id}`);
     if (!quizzes.length) throw new Error('Quiz not found');
@@ -54,55 +69,42 @@ async function processJobs() {
     const { question_index = 1, video_type = 'short', thinking_time_sec = 16 } = job.payload;
     const lang = quiz.lang_code || 'en';
 
-    // Create temp directory
     const workDir = `/tmp/video_${uuidv4()}`;
     await fs.mkdir(workDir, { recursive: true });
 
-    // Generate slides
     const slides = await generateSlides(quiz, question_index, thinking_time_sec, workDir, lang);
-    // Generate TTS audio
     const audioPaths = await generateTTS(quiz, question_index, slides, workDir, lang);
-    // Assemble video
     const videoPath = await assembleVideo(slides, audioPaths, workDir);
 
-    // Get file size
     const stats = await fs.stat(videoPath);
     console.log(`Video created: ${videoPath}, size: ${(stats.size / (1024*1024)).toFixed(2)} MB`);
 
-    // Mark job as completed
     await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'completed', completed_at: new Date().toISOString() })
     });
 
-    // Upload video as GitHub Actions artifact (so you can download it)
+    // Save as artifact
     const artifactPath = `/tmp/${job.id}_video.mp4`;
     await fs.copyFile(videoPath, artifactPath);
     console.log(`Video saved as artifact: ${artifactPath}`);
-    // The artifact will be automatically uploaded by GitHub if we output the path
-    // We'll write a marker file
     await fs.writeFile('/tmp/artifact_ready', artifactPath);
 
-    // Cleanup temp directory
     await fs.rm(workDir, { recursive: true, force: true });
     console.log(`Job ${job.id} completed successfully`);
   } catch (err) {
-    console.error(`Job ${job.id} failed:`, err);
-    await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status: 'failed', last_error: err.message })
-    });
-    throw err; // rethrow so workflow fails
+    console.error('Job failed:', err);
+    // Optionally mark job as failed in DB (but we don't have job.id here if error before)
+    throw err;
   }
 }
 
 // ========================
-// Helper: Generate slides from HTML/CSS using Puppeteer
+// Slide generation (unchanged, but included for completeness)
 // ========================
 async function generateSlides(quiz, questionIndex, thinkingTime, workDir, lang) {
   let html = quiz.quiz_css_video;
   if (!html) throw new Error('quiz_css_video is empty');
-
   const qIdx = questionIndex;
   const replacements = {
     '{{hook_phrase}}': quiz.hook_phrase || '',
@@ -122,16 +124,13 @@ async function generateSlides(quiz, questionIndex, thinkingTime, workDir, lang) 
   for (const [key, value] of Object.entries(replacements)) {
     html = html.split(key).join(value);
   }
-
   const htmlPath = path.join(workDir, 'index.html');
   await fs.writeFile(htmlPath, html);
-
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920 });
   await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0' });
-
-  // Adjust slide definitions to match your CSS classes
+  // slide definitions – adjust class names to match your CSS
   const slideDefs = [
     { selector: '.hook-slide', duration: 2, name: 'hook' },
     { selector: '.intro-slide', duration: 4, name: 'intro' },
@@ -143,7 +142,6 @@ async function generateSlides(quiz, questionIndex, thinkingTime, workDir, lang) 
     { selector: '.cta-slide', duration: 5, name: 'cta' },
     { selector: '.mission-slide', duration: 1.5, name: 'mission' }
   ];
-
   const slides = [];
   for (let i = 0; i < slideDefs.length; i++) {
     const def = slideDefs[i];
@@ -156,14 +154,10 @@ async function generateSlides(quiz, questionIndex, thinkingTime, workDir, lang) 
     await page.screenshot({ path: imagePath, fullPage: true });
     slides.push({ path: imagePath, duration: def.duration, name: def.name });
   }
-
   await browser.close();
   return slides;
 }
 
-// ========================
-// Helper: TTS using edge-tts (Python)
-// ========================
 async function generateTTS(quiz, questionIndex, slides, workDir, lang) {
   const voiceMap = {
     en: 'en-US-JennyNeural',
@@ -173,7 +167,6 @@ async function generateTTS(quiz, questionIndex, slides, workDir, lang) {
   };
   const voice = voiceMap[lang] || voiceMap.en;
   const qIdx = questionIndex;
-
   const texts = {
     hook: quiz.hook_phrase || '',
     intro: quiz.quiz_intro_speech || '',
@@ -185,7 +178,6 @@ async function generateTTS(quiz, questionIndex, slides, workDir, lang) {
     cta: quiz.cta_text || '',
     mission: `${quiz.mission_impossible_question || ''} Hint: ${quiz.mission_impossible_hint || ''}`
   };
-
   const audioPaths = [];
   for (const slide of slides) {
     const text = texts[slide.name] || '';
@@ -201,9 +193,6 @@ async function generateTTS(quiz, questionIndex, slides, workDir, lang) {
   return audioPaths;
 }
 
-// ========================
-// Helper: Assemble video with FFmpeg
-// ========================
 async function assembleVideo(slides, audioPaths, workDir) {
   const concatList = [];
   for (let i = 0; i < slides.length; i++) {
@@ -220,10 +209,10 @@ async function assembleVideo(slides, audioPaths, workDir) {
   return outputPath;
 }
 
-// ========================
-// Start the worker
-// ========================
 processJobs().then(() => {
   console.log('Worker finished this run');
   process.exit(0);
+}).catch(err => {
+  console.error('Fatal error:', err);
+  process.exit(1);
 });
