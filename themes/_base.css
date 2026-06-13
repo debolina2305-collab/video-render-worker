@@ -1,0 +1,249 @@
+/* ============================================================
+   BASE STYLES — shared by every theme.
+   Themes only provide: .bg-anim background + decorative elements,
+   and override --accent-1 / --accent-2 / --accent-3 custom properties.
+   ============================================================ */
+
+:root {
+  --accent-1: {{accent_primary}};
+  --accent-2: {{accent_secondary}};
+  --accent-3: {{accent_tertiary}};
+}
+
+* { margin:0; padding:0; box-sizing:border-box; font-family: 'Segoe UI', Arial, sans-serif; }
+html,body { width:1080px; height:1920px; overflow:hidden; background:#05030f; }
+
+.screen {
+  width:1080px; height:1920px;
+  display:none;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  position:relative;
+  color:#fff;
+  text-align:center;
+  padding:60px;
+  overflow:hidden;
+}
+.screen.active { display:flex; }
+
+.content { position:relative; z-index:5; width:100%; display:flex; flex-direction:column; align-items:center; }
+
+.glow-text {
+  text-shadow: 0 0 20px rgba(255,255,255,0.6), 0 0 40px color-mix(in srgb, var(--accent-3) 60%, transparent);
+}
+.badge-label {
+  display:inline-block; font-size:32px; font-weight:900; letter-spacing:8px;
+  text-transform:uppercase; padding:14px 36px; border-radius:50px;
+  background:linear-gradient(135deg, var(--accent-2), var(--accent-3));
+  box-shadow:0 0 30px color-mix(in srgb, var(--accent-2) 60%, transparent);
+  margin-bottom:40px;
+}
+
+/* ===================== STEP 1: HOOK / BRAND ===================== */
+.logo-badge {
+  width:240px; height:240px; border-radius:50%;
+  background: linear-gradient(135deg, var(--accent-1), var(--accent-3), var(--accent-2));
+  background-size: 300% 300%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:60px; font-weight:900; letter-spacing:2px;
+  box-shadow:0 0 100px color-mix(in srgb, var(--accent-3) 80%, transparent), 0 0 200px color-mix(in srgb, var(--accent-1) 40%, transparent);
+  animation: logoSpin 6s linear infinite, logoIn 0.9s cubic-bezier(.34,1.8,.64,1) forwards;
+  opacity:0; transform:scale(0.3) rotate(-20deg);
+  margin-bottom:50px;
+}
+@keyframes logoIn { to { opacity:1; transform:scale(1) rotate(0deg); } }
+@keyframes logoSpin { to { background-position: 300% 300%; } }
+
+.hook-text {
+  font-size:72px; font-weight:900; line-height:1.3;
+  opacity:0; transform: translateY(60px) scale(0.8);
+  animation: bounceIn 0.9s cubic-bezier(.34,1.8,.64,1) 0.5s forwards;
+}
+@keyframes bounceIn { to { opacity:1; transform:translateY(0) scale(1); } }
+
+.sparkle {
+  position:absolute; font-size:60px; opacity:0;
+  animation: sparkleAppear 2s ease-in-out infinite;
+}
+.sparkle.s1 { top:15%; left:12%; animation-delay:0.2s; }
+.sparkle.s2 { top:25%; right:10%; animation-delay:0.8s; }
+.sparkle.s3 { bottom:20%; left:15%; animation-delay:1.4s; }
+.sparkle.s4 { bottom:30%; right:14%; animation-delay:0.5s; }
+@keyframes sparkleAppear { 0%,100%{opacity:0; transform:scale(0.5) rotate(0deg);} 50%{opacity:1; transform:scale(1.3) rotate(180deg);} }
+
+/* ===================== STEP 2: INTRO ===================== */
+.intro-label {
+  font-size:36px; font-weight:900; letter-spacing:8px; text-transform:uppercase;
+  background:linear-gradient(135deg, var(--accent-1), var(--accent-3));
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  margin-bottom:40px;
+  opacity:0; animation: fadeUp 0.6s ease-out 0.1s forwards;
+}
+.intro-topic {
+  font-size:70px; font-weight:900; line-height:1.3;
+  opacity:0; animation: bounceIn 0.9s cubic-bezier(.34,1.8,.64,1) 0.4s forwards;
+}
+@keyframes fadeUp { from{opacity:0; transform:translateY(40px);} to{opacity:1; transform:translateY(0);} }
+
+/* ===================== STEP 4/6: QUESTION + OPTIONS ===================== */
+.question-phase { justify-content:flex-start; padding-top:90px; }
+
+.qp-card-question {
+  width:100%; background:rgba(255,255,255,0.06);
+  border:3px solid rgba(255,255,255,0.15); border-radius:32px;
+  padding:44px; margin-bottom:40px; backdrop-filter: blur(6px);
+  box-shadow:0 0 50px color-mix(in srgb, var(--accent-3) 35%, transparent);
+  opacity:0; animation: bounceIn 0.7s cubic-bezier(.34,1.8,.64,1) forwards;
+}
+.qp-question { font-size:52px; font-weight:800; line-height:1.4; }
+
+/* Circular donut timer */
+.qp-timer-wrap { margin-bottom:50px; position:relative; width:220px; height:220px; }
+.qp-timer-ring { width:220px; height:220px; transform:rotate(-90deg); }
+.qp-timer-ring circle { fill:none; stroke-width:18; stroke-linecap:round; }
+.qp-timer-bg { stroke:rgba(255,255,255,0.12); }
+.qp-timer-fill {
+  stroke:url(#timerGradient);
+  stroke-dasharray: 628;
+  stroke-dashoffset: 0;
+  animation: timerDrain var(--qtime) linear forwards;
+}
+@keyframes timerDrain { from { stroke-dashoffset:0; } to { stroke-dashoffset:628; } }
+.qp-timer-number {
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-size:64px; font-weight:900;
+}
+
+.qp-options {
+  width:100%; display:flex; flex-direction:column; gap:28px;
+  opacity:0; animation: fadeUp 0.7s ease-out 0.3s forwards;
+}
+.qp-option {
+  display:flex; align-items:center; gap:28px;
+  background:rgba(255,255,255,0.07); border:3px solid rgba(255,255,255,0.18);
+  border-radius:24px; padding:34px; font-size:42px; font-weight:700;
+  text-align:left; transition: opacity 0.6s ease;
+  box-shadow:0 8px 24px rgba(0,0,0,0.35);
+}
+.qp-option-badge {
+  flex-shrink:0; width:70px; height:70px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:38px; font-weight:900;
+  background:linear-gradient(135deg, var(--accent-1), var(--accent-3));
+  box-shadow:0 0 20px color-mix(in srgb, var(--accent-1) 50%, transparent);
+}
+.qp-option.eliminate {
+  animation: eliminateOpt 0.6s ease forwards;
+  animation-delay: var(--fiftyfifty-time);
+}
+@keyframes eliminateOpt { to { opacity:0.08; transform:scale(0.96); } }
+
+.qp-hint {
+  margin-top:46px; font-size:38px; font-weight:600; color:#ffd166;
+  background:rgba(255,209,102,0.12); border:2px dashed #ffd166;
+  border-radius:20px; padding:28px; opacity:0;
+  animation: hintIn 0.6s cubic-bezier(.34,1.8,.64,1) forwards;
+  animation-delay: var(--hint-time);
+  box-shadow:0 0 30px rgba(255,209,102,0.3);
+}
+@keyframes hintIn { to { opacity:1; transform:scale(1.02); } }
+
+/* ===================== STEP 11: ANSWER REVEAL ===================== */
+.answer-badge {
+  font-size:64px; font-weight:900; margin-bottom:50px;
+  background:linear-gradient(135deg, var(--accent-1), #00ff8c);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation: bounceIn 0.7s cubic-bezier(.34,1.8,.64,1) forwards;
+}
+.answer-slide .qp-options { opacity:1; animation:none; }
+.answer-slide .qp-option.correct {
+  background:rgba(0,255,140,0.2); border-color:#00ff8c;
+  box-shadow:0 0 40px rgba(0,255,140,0.5);
+  animation: pulseCorrect 1.2s ease-in-out infinite;
+}
+@keyframes pulseCorrect { 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.03); } }
+.answer-slide .qp-option.wrong { opacity:0.2; }
+
+.confetti-piece {
+  position:absolute; top:-40px; border-radius:3px; opacity:0.9;
+  animation-name: confettiFall; animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+@keyframes confettiFall {
+  0% { transform: translateY(-40px) rotate(0deg); opacity:1; }
+  100% { transform: translateY(2000px) rotate(720deg); opacity:0.9; }
+}
+
+/* ===================== STEP 12: EXPLANATION ===================== */
+.explanation-card {
+  width:100%; background:rgba(255,255,255,0.06);
+  border:3px solid rgba(255,255,255,0.15); border-radius:32px;
+  padding:60px; backdrop-filter: blur(6px);
+  box-shadow:0 0 50px color-mix(in srgb, var(--accent-1) 30%, transparent);
+  opacity:0; animation: fadeUp 0.8s ease-out 0.2s forwards;
+}
+.explanation-text { font-size:46px; line-height:1.7; font-weight:600; }
+
+/* ===================== CTA SLIDES (steps 12-13, 16) ===================== */
+.cta-text {
+  font-size:50px; font-weight:900; line-height:1.6; margin-bottom:50px;
+  animation: bounceIn 0.8s cubic-bezier(.34,1.8,.64,1) forwards;
+}
+.cta-url {
+  font-size:38px; font-weight:800;
+  background:linear-gradient(135deg, var(--accent-2), var(--accent-3));
+  border-radius:50px; padding:28px 50px;
+  box-shadow:0 0 40px color-mix(in srgb, var(--accent-2) 60%, transparent);
+  animation: ctaPulse 1.4s ease-in-out infinite;
+}
+@keyframes ctaPulse { 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.05); } }
+.cta-icons { margin-top:50px; font-size:64px; letter-spacing:30px; }
+
+/* ===================== STEPS 14-15: MISSION IMPOSSIBLE ===================== */
+.mission-label {
+  font-size:38px; font-weight:900; letter-spacing:8px; text-transform:uppercase;
+  color:#ff3b3b; margin-bottom:40px;
+  text-shadow:0 0 30px rgba(255,59,59,0.8);
+  animation: shakeLabel 0.6s ease-in-out infinite alternate;
+}
+@keyframes shakeLabel { from{ transform:rotate(-1deg);} to{ transform:rotate(1deg);} }
+.mission-question {
+  font-size:60px; font-weight:900; line-height:1.4; margin-bottom:46px;
+  opacity:0; animation: bounceIn 0.7s cubic-bezier(.34,1.8,.64,1) forwards;
+}
+.mission-hint {
+  font-size:40px; font-weight:600; color:#ffd166;
+  background:rgba(255,209,102,0.12); border:2px dashed #ffd166;
+  border-radius:20px; padding:30px; opacity:0;
+  transition: opacity 0.5s ease, transform 0.5s ease;
+  transform: scale(0.9);
+}
+.mission-hint.shown { opacity:1; transform:scale(1); }
+
+.cta3-text {
+  opacity:0; transform:translateY(30px) scale(0.9);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.cta3-text.show-cta3 {
+  opacity:1; transform:translateY(0) scale(1);
+}
+
+/* ===================== SHARED BACKGROUND LAYERS ===================== */
+.bg-anim { position:absolute; inset:0; z-index:0; }
+.bg-grid {
+  position:absolute; inset:0; z-index:1; opacity:0.18;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px);
+  background-size: 80px 80px;
+  animation: gridMove 8s linear infinite;
+}
+@keyframes gridMove { from{ background-position:0 0,0 0; } to{ background-position:0 80px, 80px 0; } }
+
+.bg-orb { position:absolute; border-radius:50%; filter:blur(40px); z-index:1; opacity:0.5; }
+.orb1 { width:380px; height:380px; background:var(--accent-2); top:-100px; left:-100px; animation: floatA 9s ease-in-out infinite; }
+.orb2 { width:300px; height:300px; background:var(--accent-1); bottom:100px; right:-80px; animation: floatB 11s ease-in-out infinite; }
+.orb3 { width:260px; height:260px; background:var(--accent-3); bottom:-80px; left:30%; animation: floatA 13s ease-in-out infinite reverse; }
+@keyframes floatA { 0%,100%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(60px,80px) scale(1.2); } }
+@keyframes floatB { 0%,100%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(-50px,-60px) scale(1.15); } }
