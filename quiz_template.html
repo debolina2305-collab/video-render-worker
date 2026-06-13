@@ -213,19 +213,23 @@
   <!-- STEP 13-15: MISSION IMPOSSIBLE (large bold question + hint) + CTA3.
        Stage 1 (step 13): MI question+hint visible, CTA3 text hidden.
        Stage 2 (step 14-15): CTA3 text revealed (.show-cta3), both held together. -->
-  <div class="screen mission-final-slide">
-    <div class="bg-anim"></div>
-    <div class="bg-grid"></div>
-    <div class="bg-orb orb1"></div>
-    <div class="bg-orb orb2"></div>
-    {{theme_deco_html}}
-    <div class="content">
-      <div class="mission-label">🔥 Mission Impossible</div>
-      <div class="mission-question">{{mission_question}}</div>
-      <div class="mission-hint shown">💡 {{mission_hint}}</div>
-      <div class="cta3-text cta-text glow-text" style="margin-top:50px; font-size:42px;">
-        👍 Like &amp; Share · 🤝 Challenge a Friend<br>🔔 Subscribe · ✍️ Comment your answer!
-      </div>
+ <div class="screen mission-final-slide">
+  <div class="bg-anim"></div>
+  <div class="bg-grid"></div>
+  <div class="bg-orb orb1"></div>
+  <div class="bg-orb orb2"></div>
+  {{theme_deco_html}}
+  <div class="content">
+    <div class="mission-label">🔥 Mission Impossible</div>
+    <div class="mission-question">{{mission_question}}</div>
+    <div class="mission-hint shown">💡 {{mission_hint}}</div>
+
+    <!-- CTA3: hidden until worker adds .show-cta3 after 2.5s -->
+    <div class="cta3-text cta-text glow-text"
+         style="margin-top:50px; font-size:42px;">
+      👍 Like &amp; Share · 🤝 Challenge a Friend<br>
+      🔔 Subscribe · ✍️ Comment your answer!
+    </div>
     </div>
   </div>
 
