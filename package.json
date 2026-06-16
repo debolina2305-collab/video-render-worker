@@ -1,9 +1,12 @@
 {
-  "name": "video-render-worker",
+  "name": "quiz-video-worker",
   "version": "1.0.0",
+  "scripts": {
+    "start": "node worker10.js"
+  },
   "dependencies": {
-    "puppeteer": "^20.0.0",
-    "puppeteer-screen-recorder": "^2.1.1",
+    "puppeteer": "^19.0.0",
+    "puppeteer-screen-recorder": "^3.0.5",
     "uuid": "^9.0.0",
     "@aws-sdk/client-s3": "^3.400.0"
   }
