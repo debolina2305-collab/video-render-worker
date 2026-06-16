@@ -1,644 +1,986 @@
-'use strict';
-const { exec }  = require('child_process');
-const util      = require('util');
-const execP     = util.promisify(exec);
-const fs        = require('fs').promises;
-const path      = require('path');
+const { exec } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
+const fs = require('fs').promises;
+const path = require('path');
 const puppeteer = require('puppeteer');
 const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
 const { v4: uuidv4 } = require('uuid');
 
-// ── Env ──────────────────────────────────────────────────────────────[...]
-const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
-const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
-if (!SB_URL || !SB_KEY) { console.error('[W10] Missing Supabase env vars'); process.exit(1); }
+// ========================
+// Environment variables
+// ========================
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
-// Cloudflare R2 env vars (from your GitHub secrets)
-const R2_ENDPOINT = process.env.R2_ENDPOINT;
-const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY;
-const R2_SECRET_KEY = process.env.R2_SECRET_KEY;
-const R2_BUCKET = process.env.R2_BUCKET;
-const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL;
-if (!R2_ENDPOINT || !R2_ACCESS_KEY || !R2_SECRET_KEY || !R2_BUCKET) {
-  console.error('[W10] Missing R2 env vars');
+console.log('SUPABASE_URL from env:', supabaseUrl);
+console.log('SUPABASE_SERVICE_KEY from env:', supabaseKey ? '*** (set)' : 'NOT SET');
+
+const cleanSupabaseUrl = supabaseUrl ? supabaseUrl.replace(/\/$/, '') : null;
+
+if (!cleanSupabaseUrl || !supabaseKey) {
+  console.error('Missing Supabase credentials (URL or key)');
   process.exit(1);
 }
 
-const LOGO_PATH   = path.join(__dirname, 'assets', 'jaasX-logo-saved-for-web.png');
-const TMPL_PATH   = path.join(__dirname, 'quiz_template.html');
-const CACHE_DIR   = path.join(__dirname, 'fixed_audio');
+const baseHeaders = {
+  'apikey': supabaseKey,
+  'Authorization': `Bearer ${supabaseKey}`,
+  'Content-Type': 'application/json'
+};
 
-// Edge-TTS voices
-const VOICE = {
+// Voice map for Edge TTS
+const VOICE_MAP = {
   en: 'en-US-JennyNeural',
   hi: 'hi-IN-SwaraNeural',
   es: 'es-ES-ElviraNeural',
-  pt: 'pt-BR-FranciscaNeural',
+  pt: 'pt-BR-FranciscaNeural'
 };
 
-// 8 unique visual themes — stable per quiz (hashed from topic_slug)
-const THEMES = [
-  { id:'cosmic',   bg:'#0a0820,#1b0a3d 55%,#05030f', o1:'#ff2ec4', o2:'#00e0ff', o3:'#7b2ff7' },
-  { id:'ocean',    bg:'#021a10,#053d28 55%,#020d08', o1:'#00ff8c', o2:'#0099ff', o3:'#00e0ff' },
-  { id:'ember',    bg:'#1a0a00,#3d1a00 55%,#0f0500', o1:'#ffcc00', o2:'#ff6b00', o3:'#ff2e2e' },
-  { id:'midnight', bg:'#000d1a,#00183d 55%,#00080f', o1:'#00cfff', o2:'#7b2ff7', o3:'#ff2ec4' },
-  { id:'rose',     bg:'#1a0010,#3d0025 55%,#0f000a', o1:'#ff6584', o2:'#ff9a3c', o3:'#ffcc00' },
-  { id:'forest',   bg:'#00100a,#00251a 55%,#000805', o1:'#3cffa0', o2:'#00bfff', o3:'#9b59ff' },
-  { id:'aurora',   bg:'#050020,#120050 55%,#020010', o1:'#a78bfa', o2:'#34d399', o3:'#f472b6' },
-  { id:'solar',    bg:'#120000,#2a0a00 55%,#080000', o1:'#fbbf24', o2:'#f87171', o3:'#a78bfa' },
-];
+const FIXED_PHRASES_DIR = path.join(__dirname, 'fixed_audio');
+const SFX_DIR = path.join(__dirname, 'sfx');
+const THEMES_DIR = path.join(__dirname, 'themes');
+const CACHE_DIR = path.join(__dirname, 'audio_cache');
+const DEFAULT_THEME = 'particle_field';
 
-function pickTheme(quiz) {
-  if (quiz.visual_theme_id) {
-    const t = THEMES.find(t => t.id === quiz.visual_theme_id);
-    if (t) return t;
+// Human-like gap (seconds of silence) inserted between consecutive TTS beats
+const TTS_GAP_SEC = 0.35;
+
+// ========================
+// Supabase helper
+// ========================
+async function fetchSupabase(p, options = {}) {
+  const url = `${cleanSupabaseUrl}/rest/v1/${p}`;
+  console.log(`[FETCH] ${options.method || 'GET'} ${url}`);
+  const headers = { ...baseHeaders, ...(options.headers || {}) };
+  if (options.method && ['POST', 'PATCH', 'PUT'].includes(options.method)) {
+    headers['Prefer'] = 'return=representation';
   }
-  if (quiz.theme_accent_primary) return {
-    id:'custom', bg:'#050010,#100030 55%,#030008',
-    o1: quiz.theme_accent_primary,
-    o2: quiz.theme_accent_secondary || '#00e0ff',
-    o3: quiz.theme_accent_tertiary  || '#7b2ff7',
-  };
-  const seed = quiz.topic_slug || quiz.id || '';
-  let h = 0;
-  for (const c of seed) h = (h * 31 + c.charCodeAt(0)) & 0xffffffff;
-  return THEMES[Math.abs(h) % THEMES.length];
-}
-
-// ── Supabase ───────────────────────────────────────────────────────────[...]
-async function sbFetch(endpoint, opts = {}) {
-  const hdrs = {
-    apikey: SB_KEY,
-    Authorization: `Bearer ${SB_KEY}`,
-    'Content-Type': 'application/json',
-    ...(opts.headers || {}),
-  };
-  if (['POST','PATCH','PUT'].includes(opts.method)) hdrs.Prefer = 'return=representation';
-  const res = await fetch(`${SB_URL}/rest/v1/${endpoint}`, { ...opts, headers: hdrs });
-  if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
-  const txt = await res.text();
-  return txt ? JSON.parse(txt) : null;
-}
-const sbPatch = (table, id, data) =>
-  sbFetch(`${table}?id=eq.${id}`, { method:'PATCH', body: JSON.stringify(data) });
-
-// ── Cloudflare R2 Upload ───────────────────────────────────────────────[...]
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-
-const s3Client = new S3Client({
-  region: 'auto',
-  endpoint: R2_ENDPOINT,
-  credentials: {
-    accessKeyId: R2_ACCESS_KEY,
-    secretAccessKey: R2_SECRET_KEY,
-  },
-});
-
-async function uploadToR2(filePath, fileName) {
+  const response = await fetch(url, { ...options, headers });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`HTTP ${response.status}: ${errorText}`);
+  }
+  const text = await response.text();
+  console.log(`[FETCH] Response length: ${text.length} chars`);
+  if (!text || text.trim() === '') return null;
   try {
-    const fileContent = await fs.readFile(filePath);
-    const s3Path = `quiz-sound-music-speech/rendered-quiz-video/${fileName}`;
-    
-    const command = new PutObjectCommand({
-      Bucket: R2_BUCKET,
-      Key: s3Path,
-      Body: fileContent,
-      ContentType: 'video/mp4',
-    });
-    
-    await s3Client.send(command);
-    const publicUrl = `${R2_PUBLIC_URL}/${s3Path}`;
-    console.log(`[W10] Uploaded to R2 → ${publicUrl}`);
-    return publicUrl;
+    return JSON.parse(text);
   } catch (err) {
-    console.error('[W10] R2 upload failed:', err);
+    console.error(`[FETCH] Failed to parse JSON. Raw response: ${text.substring(0, 200)}`);
     throw err;
   }
 }
 
-// ── Audio helpers ─────────────────────────────────────────────────────────[...]
-const ensureDir = d => fs.mkdir(d, { recursive: true });
-const fileExists = async p => { try { await fs.access(p); return true; } catch { return false; } };
-
-async function audioDur(p) {
-  const { stdout } = await execP(
-    `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${p}"`
+// ========================
+// Utility helpers
+// ========================
+async function getAudioDuration(audioPath) {
+  const { stdout } = await execPromise(
+    `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`
   );
-  return parseFloat(stdout.trim()) || 0;
+  return parseFloat(stdout.trim());
 }
 
-async function mkSilence(outPath, sec) {
-  await execP(
-    `ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${sec} -q:a 9 -acodec libmp3lame "${outPath}"`
+async function getVideoDuration(videoPath) {
+  const { stdout } = await execPromise(
+    `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`
   );
-  return outPath;
+  return parseFloat(stdout.trim());
 }
 
-async function mkTTS(text, voice, outPath, fallbackSec = 1) {
-  const clean = (text || '').trim();
-  if (!clean) return mkSilence(outPath, fallbackSec);
-  const tmp = `${outPath}.txt`;
-  await fs.writeFile(tmp, clean, 'utf8');
-  await execP(`edge-tts --voice "${voice}" --file "${tmp}" --write-media "${outPath}"`);
-  await fs.unlink(tmp).catch(() => {});
-  return outPath;
+async function ensureDir(dir) {
+  await fs.mkdir(dir, { recursive: true });
 }
 
-async function cachedTTS(key, text, voice, lang) {
-  await ensureDir(CACHE_DIR);
-  const p = path.join(CACHE_DIR, `${key}_${lang}.mp3`);
-  if (!(await fileExists(p))) await mkTTS(text, voice, p);
-  return p;
+async function fileExists(p) {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-async function downloadAudio(url, dest) {
+// URL-encode a file path portion (handles spaces in R2 filenames)
+function encodeR2Url(url) {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    // encode only the pathname, preserving slashes
+    u.pathname = u.pathname.split('/').map(seg => encodeURIComponent(decodeURIComponent(seg))).join('/');
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+// Download + cache a remote audio URL (R2). Returns local path or null.
+async function downloadAudio(url, cacheKey) {
   if (!url) return null;
-  if (await fileExists(dest)) return dest;
-  try {
-    await execP(`curl -sL --max-time 30 -o "${dest}" "${url}"`);
-    return (await fileExists(dest)) ? dest : null;
-  } catch { return null; }
-}
-
-// Join audio files sequentially into one MP3
-async function joinAudio(files, outPath) {
-  const valid = files.filter(Boolean);
-  if (!valid.length) return mkSilence(outPath, 0.5);
-  if (valid.length === 1) { await fs.copyFile(valid[0], outPath); return outPath; }
-  const list = `${outPath}.lst`;
-  await fs.writeFile(list, valid.map(f => `file '${f}'`).join('\n'));
-  await execP(`ffmpeg -y -f concat -safe 0 -i "${list}" -acodec libmp3lame "${outPath}"`);
-  await fs.unlink(list).catch(() => {});
-  return outPath;
-}
-
-/**
- * Mix FG audio (voice/SFX) with BG music (ducked to 25%).
- * FG stays full volume. BG is looped to match fgDur.
- * Uses sidechaining-style amix so BG never drowns speech.
- */
-async function mixWithBG(fgPath, bgPath, fgDur, outPath) {
-  if (!bgPath || !(await fileExists(bgPath))) {
-    await fs.copyFile(fgPath, outPath);
-    return outPath;
+  await ensureDir(CACHE_DIR);
+  const encodedUrl = encodeR2Url(url);
+  const ext = path.extname(new URL(encodedUrl).pathname) || '.wav';
+  const safeKey = cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const localPath = path.join(CACHE_DIR, `${safeKey}${ext}`);
+  if (await fileExists(localPath)) {
+    console.log(`[AUDIO CACHE HIT] ${safeKey}`);
+    return localPath;
   }
-  const bgLooped = `${outPath}_bgloop.mp3`;
-  await execP(`ffmpeg -y -stream_loop -1 -i "${bgPath}" -t ${fgDur + 0.5} -acodec libmp3lame "${bgLooped}"`);
-  // FG at 100%, BG at 25%
-  await execP(
-    `ffmpeg -y -i "${fgPath}" -i "${bgLooped}" ` +
-    `-filter_complex "[1:a]volume=0.25[bg];[0:a][bg]amix=inputs=2:duration=first:normalize=0[out]" ` +
-    `-map "[out]" -t ${fgDur} -acodec libmp3lame "${outPath}"`
-  );
-  await fs.unlink(bgLooped).catch(() => {});
-  return outPath;
-}
-
-// ── Clip builders ─────────────────────────────────────────────────────────[...]
-async function imageClip(imgPath, audioPath, dur, outPath) {
-  await execP(
-    `ffmpeg -y -loop 1 -i "${imgPath}" -i "${audioPath}" ` +
-    `-c:v libx264 -t ${dur} -pix_fmt yuv420p -c:a aac -shortest -movflags +faststart "${outPath}"`
-  );
-  return outPath;
-}
-
-async function videoClip(vidPath, audioPath, dur, outPath) {
-  await execP(
-    `ffmpeg -y -i "${vidPath}" -i "${audioPath}" ` +
-    `-c:v libx264 -c:a aac -map 0:v:0 -map 1:a:0 -t ${dur} -shortest -movflags +faststart "${outPath}"`
-  );
-  return outPath;
-}
-
-// ── Puppeteer helper ────────────────────────────────────────────────────────[...]
-async function showSlide(page, selector) {
-  await page.evaluate(sel => {
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    const el = document.querySelector(sel);
-    if (el) el.classList.add('active');
-  }, selector);
-  await new Promise(r => setTimeout(r, 100));
-}
-
-// ── Job poller ──────────────────────────────────────────────────────────[...]
-async function processNext() {
-  console.log('[W10] Polling quiz table for pending renders...');
-  const rows = await sbFetch(
-    'quiz?quiz_enriched=eq.true&video_status=eq.pending&is_active=eq.true&order=created_at.asc&limit=1'
-  );
-  if (!rows?.length) { console.log('[W10] No pending quizzes.'); return; }
-
-  const quiz = rows[0];
-  console.log(`[W10] Rendering quiz ${quiz.id} — "${quiz.topic}"`);
-  await sbPatch('quiz', quiz.id, { video_status: 'rendering' });
-
-  const workDir = `/tmp/qvid_${uuidv4()}`;
-  await ensureDir(workDir);
-
   try {
-    const videoPath = await buildVideo(quiz, workDir);
-    const stats  = await fs.stat(videoPath);
-    const dur    = await audioDur(videoPath);
-    const sizeMb = +(stats.size / 1048576).toFixed(2);
-
-    // Upload to R2
-    const fileName = `${quiz.id}.mp4`;
-    const videoUrl = await uploadToR2(videoPath, fileName);
-    console.log(`[W10] Saved → ${videoUrl}  (${dur.toFixed(1)}s, ${sizeMb}MB)`);
-
-    await sbPatch('quiz', quiz.id, {
-      video_status: 'rendered',
-      render_duration_sec: Math.round(dur),
-      file_size_mb: sizeMb,
-      video_url: videoUrl,
-    });
-  } catch (err) {
-    console.error('[W10] Render failed:', err);
-    await sbPatch('quiz', quiz.id, {
-      video_status: 'failed',
-      generation_error: String(err.message || err).slice(0, 500),
-    }).catch(() => {});
-    throw err;
-  } finally {
-    await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    console.log(`[AUDIO DOWNLOAD] ${encodedUrl}`);
+    await execPromise(`curl -sL --fail "${encodedUrl}" -o "${localPath}" --max-time 30`);
+    if (await fileExists(localPath)) return localPath;
+  } catch (e) {
+    console.warn(`[AUDIO DOWNLOAD FAILED] ${encodedUrl}:`, e.message);
+    await fs.unlink(localPath).catch(() => {});
   }
+  return null;
 }
 
-// ── Main video builder ───────────────────────────────────────────────────────[...]
-async function buildVideo(quiz, workDir) {
-  const lang  = quiz.lang_code || 'en';
-  const voice = VOICE[lang] || VOICE.en;
-  const niche = quiz.niche || 'general';
-  const theme = pickTheme(quiz);
+// Pick a random active cue from a table filtered by language (and optionally niche)
+async function pickRandomCue(table, lang, niche) {
+  const rows = await fetchSupabase(
+    `${table}?language_code=eq.${lang}&is_active=eq.true&select=*&limit=50`
+  ).catch(() => null);
+  if (!rows || rows.length === 0) return null;
+  let candidates = rows;
+  if (niche) {
+    const nicheMatch = rows.filter(r => r.niche === niche);
+    if (nicheMatch.length > 0) candidates = nicheMatch;
+  }
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
 
-  const options   = quiz.options_1 || [];
-  const correct   = quiz.correct_answer_1 || '';
-  const hint      = quiz.hint_1 || '';
-  const expl      = quiz.explanation_1 || '';
-  const question  = quiz.question_1 || '';
-  const thinkSec  = quiz.thinking_time_sec || 18;
-  const HINT_AT   = thinkSec / 4;
-  const FIFTY_AT  = thinkSec / 2;
-  const ctaNiche  = `https://jaasblog.online/quiz/${niche}`;
-  const useCTA1   = !!quiz.affiliate_url;
+// Pick a random active SFX cue by cue_name (no language filter)
+async function pickSfxCue(cueName) {
+  const rows = await fetchSupabase(
+    `sfx_cues?cue_name=eq.${cueName}&is_active=eq.true&select=*&limit=20`
+  ).catch(() => null);
+  if (!rows || rows.length === 0) return null;
+  return rows[Math.floor(Math.random() * rows.length)];
+}
 
-  // ── Resolve keep_5050 → option text ──
-  const k5050raw  = quiz.keep_5050_1 || [];
-  const k5050text = k5050raw.map(v => {
-    const i = parseInt(v, 10);
-    return (!isNaN(i) && options[i] !== undefined) ? options[i] : v;
+// Pick background music (niche match preferred, then generic)
+async function pickBgMusic(niche) {
+  const rows = await fetchSupabase(
+    `background_music_tracks?is_active=eq.true&select=*&limit=30`
+  ).catch(() => null);
+  if (!rows || rows.length === 0) return null;
+  let candidates = rows.filter(r => r.niche === niche);
+  if (candidates.length === 0) candidates = rows.filter(r => !r.niche);
+  if (candidates.length === 0) candidates = rows;
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+// Bump usage count (best-effort, non-blocking)
+function bumpUsage(table, id, currentCount) {
+  if (!id) return;
+  fetchSupabase(`${table}?id=eq.${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      usage_count: (currentCount || 0) + 1,
+      last_used_at: new Date().toISOString()
+    })
+  }).catch(() => {});
+}
+
+// Generate TTS audio via edge-tts. Falls back to silence if text is empty.
+async function generateTTS(text, voice, outputPath, fallbackSeconds = 1) {
+  const clean = (text || '').trim();
+  if (!clean) {
+    await execPromise(
+      `ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${fallbackSeconds} -q:a 9 -acodec libmp3lame "${outputPath}"`
+    );
+    return;
+  }
+  const tmpTextFile = outputPath + '.txt';
+  await fs.writeFile(tmpTextFile, clean, 'utf8');
+  await execPromise(
+    `edge-tts --voice "${voice}" --file "${tmpTextFile}" --write-media "${outputPath}"`
+  );
+  await fs.unlink(tmpTextFile).catch(() => {});
+}
+
+// Generate N seconds of silence
+async function generateSilence(seconds, outputPath) {
+  const safe = Math.max(parseFloat(seconds) || 0.1, 0.05);
+  await execPromise(
+    `ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${safe} -q:a 9 -acodec libmp3lame "${outputPath}"`
+  );
+}
+
+// Concatenate multiple audio files into one (used to add human-like gaps between TTS beats)
+async function concatAudio(audioPaths, outputPath, workDir) {
+  const listPath = path.join(workDir, `audiolist_${uuidv4()}.txt`);
+  await fs.writeFile(listPath, audioPaths.map(p => `file '${p}'`).join('\n'));
+  await execPromise(
+    `ffmpeg -y -f concat -safe 0 -i "${listPath}" -acodec libmp3lame "${outputPath}"`
+  );
+  await fs.unlink(listPath).catch(() => {});
+}
+
+async function getFixedPhraseAudio(key, text, voice, lang) {
+  await ensureDir(FIXED_PHRASES_DIR);
+  const cachedPath = path.join(FIXED_PHRASES_DIR, `${key}_${lang}.mp3`);
+  if (await fileExists(cachedPath)) {
+    return cachedPath;
+  }
+  await generateTTS(text, voice, cachedPath, 1);
+  return cachedPath;
+}
+
+async function getSuspenseSfx(niche) {
+  await ensureDir(SFX_DIR);
+  const nicheFile = path.join(SFX_DIR, `${niche || 'default'}.mp3`);
+  if (await fileExists(nicheFile)) return nicheFile;
+  const defaultFile = path.join(SFX_DIR, 'default.mp3');
+  if (await fileExists(defaultFile)) return defaultFile;
+  return null;
+}
+
+// Short SFX stings for hint / 50-50 reveal (optional files)
+async function getStingSfx(name) {
+  await ensureDir(SFX_DIR);
+  const f = path.join(SFX_DIR, `${name}.mp3`);
+  if (await fileExists(f)) return f;
+  return null;
+}
+
+// Convert a static image + audio into a fixed-duration mp4 clip
+async function imageToClip(imagePath, audioPath, duration, workDir, name) {
+  const clipPath = path.join(workDir, `${name}.mp4`);
+  await execPromise(
+    `ffmpeg -y -loop 1 -i "${imagePath}" -i "${audioPath}" -c:v libx264 -t ${duration} -pix_fmt yuv420p -c:a aac -shortest "${clipPath}"`
+  );
+  return { path: clipPath, duration };
+}
+
+// Build a TTS clip with a leading human-like gap (silence) before the speech.
+// Returns {path, duration} of the combined audio.
+async function buildGappedAudio(text, voice, workDir, name, fallbackSeconds, gapSec = TTS_GAP_SEC) {
+  const speechPath = path.join(workDir, `${name}_speech.mp3`);
+  await generateTTS(text, voice, speechPath, fallbackSeconds);
+
+  if (gapSec <= 0) {
+    return { path: speechPath, duration: Math.max(await getAudioDuration(speechPath), fallbackSeconds) };
+  }
+  const gapPath = path.join(workDir, `${name}_gap.mp3`);
+  await generateSilence(gapSec, gapPath);
+
+  const combinedPath = path.join(workDir, `${name}_combined.mp3`);
+  await concatAudio([gapPath, speechPath], combinedPath, workDir);
+  const dur = await getAudioDuration(combinedPath);
+  return { path: combinedPath, duration: Math.max(dur, fallbackSeconds + gapSec) };
+}
+
+// ========================
+// Job processing
+// ========================
+async function processJobs() {
+  console.log('Checking for pending video jobs...');
+  const jobs = await fetchSupabase(
+    'quiz_queue?job_type=eq.video_render&status=eq.pending&order=created_at.asc&limit=1'
+  );
+  if (!jobs || jobs.length === 0) {
+    console.log('No pending jobs');
+    return;
+  }
+  const job = jobs[0];
+  console.log(`Processing job ${job.id} for quiz ${job.quiz_id}`);
+
+  await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'processing', started_at: new Date().toISOString() })
   });
-  // options to visually eliminate (grey/cross out)
-  const dimOpts = options.filter(o => o !== correct && !k5050text.includes(o));
 
-  // ── Download all remote audio once ──
-  const dl = async (url, name) => downloadAudio(url, path.join(workDir, name));
-  const bgMusicPath    = await dl(quiz.background_music,            'bg_music.mp3');
-  const cdMusicPath    = await dl(quiz.countdown_music,             'cd_music.mp3');
-  const hookAuPath     = await dl(quiz.hook_audio_url,              'hook_au.mp3');
-  const qIntroAuPath   = await dl(quiz.question_intro_audio_url,    'qintro_au.mp3');
-  const optIntroAuPath = await dl(quiz.options_intro_audio_url,     'optintro_au.mp3');
-  const sfxPath        = await dl(quiz.sfx_audio_url,               'sfx.mp3');
-  const timeupAuPath   = await dl(quiz.timeup_audio_url,            'timeup_au.mp3');
-  const correctSfxPath = await dl(quiz.correct_answer_sfx_audio_url,'correct_sfx.mp3');
-  const cta1AuPath     = await dl(quiz.cta1_audio_url,              'cta1_au.mp3');
-  const cta2AuPath     = await dl(quiz.cta2_audio_url,              'cta2_au.mp3');
-  const miIntroAuPath  = await dl(quiz.mission_intro_audio_url,     'mi_intro_au.mp3');
-  const cta3AuPath     = await dl(quiz.cta3_audio_url,              'cta3_au.mp3');
+  try {
+    const quizzes = await fetchSupabase(`quiz?id=eq.${job.quiz_id}`);
+    if (!quizzes || quizzes.length === 0) throw new Error('Quiz not found');
+    const quiz = quizzes[0];
 
-  // ── Build HTML ──
-  const logoB64 = await (async () => {
-    if (await fileExists(LOGO_PATH)) {
-      const b = await fs.readFile(LOGO_PATH);
-      return `data:image/png;base64,${b.toString('base64')}`;
+    // Single question per video — default to question_1
+    const qIdx = (job.payload && job.payload.question_index) || 1;
+    const lang = quiz.lang_code || 'en';
+
+    const workDir = `/tmp/video_${uuidv4()}`;
+    await ensureDir(workDir);
+
+    const videoPath = await buildVideo(quiz, qIdx, lang, workDir);
+
+    const stats = await fs.stat(videoPath);
+    console.log(`Video created: ${videoPath}, size: ${(stats.size / (1024 * 1024)).toFixed(2)} MB`);
+    const durationSec = await getVideoDuration(videoPath);
+    console.log(`Final duration: ${durationSec.toFixed(2)}s`);
+
+    const artifactPath = `/tmp/${job.id}_video.mp4`;
+    await fs.copyFile(videoPath, artifactPath);
+    console.log(`Video saved as artifact: ${artifactPath}`);
+    await fs.writeFile('/tmp/artifact_ready', artifactPath);
+
+    await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'completed', completed_at: new Date().toISOString() })
+    });
+
+    await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        render_duration_sec: Math.round(durationSec),
+        video_status: 'rendered'
+      })
+    });
+
+    await fs.rm(workDir, { recursive: true, force: true });
+    console.log(`Job ${job.id} completed successfully`);
+  } catch (err) {
+    console.error('Job failed:', err);
+    await fetchSupabase(`quiz_queue?id=eq.${job.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        status: 'failed',
+        last_error: String(err.message || err),
+        retry_count: (job.retry_count || 0) + 1
+      })
+    }).catch(e => console.error('Failed to update queue row:', e));
+    throw err;
+  }
+}
+
+// ========================
+// Theme resolution
+// ========================
+async function resolveThemeCss(quiz) {
+  const base = await fs.readFile(path.join(THEMES_DIR, '_base.css'), 'utf8');
+
+  let themeCss = '';
+  let themeDecoHtml = '';
+
+  if ((quiz.niche || '').toLowerCase() === 'general' && quiz.quiz_css_video && quiz.quiz_css_video.trim()) {
+    // General niche: fully LLM-generated CSS (steps 1-15 baked in by worker 9).
+    // We still wrap with the base for the option/timer/mission mechanics as a safety net,
+    // but the LLM CSS can override anything via higher specificity / later declaration.
+    themeCss = base + '\n/* ---- LLM-GENERATED (quiz_css_video) ---- */\n' + quiz.quiz_css_video;
+    themeDecoHtml = ''; // general CSS is expected to be self-contained; no extra deco markup
+  } else {
+    const themeId = quiz.visual_theme_id || DEFAULT_THEME;
+    let themeFile = path.join(THEMES_DIR, `${themeId}.css`);
+    if (!(await fileExists(themeFile))) {
+      console.warn(`Theme '${themeId}' not found, falling back to '${DEFAULT_THEME}'`);
+      themeFile = path.join(THEMES_DIR, `${DEFAULT_THEME}.css`);
     }
-    return '';
-  })();
+    const themeSpecific = await fs.readFile(themeFile, 'utf8');
+    themeCss = base + '\n/* ---- THEME: ' + (quiz.visual_theme_id || DEFAULT_THEME) + ' ---- */\n' + themeSpecific;
+    themeDecoHtml = buildThemeDecoHtml(quiz.visual_theme_id || DEFAULT_THEME);
+  }
 
-  const revClass = i => options[i] === correct ? 'correct' : 'wrong';
-  const dimClass = i => dimOpts.includes(options[i]) ? 'eliminate' : '';
+  // Inject accent colors (fallback to sensible defaults)
+  const accent1 = quiz.theme_accent_primary || '#00e0ff';
+  const accent2 = quiz.theme_accent_secondary || '#7b2ff7';
+  const accent3 = quiz.theme_accent_tertiary || '#ff2ec4';
+  themeCss = themeCss
+    .split('{{accent_primary}}').join(accent1)
+    .split('{{accent_secondary}}').join(accent2)
+    .split('{{accent_tertiary}}').join(accent3);
 
-  let html = await fs.readFile(TMPL_PATH, 'utf8');
-  const VARS = {
-    '{{LOGO_SRC}}':           logoB64,
-    '{{hook_phrase}}':        quiz.hook_phrase || quiz.topic || '',
-    '{{topic}}':              quiz.topic || '',
-    '{{question}}':           question,
-    '{{opt_a}}':              options[0] || '', '{{opt_b}}': options[1] || '',
-    '{{opt_c}}':              options[2] || '', '{{opt_d}}': options[3] || '',
-    '{{dim_a}}':              dimClass(0),      '{{dim_b}}': dimClass(1),
-    '{{dim_c}}':              dimClass(2),      '{{dim_d}}': dimClass(3),
-    '{{rev_a}}':              revClass(0),      '{{rev_b}}': revClass(1),
-    '{{rev_c}}':              revClass(2),      '{{rev_d}}': revClass(3),
-    '{{correct_answer}}':     correct,
-    '{{hint}}':               hint,
-    '{{explanation}}':        expl,
-    '{{affiliate_text}}':     quiz.affiliate_text || '',
-    '{{affiliate_url}}':      quiz.affiliate_url  || '',
-    '{{cta1_desc}}':          quiz.cta1_description_text || '',
-    '{{cta2_text}}':          quiz.cta2_text || '',
-    '{{cta2_url}}':           ctaNiche,
-    '{{mission_intro_text}}': quiz.mission_intro_text || '🔥 Mission Impossible',
-    '{{mission_question}}':   quiz.mission_impossible_question || '',
-    '{{mission_hint}}':       quiz.mission_impossible_hint || '',
-    '{{cta3_text}}':          quiz.cta3_text || 'Like · Share · Subscribe!',
-    '{{cta3_url}}':           ctaNiche,
-    '{{timeup_text_display}}':  quiz.timeup_text || "Time's up!",
-    '{{THINK_SEC}}':          String(thinkSec),
-    '{{HINT_AT}}':            String(HINT_AT),
-    '{{FIFTY_AT}}':           String(FIFTY_AT),
-    '{{THEME_BG}}':           theme.bg,
-    '{{THEME_O1}}':           theme.o1,
-    '{{THEME_O2}}':           theme.o2,
-    '{{THEME_O3}}':           theme.o3,
+  return { themeCss, themeDecoHtml };
+}
+
+// Returns the extra .theme-deco markup each theme expects (matches its CSS selectors)
+function buildThemeDecoHtml(themeId) {
+  switch (themeId) {
+    case 'neon_grid':
+      return `<div class="theme-deco"></div><div class="theme-deco2"></div>`;
+    case 'coin_orbit':
+      return `<div class="theme-deco">
+                <div class="coin coin1">$</div>
+                <div class="coin coin2">¢</div>
+                <div class="coin coin3">€</div>
+                <div class="coin coin4">₹</div>
+              </div>`;
+    case 'chart_pulse':
+      return `<div class="theme-deco">
+                <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+                <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
+              </div>
+              <div class="theme-deco2">
+                <svg viewBox="0 0 1080 200" preserveAspectRatio="none">
+                  <path d="M0,150 C150,50 300,180 450,100 C600,20 750,160 900,80 C1000,30 1050,90 1080,60"/>
+                </svg>
+              </div>`;
+    case 'paper_trail':
+      return `<div class="theme-deco">
+                <div class="doc doc1"></div><div class="doc doc2"></div>
+                <div class="doc doc3"></div><div class="doc doc4"></div>
+              </div>`;
+    case 'vault_glow':
+      return `<div class="theme-deco">
+                <div class="vault-ring vr1"></div>
+                <div class="vault-ring vr2"></div>
+                <div class="vault-ring vr3"></div>
+              </div>`;
+    case 'skyline_dusk':
+      return `<div class="theme-deco">
+                <div class="bldg"></div><div class="bldg"></div><div class="bldg"></div>
+                <div class="bldg"></div><div class="bldg"></div><div class="bldg"></div><div class="bldg"></div>
+              </div>`;
+    case 'global_orbit':
+      return `<div class="theme-deco"><div class="lat-line ll1"></div><div class="lat-line ll2"></div></div>`;
+    case 'confetti_pop':
+      return `<div class="theme-deco">
+                ${Array.from({ length: 14 }).map((_, i) => {
+                  const left = (i * 7 + 3) % 100;
+                  const dur = 3 + (i % 5);
+                  const delay = (i * 0.3) % 4;
+                  const colors = ['var(--accent-1)', 'var(--accent-2)', 'var(--accent-3)', '#ffd166', '#00ff8c'];
+                  const color = colors[i % colors.length];
+                  const size = 10 + (i % 4) * 4;
+                  return `<div class="confetti-bg" style="left:${left}%; width:${size}px; height:${size * 1.6}px; background:${color}; animation-duration:${dur}s; animation-delay:${delay}s;"></div>`;
+                }).join('')}
+              </div>`;
+    case 'shield_secure':
+      return `<div class="theme-deco">
+                <svg viewBox="0 0 200 240" preserveAspectRatio="xMidYMid meet">
+                  <path d="M100,10 L180,40 L180,120 C180,180 140,220 100,230 C60,220 20,180 20,120 L20,40 Z"/>
+                </svg>
+              </div>
+              <div class="shield-pulse"></div>`;
+    case 'aurora':
+    case 'particle_field':
+    default:
+      if (themeId === 'particle_field') {
+        return `<div class="theme-deco">
+                  ${Array.from({ length: 18 }).map((_, i) => {
+                    const left = (i * 5 + 2) % 100;
+                    const size = 6 + (i % 5) * 3;
+                    const dur = 8 + (i % 6) * 2;
+                    const delay = (i * 0.7) % 10;
+                    return `<div class="particle" style="left:${left}%; bottom:-20px; width:${size}px; height:${size}px; animation-duration:${dur}s; animation-delay:${delay}s;"></div>`;
+                  }).join('')}
+                </div>`;
+      }
+      return ''; // aurora needs no extra deco markup
+  }
+}
+
+// ========================
+// Main video builder — 15-step flow
+// ========================
+async function buildVideo(quiz, qIdx, lang, workDir) {
+  const voice = VOICE_MAP[lang] || VOICE_MAP.en;
+
+  const options   = quiz[`options_${qIdx}`] || [];
+  const correctAnswer = quiz[`correct_answer_${qIdx}`] || '';
+  const hint      = quiz[`hint_${qIdx}`] || '';
+  const keep5050  = quiz[`keep_5050_${qIdx}`] || [];
+  const explanation = quiz[`explanation_${qIdx}`] || '';
+  const question  = quiz[`question_${qIdx}`] || '';
+
+  // Timing: 8-10s thinking. Hint @ 1/4, 50/50 @ 1/2.
+  const QUESTION_TIME   = quiz.thinking_time_sec || 9;
+  const HINT_TIME       = QUESTION_TIME / 4;
+  const FIFTYFIFTY_TIME = QUESTION_TIME / 2;
+  const MISSION_WAIT    = 2.5; // seconds before CTA3 appears after MI question
+
+  const allIdx = [0, 1, 2, 3];
+  const eliminateIdx = allIdx.filter(i =>
+    !keep5050.includes(i) && !keep5050.includes(String(i))
+  );
+
+  // ---- Resolve visual theme ----
+  const { themeCss, themeDecoHtml } = await resolveThemeCss(quiz);
+
+  // ---- Build HTML ----
+  let html = await fs.readFile(path.join(__dirname, 'quiz_template.html'), 'utf8');
+  const optClass = (i) => eliminateIdx.includes(i) ? 'eliminate' : '';
+  const revClass = (i) => options[i] === correctAnswer ? 'correct' : 'wrong';
+
+  // CTA logic: CTA1 (affiliate) if quiz.affiliate_url present, else CTA2 fallback
+  const hasCta1 = !!(quiz.affiliate_url && quiz.affiliate_url.trim());
+  const ctaSlideClass = hasCta1 ? 'cta1-slide' : 'cta2-slide';
+
+  const replacements = {
+    '{{theme_css}}':       themeCss,
+    '{{theme_deco_html}}': themeDecoHtml,
+    '{{hook_phrase}}':     quiz.hook_phrase || 'Stop scrolling! Can you beat this quiz?',
+    '{{question}}':        question,
+    '{{options[0]}}':      options[0] || '',
+    '{{options[1]}}':      options[1] || '',
+    '{{options[2]}}':      options[2] || '',
+    '{{options[3]}}':      options[3] || '',
+    '{{opt0_class}}':      optClass(0),
+    '{{opt1_class}}':      optClass(1),
+    '{{opt2_class}}':      optClass(2),
+    '{{opt3_class}}':      optClass(3),
+    '{{rev0_class}}':      revClass(0),
+    '{{rev1_class}}':      revClass(1),
+    '{{rev2_class}}':      revClass(2),
+    '{{rev3_class}}':      revClass(3),
+    '{{hint}}':            hint,
+    '{{correct_answer}}':  correctAnswer,
+    '{{explanation}}':     explanation,
+    '{{affiliate_text}}':  quiz.affiliate_text || 'Check the link in description!',
+    '{{cta2_text}}':       quiz.cta2_text || 'Want a real challenge? Earn ONS tokens!',
+    '{{blog_page_url}}':   quiz.blog_page_url || 'https://jaasblog.online/quiz',
+    '{{mission_question}}': quiz.mission_impossible_question || '',
+    '{{mission_hint}}':    quiz.mission_impossible_hint || '',
+    '{{qtime}}':           QUESTION_TIME,
+    '{{hint_time}}':       HINT_TIME,
+    '{{fiftyfifty_time}}': FIFTYFIFTY_TIME
   };
-  for (const [k,v] of Object.entries(VARS)) html = html.split(k).join(String(v ?? ''));
-  const htmlPath = path.join(workDir, 'quiz.html');
+  for (const [k, v] of Object.entries(replacements)) {
+    html = html.split(k).join(String(v));
+  }
+  const htmlPath = path.join(workDir, 'index.html');
   await fs.writeFile(htmlPath, html);
 
-  // ── Puppeteer ──
+  // ---- Fetch all prerecorded audio cues in parallel ----
+  console.log('[CUES] Fetching prerecorded audio cues...');
+  const [
+    hookCue, questionIntroCue, optionsIntroCue,
+    timeupCue, cta2AudioCue, cta3Cue, missionCue,
+    bgMusicCue,
+    sfxQAppear, sfxCountdown, sfxHint, sfxFiftyFifty
+  ] = await Promise.all([
+    pickRandomCue('quiz_hooks', lang, quiz.niche),
+    pickRandomCue('question_intro_cues', lang, null),
+    pickRandomCue('options_intro_cues', lang, null),
+    pickRandomCue('timeup_cues', lang, null),
+    pickRandomCue('cta2_audio_cues', lang, quiz.niche),
+    pickRandomCue('cta3_audio_cues', lang, null),
+    pickRandomCue('mission_impossible_cues', lang, null),
+    pickBgMusic(quiz.niche),
+    pickSfxCue('question_appear'),
+    pickSfxCue('countdown_loop'),
+    pickSfxCue('hint_reveal'),
+    pickSfxCue('fifty_fifty')
+  ]);
+
+  // Download all cues to local cache in parallel
+  const [
+    hookFile, questionIntroFile, optionsIntroFile,
+    timeupFile, cta2AudioFile, cta3File, missionFile,
+    bgMusicFile,
+    sfxQAppearFile, sfxCountdownFile, sfxHintFile, sfxFiftyFiftyFile
+  ] = await Promise.all([
+    hookCue         ? downloadAudio(hookCue.audio_url,          `hook_${hookCue.id}`) : null,
+    questionIntroCue? downloadAudio(questionIntroCue.audio_url, `qintro_${questionIntroCue.id}`) : null,
+    optionsIntroCue ? downloadAudio(optionsIntroCue.audio_url,  `ointro_${optionsIntroCue.id}`) : null,
+    timeupCue       ? downloadAudio(timeupCue.audio_url,        `timeup_${timeupCue.id}`) : null,
+    cta2AudioCue    ? downloadAudio(cta2AudioCue.audio_url,     `cta2_${cta2AudioCue.id}`) : null,
+    cta3Cue         ? downloadAudio(cta3Cue.audio_url,          `cta3_${cta3Cue.id}`) : null,
+    missionCue      ? downloadAudio(missionCue.audio_url,       `mission_${missionCue.id}`) : null,
+    bgMusicCue      ? downloadAudio(bgMusicCue.audio_url,       `bgmusic_${bgMusicCue.id}`) : null,
+    sfxQAppear      ? downloadAudio(sfxQAppear.audio_url,       `sfx_qa_${sfxQAppear.id}`) : null,
+    sfxCountdown    ? downloadAudio(sfxCountdown.audio_url,     `sfx_cd_${sfxCountdown.id}`) : null,
+    sfxHint         ? downloadAudio(sfxHint.audio_url,          `sfx_hint_${sfxHint.id}`) : null,
+    sfxFiftyFifty   ? downloadAudio(sfxFiftyFifty.audio_url,    `sfx_50_${sfxFiftyFifty.id}`) : null
+  ]);
+
+  // Bump usage counts (fire-and-forget)
+  if (hookCue)          bumpUsage('quiz_hooks', hookCue.id, hookCue.usage_count);
+  if (questionIntroCue) bumpUsage('question_intro_cues', questionIntroCue.id, questionIntroCue.usage_count);
+  if (optionsIntroCue)  bumpUsage('options_intro_cues', optionsIntroCue.id, optionsIntroCue.usage_count);
+  if (timeupCue)        bumpUsage('timeup_cues', timeupCue.id, timeupCue.usage_count);
+  if (missionCue)       bumpUsage('mission_impossible_cues', missionCue.id, missionCue.usage_count);
+  if (cta3Cue)          bumpUsage('cta3_audio_cues', cta3Cue.id, cta3Cue.usage_count);
+
+  // ---- Launch Puppeteer ----
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu']
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
   });
   const page = await browser.newPage();
-  await page.setViewport({ width:1080, height:1920 });
+  await page.setViewport({ width: 1080, height: 1920 });
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded' });
+  await new Promise(r => setTimeout(r, 300));
 
-  const clips = [];
-  let clipIdx = 0;
+  const clips = []; // { path, duration }
 
-  // ── Per-clip pipeline:
-  //    1. screenshot or screen-record
-  //    2. build FG audio (join silence + voice/SFX as needed)
-  //    3. mixWithBG → final audio
-  //    4. imageClip / videoClip → push to clips[]
-  async function addImgClip(slide, waitMs, buildAudio) {
-    if (slide) {
-      await showSlide(page, slide);
-      if (waitMs) await new Promise(r => setTimeout(r, waitMs));
-    }
-    const img  = path.join(workDir, `sc${clipIdx}.png`);
-    await page.screenshot({ path: img });
-    const fgAu = path.join(workDir, `fg${clipIdx}.mp3`);
-    const dur  = await buildAudio(fgAu);
-    const mixAu = path.join(workDir, `mix${clipIdx}.mp3`);
-    await mixWithBG(fgAu, bgMusicPath, dur, mixAu);
-    const clipPath = path.join(workDir, `clip${clipIdx}.mp4`);
-    await imageClip(img, mixAu, dur, clipPath);
-    clips.push({ path: clipPath, dur });
-    clipIdx++;
+  async function showOnly(selector) {
+    await page.evaluate((sel) => {
+      document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+      const el = document.querySelector(sel);
+      if (el) el.classList.add('active');
+    }, selector);
   }
 
-  async function addVidClip(rawVid, buildAudio, dur) {
-    const fgAu = path.join(workDir, `fg${clipIdx}.mp3`);
-    await buildAudio(fgAu);
-    const mixAu = path.join(workDir, `mix${clipIdx}.mp3`);
-    await mixWithBG(fgAu, bgMusicPath, dur, mixAu);
-    const clipPath = path.join(workDir, `clip${clipIdx}.mp4`);
-    await videoClip(rawVid, mixAu, dur, clipPath);
-    clips.push({ path: clipPath, dur });
-    clipIdx++;
-  }
-
-  async function sil(sec) {
-    const p = path.join(workDir, `sil${clipIdx}_${Date.now()}.mp3`);
-    await mkSilence(p, sec);
+  async function screenshot(name) {
+    const p = path.join(workDir, `${name}.png`);
+    await page.screenshot({ path: p });
     return p;
   }
 
-  // ───────────────────────────────────────────────────────────────[...]
-  // LOAD PAGE
-  // ───────────────────────────────────────────────────────────────[...]
-  await page.goto(`file://${htmlPath}`, { waitUntil:'networkidle0' });
-
-  // ───────────────────────────────────────────────────────────────[...]
-  // STEP 1: HOOK — hook_phrase + brand logo + hook_audio_url (prerecorded)
-  // ───────────────────────────────────────────────────────────────[...]
-  await addImgClip('.slide-hook', 900, async fgAu => {
-    const au = hookAuPath || await (async () => {
-      const p = path.join(workDir, 'hook_tts.mp3');
-      return mkTTS(quiz.hook_phrase || quiz.topic, voice, p, 3);
-    })();
-    await fs.copyFile(au, fgAu);
-    return Math.max(await audioDur(fgAu), 2.5);
-  });
-
-  // ───────────────────────────────────────────────────────────────[...]
-  // STEP 2: "Here is your challenge" — question_intro_audio_url (audio only)
-  // Slide shows blank/ambient background only
-  // ───────────────────────────────────────────────────────────────[...]
-  await addImgClip('.slide-ambient', 100, async fgAu => {
-    const au = qIntroAuPath ||
-      await cachedTTS('q_intro', 'Here is your challenge. Can you solve it?', voice, lang);
-    await fs.copyFile(au, fgAu);
-    return await audioDur(fgAu);
-  });
-
-  // ───────────────────────────────────────────────────────────────[...]
-  // STEP 3: Question appears — 0.3s gap, then question text + TTS
-  // ───────────────────────────────────────────────────────────────[...]
-  await addImgClip('.slide-question-only', 400, async fgAu => {
-    const s03  = await sil(0.3);
-    const qTTS = path.join(workDir, 'q_tts.mp3');
-    await mkTTS(question, voice, qTTS);
-    await joinAudio([s03, qTTS], fgAu);
-    return await audioDur(fgAu);
-  });
-
-  // ───────────────────────────────────────────────────────────────[...]
-  // STEP 4: "And your options are" — 0.7s gap then options_intro_audio_url (audio only)
-  // Question still visible on screen
-  // ───────────────────────────────────────────────────────────────[...]
-  await addImgClip('.slide-question-only', 0, async fgAu => {
-    const s07 = await sil(0.7);
-    const au  = optIntroAuPath ||
-      await cachedTTS('opt_intro', 'And your options are', voice, lang);
-    await joinAudio([s07, au], fgAu);
-    return await audioDur(fgAu);
-  });
-
-  // ───────────────────────────────────────────────────────────────[...]
-  // STEP 5: Options appear — 0.3s gap, then sfx + TTS reads options
-  // ───────────────────────────────────────────────────────────────[...]
-  await addImgClip('.slide-options', 400, async fgAu => {
-    const s03  = await sil(0.3);
-    const optsTTS = path.join(workDir, 'opts_tts.mp3');
-    const optsText = options.map((o,i)=>`Option ${['A','B','C','D'][i]}: ${o}`).join('. ');
-    await mkTTS(optsText, voice, optsTTS);
-    const parts = [s03, sfxPath, optsTTS].filter(Boolean);
-    await joinAudio(parts, fgAu);
-    return await audioDur(fgAu);
-  });
-
-  // ───────────────────────────────────────────────────────────────[...]
-  // STEPS 6+7+8: COUNTDOWN — screen-recorded, countdown_music + sfx overlays
-  // Hint CSS appears at HINT_AT, 50/50 CSS eliminates at FIFTY_AT (via template CSS vars)
-  // ───────────────────────────────────────────────────────────────[...]
-  await page.goto(`file://${htmlPath}`, { waitUntil:'networkidle0' });
-  await showSlide(page, '.slide-countdown');
-
-  const cdRaw = path.join(workDir, 'cd_raw.mp4');
-  const rec   = new PuppeteerScreenRecorder(page, {
-    fps:30, videoFrame:{ width:1080, height:1920 }, aspectRatio:'9:16'
-  });
-  await rec.start(cdRaw);
-  await new Promise(r => setTimeout(r, thinkSec * 1000));
-  await rec.stop();
-
-  await addVidClip(cdRaw, async fgAu => {
-    if (!cdMusicPath) { await mkSilence(fgAu, thinkSec); return; }
-    // Loop countdown music
-    const cdLooped = path.join(workDir, 'cd_looped.mp3');
-    await execP(
-      `ffmpeg -y -stream_loop -1 -i "${cdMusicPath}" -t ${thinkSec} -af "volume=0.80" -acodec libmp3lame "${cdLooped}"`
-    );
-    if (sfxPath && await fileExists(sfxPath)) {
-      // Overlay sfx at HINT_AT and FIFTY_AT using adelay
-      const hMs = Math.round(HINT_AT  * 1000);
-      const fMs = Math.round(FIFTY_AT * 1000);
-      await execP(
-        `ffmpeg -y -i "${cdLooped}" -i "${sfxPath}" -i "${sfxPath}" ` +
-        `-filter_complex ` +
-        `"[1:a]adelay=${hMs}|${hMs},aformat=fltp:44100:stereo,volume=0.85[s1];` +
-        ` [2:a]adelay=${fMs}|${fMs},aformat=fltp:44100:stereo,volume=0.85[s2];` +
-        ` [0:a][s1][s2]amix=inputs=3:duration=first:normalize=0[out]" ` +
-        `-map "[out]" -t ${thinkSec} -acodec libmp3lame "${fgAu}"`
-      );
+  // Helper: build a clip from an audio file (prerecorded or TTS fallback) + image
+  async function makeClip(imgPath, audioFile, fallbackText, fallbackDur, name, leadSilence = 0.35) {
+    let audioPath;
+    let dur;
+    if (audioFile) {
+      // prerecorded: prepend human-like silence
+      const silPath = path.join(workDir, `${name}_sil.mp3`);
+      await generateSilence(leadSilence, silPath);
+      const combined = path.join(workDir, `${name}_audio.mp3`);
+      const listP = path.join(workDir, `${name}_list.txt`);
+      await fs.writeFile(listP, `file '${silPath}'\nfile '${audioFile}'`);
+      await execPromise(`ffmpeg -y -f concat -safe 0 -i "${listP}" -acodec libmp3lame "${combined}"`);
+      audioPath = combined;
+      dur = Math.max(await getAudioDuration(combined), fallbackDur);
     } else {
-      await fs.copyFile(cdLooped, fgAu);
+      // TTS fallback
+      const ttsPath = path.join(workDir, `${name}_tts.mp3`);
+      await generateTTS(fallbackText, voice, ttsPath, fallbackDur);
+      const silPath = path.join(workDir, `${name}_sil.mp3`);
+      await generateSilence(leadSilence, silPath);
+      const combined = path.join(workDir, `${name}_audio.mp3`);
+      const listP = path.join(workDir, `${name}_list.txt`);
+      await fs.writeFile(listP, `file '${silPath}'\nfile '${ttsPath}'`);
+      await execPromise(`ffmpeg -y -f concat -safe 0 -i "${listP}" -acodec libmp3lame "${combined}"`);
+      audioPath = combined;
+      dur = Math.max(await getAudioDuration(combined), fallbackDur + leadSilence);
     }
-  }, thinkSec);
-
-  // ───────────────────────────────────────────────────────────────[...]
-  // STEP 9: TIME UP — timeup_text + timeup_audio_url (prerecorded preferred)
-  // ───────────────────────────────────────────────────────────────[...]
-  await page.goto(`file://${htmlPath}`, { waitUntil:'networkidle0' });
-  await addImgClip('.slide-timeup', 200, async fgAu => {
-    const au = timeupAuPath || (() => {
-      const p = path.join(workDir, 'timeup_tts.mp3');
-      return mkTTS(quiz.timeup_text || "Time's up! Here comes the correct answer!", voice, p, 3);
-    })();
-    const resolved = typeof au === 'string' ? au : await au;
-    await fs.copyFile(resolved, fgAu);
-    return Math.max(await audioDur(fgAu), 2);
-  });
-
-  // ───────────────────────────────────────────────────────────────[...]
-  // STEP 10: ANSWER REVEAL — 0.5s gap, correct_answer_sfx + TTS
-  // Correct highlighted, wrong dimmed
-  // ───────────────────────────────────────────────────────────────[...]
-  await addImgClip('.slide-answer', 300, async fgAu => {
-    const s05   = await sil(0.5);
-    const sfx   = correctSfxPath || sfxPath;
-    const ansTTS = path.join(workDir, 'ans_tts.mp3');
-    await mkTTS(`The correct answer is: ${correct}`, voice, ansTTS, 2);
-    await joinAudio([s05, sfx, ansTTS].filter(Boolean), fgAu);
-    return Math.max(await audioDur(fgAu), 3);
-  });
-
-  // ───────────────────────────────────────────────────────────────[...]
-  // STEP 11: EXPLANATION — 0.5s gap, text + TTS (max 20 words per spec)
-  // ───────────────────────────────────────────────────────────────[...]
-  await addImgClip('.slide-explanation', 200, async fgAu => {
-    const s05    = await sil(0.5);
-    const exTTS  = path.join(workDir, 'expl_tts.mp3');
-    await mkTTS(expl, voice, exTTS, 2);
-    await joinAudio([s05, exTTS], fgAu);
-    return Math.max(await audioDur(fgAu), 3.5);
-  });
-
-  // ───────────────────────────────────────────────────────────────[...]
-  // STEP 12: CTA1 or CTA2
-  // ───────────────────────────────────────────────────────────────[...]
-  if (useCTA1) {
-    await addImgClip('.slide-cta1', 200, async fgAu => {
-      const au = cta1AuPath || (() => {
-        const p = path.join(workDir, 'cta1_tts.mp3');
-        return mkTTS(quiz.affiliate_text || '', voice, p, 3);
-      })();
-      const r = typeof au === 'string' ? au : await au;
-      await fs.copyFile(r, fgAu);
-      return Math.max(await audioDur(fgAu), 3);
-    });
-  } else {
-    await addImgClip('.slide-cta2', 200, async fgAu => {
-      const au = cta2AuPath || (() => {
-        const p = path.join(workDir, 'cta2_tts.mp3');
-        return mkTTS(quiz.cta2_text || '', voice, p, 3);
-      })();
-      const r = typeof au === 'string' ? au : await au;
-      await fs.copyFile(r, fgAu);
-      return Math.max(await audioDur(fgAu), 3);
-    });
+    return imageToClip(imgPath, audioPath, dur, workDir, `clip_${name}`);
   }
 
-  // ───────────────────────────────────────────────────────────────[...]
-  // STEPS 13-16: MISSION IMPOSSIBLE (skip if not enabled)
-  // ───────────────────────────────────────────────────────────────[...]
+  // ============================================================
+  // STEP 1: HOOK + animated brand logo (2-3s, prerecorded or TTS)
+  // ============================================================
+  await showOnly('.hook-slide');
+  await new Promise(r => setTimeout(r, 1100));
+  const hookImg = await screenshot('hook');
+  const hookClip = await makeClip(
+    hookImg, hookFile,
+    quiz.hook_phrase || 'Stop scrolling! Can you beat this quiz?',
+    2.5, 'hook', 0.1
+  );
+  clips.push(hookClip);
+
+  // ============================================================
+  // STEP 2: "Here is your challenge" — PRERECORDED AUDIO ONLY,
+  // no text on screen. Waiting frame (logo pulse).
+  // ============================================================
+  await showOnly('.waiting-slide');
+  await new Promise(r => setTimeout(r, 300));
+  const waitingImg = await screenshot('waiting');
+  const challengeClip = await makeClip(
+    waitingImg, questionIntroFile,
+    'Here is your challenge!',
+    1.5, 'challenge', 0.3
+  );
+  clips.push(challengeClip);
+
+  // ============================================================
+  // STEP 3: Question appears with animation (text + TTS).
+  // Question card bounces in. SFX "question_appear" sting plays.
+  // ============================================================
+  await showOnly('.question-appear-slide');
+  await new Promise(r => setTimeout(r, 700)); // let qp-card entrance animation play
+  const questionAppearImg = await screenshot('question_appear');
+
+  // Build audio: SFX sting -> 0.15s gap -> question TTS
+  const qTtsPath = path.join(workDir, 'question_tts.mp3');
+  await generateTTS(question, voice, qTtsPath, 3);
+  const qTtsDur = await getAudioDuration(qTtsPath);
+
+  const qAudioParts = [];
+  const qListPath = path.join(workDir, 'q_audio_list.txt');
+  if (sfxQAppearFile) {
+    const sfxDur = await getAudioDuration(sfxQAppearFile);
+    const microGap = path.join(workDir, 'micro_gap.mp3');
+    await generateSilence(0.15, microGap);
+    qAudioParts.push(sfxQAppearFile, microGap, qTtsPath);
+    await fs.writeFile(qListPath, qAudioParts.map(p => `file '${p}'`).join('\n'));
+    const qCombined = path.join(workDir, 'q_combined.mp3');
+    await execPromise(`ffmpeg -y -f concat -safe 0 -i "${qListPath}" -acodec libmp3lame "${qCombined}"`);
+    const qDur = Math.max(await getAudioDuration(qCombined), sfxDur + 0.15 + qTtsDur);
+    clips.push(await imageToClip(questionAppearImg, qCombined, qDur, workDir, 'clip_question_appear'));
+  } else {
+    const qDur = Math.max(qTtsDur, 2);
+    clips.push(await imageToClip(questionAppearImg, qTtsPath, qDur, workDir, 'clip_question_appear'));
+  }
+
+  // ============================================================
+  // STEP 4: 0.7s silence on screen then "And your options are"
+  //         PRERECORDED AUDIO ONLY (no text on screen).
+  //         Question card still visible, options not yet shown.
+  // ============================================================
+  // Same question-appear frame (question visible, no options yet)
+  const step4Audio = path.join(workDir, 'step4.mp3');
+  const step4List = path.join(workDir, 'step4_list.txt');
+  const step4Sil = path.join(workDir, 'step4_sil.mp3');
+  await generateSilence(0.7, step4Sil);
+  if (optionsIntroFile) {
+    await fs.writeFile(step4List, `file '${step4Sil}'\nfile '${optionsIntroFile}'`);
+    await execPromise(`ffmpeg -y -f concat -safe 0 -i "${step4List}" -acodec libmp3lame "${step4Audio}"`);
+  } else {
+    const optIntroTts = path.join(workDir, 'options_intro_tts.mp3');
+    await generateTTS('And your options are...', voice, optIntroTts, 1.5);
+    await fs.writeFile(step4List, `file '${step4Sil}'\nfile '${optIntroTts}'`);
+    await execPromise(`ffmpeg -y -f concat -safe 0 -i "${step4List}" -acodec libmp3lame "${step4Audio}"`);
+  }
+  const step4Dur = await getAudioDuration(step4Audio);
+  clips.push(await imageToClip(questionAppearImg, step4Audio, step4Dur, workDir, 'clip_step4'));
+
+  // ============================================================
+  // STEP 5: Options appear with animation (text + TTS each option)
+  // ============================================================
+  await showOnly('.question-static');
+  await new Promise(r => setTimeout(r, 900));
+  const optionsImg = await screenshot('options_static');
+
+  const optionsParts = [];
+  const optionsListPath = path.join(workDir, 'options_parts_list.txt');
+  for (let i = 0; i < options.length; i++) {
+    if (!options[i]) continue;
+    const silP = path.join(workDir, `opt_sil_${i}.mp3`);
+    const ttsP = path.join(workDir, `opt_tts_${i}.mp3`);
+    await generateSilence(0.25, silP);
+    await generateTTS(`${String.fromCharCode(65 + i)}. ${options[i]}`, voice, ttsP, 1);
+    optionsParts.push(silP, ttsP);
+  }
+  const optionsCombined = path.join(workDir, 'options_combined.mp3');
+  if (optionsParts.length > 0) {
+    await fs.writeFile(optionsListPath, optionsParts.map(p => `file '${p}'`).join('\n'));
+    await execPromise(`ffmpeg -y -f concat -safe 0 -i "${optionsListPath}" -acodec libmp3lame "${optionsCombined}"`);
+  } else {
+    await generateSilence(2, optionsCombined);
+  }
+  const optionsDur = Math.max(await getAudioDuration(optionsCombined), 2);
+  clips.push(await imageToClip(optionsImg, optionsCombined, optionsDur, workDir, 'clip_options'));
+
+  // ============================================================
+  // STEP 6-8: COUNTDOWN phase (screen-recorded).
+  // Countdown SFX loops. Hint @ 1/4 and 50/50 @ 1/2 with stings.
+  // ============================================================
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded' });
+  await new Promise(r => setTimeout(r, 200));
+  await showOnly('.question-phase');
+
+  const questionVideoRaw = path.join(workDir, 'question_phase_raw.mp4');
+  const recorder = new PuppeteerScreenRecorder(page, {
+    fps: 30,
+    videoFrame: { width: 1080, height: 1920 },
+    aspectRatio: '9:16'
+  });
+  await recorder.start(questionVideoRaw);
+  await new Promise(r => setTimeout(r, QUESTION_TIME * 1000));
+  await recorder.stop();
+
+  // Build countdown audio bed
+  const countdownBase = path.join(workDir, 'countdown_base.mp3');
+  if (sfxCountdownFile) {
+    await execPromise(
+      `ffmpeg -y -stream_loop -1 -i "${sfxCountdownFile}" -t ${QUESTION_TIME} -af "volume=0.7" -acodec libmp3lame "${countdownBase}"`
+    );
+  } else {
+    await generateSilence(QUESTION_TIME, countdownBase);
+  }
+
+  // Layer hint + 50/50 stings via adelay+amix
+  let countdownFinal = countdownBase;
+  const stings = [];
+  if (sfxHintFile)       stings.push({ file: sfxHintFile,       delayMs: Math.round(HINT_TIME * 1000) });
+  if (sfxFiftyFiftyFile) stings.push({ file: sfxFiftyFiftyFile, delayMs: Math.round(FIFTYFIFTY_TIME * 1000) });
+  if (stings.length > 0) {
+    const mixedPath = path.join(workDir, 'countdown_mixed.mp3');
+    const inputs = [`-i "${countdownBase}"`, ...stings.map(s => `-i "${s.file}"`)].join(' ');
+    const delays  = stings.map((s, idx) => `[${idx+1}:a]adelay=${s.delayMs}|${s.delayMs}[s${idx}]`).join(';');
+    const mix     = ['[0:a]', ...stings.map((_, i) => `[s${i}]`)].join('');
+    await execPromise(
+      `ffmpeg -y ${inputs} -filter_complex "${delays};${mix}amix=inputs=${stings.length+1}:duration=first[a]" -map "[a]" -t ${QUESTION_TIME} -acodec libmp3lame "${mixedPath}"`
+    );
+    countdownFinal = mixedPath;
+  }
+
+  const questionClipPath = path.join(workDir, 'clip_question.mp4');
+  await execPromise(
+    `ffmpeg -y -i "${questionVideoRaw}" -i "${countdownFinal}" -c:v libx264 -c:a aac -map 0:v:0 -map 1:a:0 -shortest "${questionClipPath}"`
+  );
+  const questionDur = await getVideoDuration(questionClipPath);
+  clips.push({ path: questionClipPath, duration: questionDur });
+
+  // ============================================================
+  // STEP 9: "Time's up, let's reveal the correct answer"
+  //         PRERECORDED AUDIO ONLY. Pre-reveal frame (no highlight yet).
+  // ============================================================
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded' });
+  await new Promise(r => setTimeout(r, 200));
+  await showOnly('.pre-reveal-slide');
+  await new Promise(r => setTimeout(r, 300));
+  const preRevealImg = await screenshot('pre_reveal');
+  const timeupClip = await makeClip(
+    preRevealImg, timeupFile,
+    "Time's up! Let's reveal the correct answer.",
+    2, 'timeup', 0.3
+  );
+  clips.push(timeupClip);
+
+  // ============================================================
+  // STEP 10: 0.5s silence, correct answer highlighted (sound only)
+  // ============================================================
+  await showOnly('.answer-slide');
+  await new Promise(r => setTimeout(r, 300));
+  const answerImg = await screenshot('answer');
+  const revealSilPath = path.join(workDir, 'reveal_sil.mp3');
+  await generateSilence(0.5, revealSilPath);
+  clips.push(await imageToClip(answerImg, revealSilPath, 0.5, workDir, 'clip_answer_silent'));
+
+  // ============================================================
+  // STEP 11: 0.5s silence then explanation (text + TTS, ≤20 words)
+  // ============================================================
+  await showOnly('.explanation-slide');
+  await new Promise(r => setTimeout(r, 400));
+  const explImg = await screenshot('explanation');
+  const explSil = path.join(workDir, 'expl_sil.mp3');
+  const explTts = path.join(workDir, 'expl_tts.mp3');
+  await generateSilence(0.5, explSil);
+  await generateTTS(explanation, voice, explTts, 3);
+  const explCombined = path.join(workDir, 'expl_combined.mp3');
+  const explList = path.join(workDir, 'expl_list.txt');
+  await fs.writeFile(explList, `file '${explSil}'\nfile '${explTts}'`);
+  await execPromise(`ffmpeg -y -f concat -safe 0 -i "${explList}" -acodec libmp3lame "${explCombined}"`);
+  const explDur = Math.max(await getAudioDuration(explCombined), 3.5);
+  clips.push(await imageToClip(explImg, explCombined, explDur, workDir, 'clip_explanation'));
+
+  // ============================================================
+  // CTA: affiliate_url present → CTA1 (affiliate), else CTA2 (platform)
+  // ============================================================
+  if (hasCta1) {
+    await showOnly('.cta1-slide');
+    await new Promise(r => setTimeout(r, 400));
+    const cta1Img = await screenshot('cta1');
+    // CTA1 has no prerecorded file — use TTS from quiz.affiliate_text
+    const cta1Tts = path.join(workDir, 'cta1_tts.mp3');
+    const cta1Sil = path.join(workDir, 'cta1_sil.mp3');
+    await generateSilence(0.35, cta1Sil);
+    await generateTTS(
+      quiz.affiliate_text || 'Check the link in the description for a great deal!',
+      voice, cta1Tts, 3
+    );
+    const cta1Combined = path.join(workDir, 'cta1_combined.mp3');
+    const cta1List = path.join(workDir, 'cta1_list.txt');
+    await fs.writeFile(cta1List, `file '${cta1Sil}'\nfile '${cta1Tts}'`);
+    await execPromise(`ffmpeg -y -f concat -safe 0 -i "${cta1List}" -acodec libmp3lame "${cta1Combined}"`);
+    const cta1Dur = Math.max(await getAudioDuration(cta1Combined), 3);
+    clips.push(await imageToClip(cta1Img, cta1Combined, cta1Dur, workDir, 'clip_cta1'));
+  } else {
+    await showOnly('.cta2-slide');
+    await new Promise(r => setTimeout(r, 400));
+    const cta2Img = await screenshot('cta2');
+    const cta2Clip = await makeClip(
+      cta2Img, cta2AudioFile,
+      quiz.cta2_text || 'Want a real challenge? Visit jaasblog.online/quiz and earn ONS tokens!',
+      3, 'cta2', 0.35
+    );
+    clips.push(cta2Clip);
+  }
+
+  // ============================================================
+  // STEP 13: Mission Impossible question (large bold, prerecorded intro)
+  // ============================================================
   if (quiz.mission_impossible_enabled !== false && quiz.mission_impossible_question) {
-
-    // STEP 13: MI Intro — mission_intro_text + mission_intro_audio_url (huge bold)
-    await addImgClip('.slide-mi-intro', 300, async fgAu => {
-      const au = miIntroAuPath || (() => {
-        const p = path.join(workDir, 'mi_intro_tts.mp3');
-        return mkTTS(
-          quiz.mission_intro_text || 'Mission Impossible! Only a genius can answer this.',
-          voice, p, 2
-        );
-      })();
-      const r = typeof au === 'string' ? au : await au;
-      await fs.copyFile(r, fgAu);
-      return Math.max(await audioDur(fgAu), 2.5);
+    // Stage 1: MI question only (CTA3 hidden)
+    await showOnly('.mission-final-slide');
+    await page.evaluate(() => {
+      const el = document.querySelector('.cta3-text');
+      if (el) el.classList.remove('show-cta3');
     });
+    await new Promise(r => setTimeout(r, 400));
+    const missionImg = await screenshot('mission');
 
-    // STEP 14: MI Question appears — hold 1s (per spec: question on screen, no audio)
-    await addImgClip('.slide-mi-question', 300, async fgAu => {
-      await mkSilence(fgAu, 1.0);
-      return 1.0;
-    });
+    // Audio: MI intro prerecorded sting, then brief gap
+    let missionAudio;
+    let missionDur;
+    if (missionFile) {
+      const mSil = path.join(workDir, 'mission_sil.mp3');
+      await generateSilence(0.3, mSil);
+      const mCombined = path.join(workDir, 'mission_combined.mp3');
+      const mList = path.join(workDir, 'mission_list.txt');
+      await fs.writeFile(mList, `file '${mSil}'\nfile '${missionFile}'`);
+      await execPromise(`ffmpeg -y -f concat -safe 0 -i "${mList}" -acodec libmp3lame "${mCombined}"`);
+      missionAudio = mCombined;
+      missionDur = Math.max(await getAudioDuration(mCombined), MISSION_WAIT);
+    } else {
+      const mTts = path.join(workDir, 'mission_tts.mp3');
+      await generateTTS(quiz.mission_impossible_question, voice, mTts, MISSION_WAIT);
+      missionAudio = mTts;
+      missionDur = Math.max(await getAudioDuration(mTts), MISSION_WAIT);
+    }
+    clips.push(await imageToClip(missionImg, missionAudio, missionDur, workDir, 'clip_mission'));
 
-    // STEP 15: MI Hint — after 1s, hint text + sfx_audio_url
-    await addImgClip('.slide-mi-hint', 200, async fgAu => {
-      const sfx = sfxPath;
-      const s03 = await sil(0.3);
-      await joinAudio([s03, sfx].filter(Boolean), fgAu);
-      return Math.max(await audioDur(fgAu), 2.5);
+    // ============================================================
+    // STEP 14: CTA3 revealed (after MISSION_WAIT), prerecorded audio
+    // ============================================================
+    await page.evaluate(() => {
+      const el = document.querySelector('.cta3-text');
+      if (el) el.classList.add('show-cta3');
     });
+    await new Promise(r => setTimeout(r, 500));
+    const cta3Img = await screenshot('cta3');
+    const cta3Clip = await makeClip(
+      cta3Img, cta3File,
+      'Like, share, and challenge a friend! Subscribe and write your answer in the comments!',
+      4, 'cta3', 0.2
+    );
+    clips.push(cta3Clip);
 
-    // STEP 16: CTA3 — 2.5s gap after MI hint, cta3_text + cta3_audio_url + url, hold 1s
-    await addImgClip('.slide-cta3', 200, async fgAu => {
-      const s25  = await sil(2.5);
-      const cta3 = cta3AuPath || (() => {
-        const p = path.join(workDir, 'cta3_tts.mp3');
-        return mkTTS(
-          quiz.cta3_text || 'Like, share, and challenge a friend! Subscribe for the answer!',
-          voice, p, 4
-        );
-      })();
-      const r    = typeof cta3 === 'string' ? cta3 : await cta3;
-      const s10  = await sil(1.0); // hold 1s after audio
-      await joinAudio([s25, r, s10], fgAu);
-      return await audioDur(fgAu);
-    });
+    // ============================================================
+    // STEP 15: Hold all text on screen for 1 second after CTA3 audio ends
+    // ============================================================
+    const holdSil = path.join(workDir, 'hold_sil.mp3');
+    await generateSilence(1.0, holdSil);
+    clips.push(await imageToClip(cta3Img, holdSil, 1.0, workDir, 'clip_hold'));
   }
 
   await browser.close();
 
-  // ───────────────────────────────────────────────────────────────[...]
-  // FINAL CONCAT
-  // ───────────────────────────────────────────────────────────────[...]
-  const listPath = path.join(workDir, 'final.txt');
-  await fs.writeFile(listPath, clips.map(c=>`file '${c.path}'`).join('\n'));
-  const finalOut = path.join(workDir, 'final.mp4');
-  await execP(
-    `ffmpeg -y -f concat -safe 0 -i "${listPath}" -c:v libx264 -c:a aac -movflags +faststart "${finalOut}"`
+  // ============================================================
+  // FINAL ASSEMBLY
+  // ============================================================
+  const concatList = clips.map(c => `file '${c.path}'`).join('\n');
+  const listPath = path.join(workDir, 'concat.txt');
+  await fs.writeFile(listPath, concatList);
+
+  const concatenated = path.join(workDir, 'concatenated.mp4');
+  await execPromise(
+    `ffmpeg -y -f concat -safe 0 -i "${listPath}" -c:v libx264 -c:a aac -movflags +faststart "${concatenated}"`
   );
-  console.log(`[W10] ${clips.length} clips | total ${clips.reduce((s,c)=>s+c.dur,0).toFixed(1)}s`);
-  return finalOut;
+
+  const totalDur = await getVideoDuration(concatenated);
+  console.log(`Concatenated duration: ${totalDur.toFixed(2)}s`);
+
+  // Mix background music with ducking
+  let finalOutput = concatenated;
+  if (bgMusicFile) {
+    const bgLooped = path.join(workDir, 'bg_looped.mp3');
+    await execPromise(
+      `ffmpeg -y -stream_loop -1 -i "${bgMusicFile}" -t ${totalDur} -af "volume=0.10" -acodec libmp3lame "${bgLooped}"`
+    );
+    const fgAudio = path.join(workDir, 'fg_audio.mp3');
+    await execPromise(`ffmpeg -y -i "${concatenated}" -vn -acodec libmp3lame "${fgAudio}"`);
+    const mixedAudio = path.join(workDir, 'mixed_audio.mp3');
+    // amix: foreground at full vol + bg at 0.10 base; bg naturally ducks
+    // because foreground TTS dominates perceptually at these relative levels.
+    await execPromise(
+      `ffmpeg -y -i "${fgAudio}" -i "${bgLooped}" -filter_complex "[0:a]volume=1.0[fg];[1:a]volume=0.10[bg];[fg][bg]amix=inputs=2:duration=first:dropout_transition=0[a]" -map "[a]" -acodec libmp3lame "${mixedAudio}"`
+    );
+    const finalPath = path.join(workDir, 'final.mp4');
+    await execPromise(
+      `ffmpeg -y -i "${concatenated}" -i "${mixedAudio}" -c:v copy -map 0:v:0 -map 1:a:0 -c:a aac -shortest -movflags +faststart "${finalPath}"`
+    );
+    finalOutput = finalPath;
+  }
+
+  console.log(`Final video ready: ${finalOutput}`);
+  return finalOutput;
 }
 
-// ── Run ────────────────────────────────────────────────────────────[...]
-processNext()
-  .then(() => { console.log('[W10] Done.'); process.exit(0); })
-  .catch(err => { console.error('[W10] Fatal:', err); process.exit(1); });
+// ========================
+// Entry point
+// ========================
+processJobs().then(() => {
+  console.log('Worker finished this run');
+  process.exit(0);
+}).catch(err => {
+  console.error('Fatal error:', err);
+  process.exit(1);
+});
