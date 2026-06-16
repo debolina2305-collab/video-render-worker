@@ -3,525 +3,273 @@
 <head>
 <meta charset="utf-8">
 <style>
-/* ─────────────────── BASE ─────────────────── */
-*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Arial,sans-serif}
-html,body{width:1080px;height:1920px;overflow:hidden;background:#05030f}
+{{theme_css}}
 
-.screen{
-  width:1080px;height:1920px;display:none;flex-direction:column;
-  align-items:center;justify-content:center;position:relative;
-  color:#fff;text-align:center;padding:60px 56px;overflow:hidden
+/* ===== LOGO ===== */
+.logo-wrap {
+  width:200px; height:200px; border-radius:50%;
+  background:#05030f;
+  border:4px solid color-mix(in srgb, var(--accent-1) 70%, transparent);
+  box-shadow:0 0 60px color-mix(in srgb, var(--accent-1) 60%, transparent),
+             0 0 120px color-mix(in srgb, var(--accent-3) 40%, transparent);
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+  animation: logoPop 0.9s cubic-bezier(.34,1.8,.64,1) forwards;
+  opacity:0; transform:scale(0.3) rotate(-15deg);
+  margin-bottom:48px;
 }
-.screen.active{display:flex}
+@keyframes logoPop { to { opacity:1; transform:scale(1) rotate(0deg); } }
+.logo-wrap img { width:80%; height:80%; object-fit:contain; }
 
-/* ─────────────────── UNIQUE THEME BACKGROUND ─────────────────── */
-/* Injected per quiz: {{THEME_BG}} {{THEME_O1}} {{THEME_O2}} {{THEME_O3}} */
-.bg{
-  position:absolute;inset:0;z-index:0;
-  background:linear-gradient(160deg,{{THEME_BG}});
-  animation:bgPulse 18s ease-in-out infinite alternate
+/* ===== OPTION CARD EXCELLENCE ===== */
+.qp-options { width:100%; display:flex; flex-direction:column; gap:24px; opacity:0; animation: fadeUp 0.7s ease-out 0.2s forwards; }
+.qp-option {
+  display:flex; align-items:center; gap:24px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.09), rgba(255,255,255,0.04));
+  border:2.5px solid rgba(255,255,255,0.2); border-radius:28px;
+  padding:30px 34px; font-size:40px; font-weight:700;
+  text-align:left; transition: opacity 0.6s ease, transform 0.6s ease;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4),
+              inset 0 1px 0 rgba(255,255,255,0.12);
+  backdrop-filter: blur(8px);
 }
-@keyframes bgPulse{0%{filter:brightness(1)}100%{filter:brightness(1.12)}}
+.qp-option-badge {
+  flex-shrink:0; width:66px; height:66px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:34px; font-weight:900;
+  background: linear-gradient(135deg, var(--accent-1), var(--accent-3));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent-1) 50%, transparent);
+  color:#fff;
+}
+.qp-option.eliminate {
+  animation: eliminateOpt 0.6s ease forwards;
+  animation-delay: var(--fiftyfifty-time);
+}
+@keyframes eliminateOpt { to { opacity:0.07; transform:scale(0.95); } }
 
-.bg-orb{position:absolute;border-radius:50%;filter:blur(55px);z-index:1;opacity:.55}
-.orb1{width:420px;height:420px;background:{{THEME_O1}};top:-120px;left:-100px;animation:fA 10s ease-in-out infinite}
-.orb2{width:340px;height:340px;background:{{THEME_O2}};bottom:80px;right:-90px;animation:fB 13s ease-in-out infinite}
-.orb3{width:280px;height:280px;background:{{THEME_O3}};bottom:-70px;left:33%;animation:fA 16s ease-in-out infinite reverse}
-@keyframes fA{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(65px,85px) scale(1.22)}}
-@keyframes fB{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-55px,-65px) scale(1.18)}}
+/* answer-reveal option states */
+.qp-option.correct {
+  background: linear-gradient(135deg, rgba(0,255,140,0.25), rgba(0,200,100,0.12));
+  border-color:#00ff8c;
+  box-shadow: 0 0 40px rgba(0,255,140,0.55), inset 0 1px 0 rgba(255,255,255,0.15);
+  animation: pulseCorrect 1.2s ease-in-out infinite;
+}
+@keyframes pulseCorrect { 0%,100%{transform:scale(1);} 50%{transform:scale(1.025);} }
+.qp-option.wrong { opacity:0.15; }
 
-.bg-grid{
-  position:absolute;inset:0;z-index:1;opacity:.14;
-  background-image:linear-gradient(rgba(255,255,255,.5) 1px,transparent 1px),
-                   linear-gradient(90deg,rgba(255,255,255,.5) 1px,transparent 1px);
-  background-size:80px 80px;
-  animation:gridScroll 9s linear infinite
-}
-@keyframes gridScroll{from{background-position:0 0,0 0}to{background-position:0 80px,80px 0}}
-
-.content{position:relative;z-index:5;width:100%;display:flex;flex-direction:column;align-items:center;gap:0}
-
-/* ─────────────────── SHARED TEXT ─────────────────── */
-.glow{text-shadow:0 0 24px rgba(255,255,255,.55),0 0 48px {{THEME_O1}}88}
-.pill{
-  display:inline-block;font-size:30px;font-weight:900;letter-spacing:6px;
-  text-transform:uppercase;padding:12px 34px;border-radius:50px;
-  background:linear-gradient(135deg,{{THEME_O1}},{{THEME_O3}});
-  box-shadow:0 0 28px {{THEME_O1}}99;margin-bottom:36px
-}
-
-/* ─────────────────── 1. HOOK ─────────────────── */
-.slide-hook .logo-wrap{
-  width:260px;height:260px;border-radius:50%;
-  background:linear-gradient(135deg,{{THEME_O2}},{{THEME_O3}},{{THEME_O1}});
-  display:flex;align-items:center;justify-content:center;
-  box-shadow:0 0 90px {{THEME_O3}}cc,0 0 180px {{THEME_O2}}55;
-  animation:logoIn .9s cubic-bezier(.34,1.8,.64,1) forwards,logoPulse 3s ease-in-out 1s infinite;
-  opacity:0;transform:scale(.25) rotate(-20deg);overflow:hidden
-}
-.slide-hook .logo-wrap img{width:100%;height:100%;object-fit:cover;border-radius:50%}
-.slide-hook .logo-fallback{font-size:64px;font-weight:900;letter-spacing:2px}
-@keyframes logoIn{to{opacity:1;transform:scale(1) rotate(0)}}
-@keyframes logoPulse{0%,100%{box-shadow:0 0 90px {{THEME_O3}}cc}50%{box-shadow:0 0 140px {{THEME_O1}}cc}}
-
-.hook-text{
-  margin-top:60px;font-size:68px;font-weight:900;line-height:1.3;
-  opacity:0;transform:translateY(60px) scale(.8);
-  animation:bounceIn .9s cubic-bezier(.34,1.8,.64,1) .75s forwards
-}
-@keyframes bounceIn{to{opacity:1;transform:translateY(0) scale(1)}}
-
-.sparkle{position:absolute;font-size:56px;opacity:0;animation:sparkle 2.2s ease-in-out infinite}
-.sp1{top:14%;left:10%;animation-delay:.2s}.sp2{top:22%;right:9%;animation-delay:.9s}
-.sp3{bottom:22%;left:13%;animation-delay:1.5s}.sp4{bottom:32%;right:12%;animation-delay:.5s}
-@keyframes sparkle{0%,100%{opacity:0;transform:scale(.5) rotate(0)}50%{opacity:1;transform:scale(1.4) rotate(180deg)}}
-
-/* ─────────────────── 2. AMBIENT (audio-only slides) ─────────────────── */
-.slide-ambient .ambient-icon{font-size:140px;opacity:.18;animation:breathe 2s ease-in-out infinite}
-@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
-
-/* ─────────────────── 3. QUESTION ONLY ─────────────────── */
-.slide-question-only{justify-content:center}
-.q-card{
-  width:100%;background:rgba(255,255,255,.07);border:3px solid rgba(255,255,255,.16);
-  border-radius:36px;padding:52px;backdrop-filter:blur(8px);
-  box-shadow:0 0 60px {{THEME_O3}}44;
-  animation:slideUp .6s cubic-bezier(.34,1.4,.64,1) forwards
-}
-.q-text{font-size:54px;font-weight:800;line-height:1.45}
-@keyframes slideUp{from{opacity:0;transform:translateY(50px)}to{opacity:1;transform:translateY(0)}}
-
-/* ─────────────────── 5. OPTIONS ─────────────────── */
-.slide-options{justify-content:flex-start;padding-top:80px}
-.opts-q-card{
-  width:100%;background:rgba(255,255,255,.06);border:2px solid rgba(255,255,255,.12);
-  border-radius:28px;padding:36px;margin-bottom:36px
-}
-.opts-q-text{font-size:42px;font-weight:700;line-height:1.4}
-.opts-list{width:100%;display:flex;flex-direction:column;gap:22px}
-.opt{
-  display:flex;align-items:center;gap:24px;
-  background:rgba(255,255,255,.08);border:3px solid rgba(255,255,255,.18);
-  border-radius:24px;padding:30px 36px;font-size:42px;font-weight:700;text-align:left;
-  box-shadow:0 8px 28px rgba(0,0,0,.35);
-  animation:optIn .5s cubic-bezier(.34,1.4,.64,1) both
-}
-.opt:nth-child(1){animation-delay:.05s}.opt:nth-child(2){animation-delay:.15s}
-.opt:nth-child(3){animation-delay:.25s}.opt:nth-child(4){animation-delay:.35s}
-@keyframes optIn{from{opacity:0;transform:translateX(-40px)}to{opacity:1;transform:translateX(0)}}
-.opt-badge{
-  flex-shrink:0;width:70px;height:70px;border-radius:50%;
-  display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:900;
-  background:linear-gradient(135deg,{{THEME_O2}},{{THEME_O3}});
-  box-shadow:0 0 18px {{THEME_O2}}88
-}
-
-/* ─────────────────── 6. COUNTDOWN ─────────────────── */
-/* CSS vars injected: --think:{{THINK_SEC}}s  --hint-at:{{HINT_AT}}s  --fifty-at:{{FIFTY_AT}}s */
-.slide-countdown{
-  justify-content:flex-start;padding-top:70px;
-  --think:{{THINK_SEC}}s;--hint-at:{{HINT_AT}}s;--fifty-at:{{FIFTY_AT}}s
-}
-.cd-q-card{
-  width:100%;background:rgba(255,255,255,.07);border:3px solid rgba(255,255,255,.16);
-  border-radius:36px;padding:44px;margin-bottom:30px;backdrop-filter:blur(8px)
-}
-.cd-q-text{font-size:48px;font-weight:800;line-height:1.4}
-
-/* Donut timer */
-.timer-wrap{position:relative;width:210px;height:210px;margin:0 auto 28px}
-.timer-svg{width:210px;height:210px;transform:rotate(-90deg)}
-.timer-svg circle{fill:none;stroke-width:16;stroke-linecap:round}
-.t-bg{stroke:rgba(255,255,255,.12)}
-.t-fill{
-  stroke:url(#tg);stroke-dasharray:596;stroke-dashoffset:0;
-  animation:drain var(--think) linear forwards
-}
-@keyframes drain{to{stroke-dashoffset:596}}
-.timer-num{
-  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  font-size:60px;font-weight:900;font-variant-numeric:tabular-nums
-}
-/* JS-driven countdown text is set inline; CSS fallback */
-
-/* Countdown options */
-.cd-opts{width:100%;display:flex;flex-direction:column;gap:20px;margin-bottom:28px}
-.cd-opt{
-  display:flex;align-items:center;gap:22px;background:rgba(255,255,255,.08);
-  border:3px solid rgba(255,255,255,.18);border-radius:22px;padding:28px 32px;
-  font-size:40px;font-weight:700;text-align:left;box-shadow:0 8px 24px rgba(0,0,0,.3);
-  transition:opacity .6s ease,transform .6s ease
-}
-.cd-opt-badge{
-  flex-shrink:0;width:64px;height:64px;border-radius:50%;
-  display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900;
-  background:linear-gradient(135deg,{{THEME_O2}},{{THEME_O3}})
-}
-/* 50/50 elimination: triggered by CSS animation-delay */
-.cd-opt.eliminate{
-  animation:elimOpt .7s ease forwards;
-  animation-delay:var(--fifty-at)
-}
-@keyframes elimOpt{to{opacity:.06;transform:scale(.95)}}
-
-/* Hint box */
-.cd-hint{
-  width:100%;font-size:36px;font-weight:600;color:#ffd166;
-  background:rgba(255,209,102,.1);border:2px dashed #ffd166;
-  border-radius:20px;padding:26px;opacity:0;
-  animation:hintPop .6s cubic-bezier(.34,1.8,.64,1) forwards;
-  animation-delay:var(--hint-at);
-  box-shadow:0 0 28px rgba(255,209,102,.25)
-}
-@keyframes hintPop{to{opacity:1;transform:scale(1.02)}}
-
-/* ─────────────────── 9. TIME UP ─────────────────── */
-.slide-timeup .timeup-icon{font-size:140px;animation:shake .4s ease-in-out 3}
-@keyframes shake{0%,100%{transform:rotate(0)}25%{transform:rotate(-6deg)}75%{transform:rotate(6deg)}}
-.timeup-text{font-size:56px;font-weight:900;margin-top:40px;line-height:1.3}
-
-/* ─────────────────── 10. ANSWER REVEAL ─────────────────── */
-.slide-answer{justify-content:center}
-.ans-badge{
-  font-size:58px;font-weight:900;margin-bottom:44px;
-  background:linear-gradient(135deg,#00ff8c,#00e0ff);
-  -webkit-background-clip:text;background-clip:text;color:transparent;
-  animation:bounceIn .7s cubic-bezier(.34,1.8,.64,1) forwards
-}
-.ans-opts{width:100%;display:flex;flex-direction:column;gap:22px}
-.ans-opt{
-  display:flex;align-items:center;gap:24px;background:rgba(255,255,255,.07);
-  border:3px solid rgba(255,255,255,.18);border-radius:24px;padding:30px 36px;
-  font-size:42px;font-weight:700;text-align:left;transition:all .4s
-}
-.ans-opt.correct{
-  background:rgba(0,255,140,.18);border-color:#00ff8c;
-  box-shadow:0 0 50px rgba(0,255,140,.45);
-  animation:pulseCor 1.3s ease-in-out infinite
-}
-@keyframes pulseCor{0%,100%{transform:scale(1)}50%{transform:scale(1.025)}}
-.ans-opt.wrong{opacity:.16}
-/* Confetti */
-.cf{position:absolute;top:-40px;border-radius:3px;opacity:.9;
-    animation-name:cfFall;animation-timing-function:linear;animation-iteration-count:infinite}
-@keyframes cfFall{0%{transform:translateY(-40px) rotate(0);opacity:1}100%{transform:translateY(2000px) rotate(720deg);opacity:.8}}
-
-/* ─────────────────── 11. EXPLANATION ─────────────────── */
-.expl-card{
-  width:100%;background:rgba(255,255,255,.07);border:3px solid rgba(255,255,255,.16);
-  border-radius:36px;padding:60px;backdrop-filter:blur(8px);
-  box-shadow:0 0 50px {{THEME_O2}}44;
-  opacity:0;animation:slideUp .8s ease-out .15s forwards
-}
-.expl-text{font-size:48px;line-height:1.7;font-weight:600}
-
-/* ─────────────────── 12. CTA1 ─────────────────── */
-.slide-cta1{
-  background:linear-gradient(160deg,#1b0a3d,#3a0b6e 50%,#05030f) !important
-}
-.cta-text{font-size:54px;font-weight:900;line-height:1.6;margin-bottom:44px;animation:bounceIn .8s cubic-bezier(.34,1.8,.64,1) forwards}
-.cta-url-pill{
-  font-size:36px;font-weight:800;background:linear-gradient(135deg,{{THEME_O1}},{{THEME_O3}});
-  border-radius:50px;padding:26px 48px;box-shadow:0 0 40px {{THEME_O1}}88;
-  animation:ctaPulse 1.5s ease-in-out infinite
-}
-@keyframes ctaPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
-
-/* ─────────────────── 13. CTA2 ─────────────────── */
-.slide-cta2{background:linear-gradient(160deg,#021a10,#053d28 50%,#020d08) !important}
-.cta2-text{font-size:54px;font-weight:900;line-height:1.6;margin-bottom:44px;animation:bounceIn .8s cubic-bezier(.34,1.8,.64,1) forwards;color:#3cffa0}
-
-/* ─────────────────── 14. MI INTRO ─────────────────── */
-.slide-mi-intro{background:linear-gradient(160deg,#1a0505,#3a0b0b 50%,#05030f) !important}
-.mi-intro-text{
-  font-size:66px;font-weight:900;line-height:1.3;color:#ff3b3b;
-  text-shadow:0 0 30px rgba(255,59,59,.8);
-  animation:shake .5s ease-in-out 3,bounceIn .7s cubic-bezier(.34,1.8,.64,1) forwards
-}
-
-/* ─────────────────── 15. MI QUESTION ─────────────────── */
-.slide-mi-question{background:linear-gradient(160deg,#1a0505,#3a0b0b 50%,#05030f) !important}
-.mi-label{font-size:36px;font-weight:900;letter-spacing:8px;text-transform:uppercase;color:#ff3b3b;margin-bottom:36px;text-shadow:0 0 28px rgba(255,59,59,.8)}
-.mi-q-text{font-size:54px;font-weight:800;line-height:1.4;animation:slideUp .5s ease-out forwards}
-
-/* ─────────────────── 16. MI HINT ─────────────────── */
-.slide-mi-hint{background:linear-gradient(160deg,#1a0505,#3a0b0b 50%,#05030f) !important}
-.mi-hint-text{
-  font-size:44px;font-weight:600;color:#ffd166;
-  background:rgba(255,209,102,.1);border:2px dashed #ffd166;border-radius:22px;padding:30px;
-  margin-top:30px;animation:hintPop .6s cubic-bezier(.34,1.8,.64,1) forwards
-}
-
-/* ─────────────────── 17. CTA3 / FINAL ─────────────────── */
-.slide-cta3{background:linear-gradient(160deg,#1b0a3d,#3a0b6e 50%,#05030f) !important}
-.cta3-mi-q{font-size:36px;font-weight:700;color:rgba(255,59,59,.8);margin-bottom:28px;line-height:1.4}
-.cta3-text{font-size:52px;font-weight:900;line-height:1.5;margin-bottom:36px;animation:bounceIn .8s cubic-bezier(.34,1.8,.64,1) forwards}
-.cta3-icons{font-size:80px;letter-spacing:28px;margin-bottom:28px;animation:ctaPulse 1.5s ease-in-out infinite}
-.cta3-url{font-size:32px;font-weight:700;color:{{THEME_O2}};opacity:.8}
 </style>
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 1. HOOK — hook_phrase + brand logo                  -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-hook active">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div><div class="bg-orb orb3"></div>
-  <div class="sparkle sp1">✨</div><div class="sparkle sp2">⭐</div>
-  <div class="sparkle sp3">💫</div><div class="sparkle sp4">✨</div>
-  <div class="content">
-    <div class="logo-wrap">
-      
-      <img id="logoImg" src="{{LOGO_SRC}}" alt="JAAS Logo" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:none">
-      <span class="logo-fallback" id="logoFb">JAAS</span>
-    </div>
-    <div class="hook-text glow">{{hook_phrase}}</div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 2. AMBIENT — "Here is your challenge" (audio only)  -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-ambient">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
-  <div class="content">
-    <div class="ambient-icon">🎯</div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 3. QUESTION TEXT — question_1 + TTS                 -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-question-only">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
-  <div class="content">
-    <div class="pill">🎯 Your Challenge</div>
-    <div class="q-card">
-      <div class="q-text">{{question}}</div>
+  <!-- STEP 1: HOOK + animated logo (2-3s, hook_phrase + hook_audio_url) -->
+  <div class="screen hook-slide active">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div><div class="bg-orb orb3"></div>
+    {{theme_deco_html}}
+    <div class="sparkle s1">✨</div><div class="sparkle s2">⭐</div>
+    <div class="sparkle s3">💫</div><div class="sparkle s4">✨</div>
+    <div class="content">
+      <div class="logo-wrap"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+      <div class="hook-text glow-text">{{hook_phrase}}</div>
     </div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 5. OPTIONS — options_1 text + TTS + sfx             -->
-<!-- (step 4 "and your options are" reuses slide-question-only) -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-options">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
-  <div class="content">
-    <div class="opts-q-card">
-      <div class="opts-q-text">{{question}}</div>
-    </div>
-    <div class="opts-list">
-      <div class="opt"><span class="opt-badge">A</span>{{opt_a}}</div>
-      <div class="opt"><span class="opt-badge">B</span>{{opt_b}}</div>
-      <div class="opt"><span class="opt-badge">C</span>{{opt_c}}</div>
-      <div class="opt"><span class="opt-badge">D</span>{{opt_d}}</div>
+  <!-- STEP 2: question_intro_audio_url - audio only, waiting frame -->
+  <div class="screen waiting-slide">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="content">
+      <div class="logo-wrap" style="opacity:1;transform:scale(1) rotate(0deg);animation:none;">
+        <img src="{{LOGO_DATA_URI}}" alt="JAASX">
+      </div>
     </div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 6/7/8. COUNTDOWN — screen-recorded                  -->
-<!-- hint at 1/4, 50/50 elimination at 1/2               -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-countdown" style="--think:{{THINK_SEC}}s;--hint-at:{{HINT_AT}}s;--fifty-at:{{FIFTY_AT}}s">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
-  <div class="content">
-    <div class="cd-q-card">
-      <div class="cd-q-text">{{question}}</div>
-    </div>
-    <!-- Donut countdown timer -->
-    <div class="timer-wrap">
-      <svg class="timer-svg" viewBox="0 0 210 210">
-        <defs>
-          <linearGradient id="tg" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#00ffa3"/>
-            <stop offset="50%" stop-color="#ffcc00"/>
-            <stop offset="100%" stop-color="#ff3b3b"/>
-          </linearGradient>
-        </defs>
-        <circle class="t-bg" cx="105" cy="105" r="95"/>
-        <circle class="t-fill" cx="105" cy="105" r="95"/>
-      </svg>
-      <div class="timer-num" id="cdNum">{{THINK_SEC}}</div>
-    </div>
-    <!-- Options with 50/50 elimination -->
-    <div class="cd-opts">
-      <div class="cd-opt {{dim_a}}"><span class="cd-opt-badge">A</span>{{opt_a}}</div>
-      <div class="cd-opt {{dim_b}}"><span class="cd-opt-badge">B</span>{{opt_b}}</div>
-      <div class="cd-opt {{dim_c}}"><span class="cd-opt-badge">C</span>{{opt_c}}</div>
-      <div class="cd-opt {{dim_d}}"><span class="cd-opt-badge">D</span>{{opt_d}}</div>
-    </div>
-    <!-- Hint — fades in at 1/4 mark via CSS -->
-    <div class="cd-hint">💡 {{hint}}</div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 9. TIME UP                                          -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-timeup">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
-  <div class="content">
-    <div class="timeup-icon">⏰</div>
-    <div class="timeup-text glow">{{timeup_text_display}}</div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 10. ANSWER REVEAL — correct highlighted, wrong dimmed -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-answer">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
-  <!-- confetti -->
-  <div class="cf" style="left:7%;width:18px;height:30px;background:{{THEME_O1}};animation-duration:2.4s;animation-delay:0s"></div>
-  <div class="cf" style="left:21%;width:14px;height:24px;background:{{THEME_O2}};animation-duration:2.0s;animation-delay:.2s"></div>
-  <div class="cf" style="left:36%;width:20px;height:34px;background:#ffd166;animation-duration:2.6s;animation-delay:.05s"></div>
-  <div class="cf" style="left:51%;width:16px;height:28px;background:{{THEME_O3}};animation-duration:2.2s;animation-delay:.3s"></div>
-  <div class="cf" style="left:66%;width:18px;height:30px;background:#00ff8c;animation-duration:2.5s;animation-delay:.1s"></div>
-  <div class="cf" style="left:80%;width:14px;height:24px;background:{{THEME_O1}};animation-duration:2.1s;animation-delay:.25s"></div>
-  <div class="cf" style="left:91%;width:20px;height:34px;background:{{THEME_O2}};animation-duration:2.7s;animation-delay:.15s"></div>
-  <div class="content">
-    <div class="ans-badge">✅ {{correct_answer}}</div>
-    <div class="ans-opts">
-      <div class="ans-opt {{rev_a}}"><span class="opt-badge">A</span>{{opt_a}}</div>
-      <div class="ans-opt {{rev_b}}"><span class="opt-badge">B</span>{{opt_b}}</div>
-      <div class="ans-opt {{rev_c}}"><span class="opt-badge">C</span>{{opt_c}}</div>
-      <div class="ans-opt {{rev_d}}"><span class="opt-badge">D</span>{{opt_d}}</div>
+  <!-- STEP 3: Question appears with animation (question_1 + edge TTS) -->
+  <div class="screen question-appear-slide">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="content">
+      <div class="qp-card-question">
+        <div class="qp-question">{{question}}</div>
+      </div>
     </div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 11. EXPLANATION                                     -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-explanation">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb3"></div>
-  <div class="content">
-    <div class="pill">🧠 Why?</div>
-    <div class="expl-card">
-      <div class="expl-text">{{explanation}}</div>
+  <!-- STEP 4-5: Options appear (options_intro audio, then option TTS).
+       question-static = question + options, timer full (not yet draining) -->
+  <div class="screen question-static">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="content">
+      <div class="qp-card-question" style="opacity:1;animation:none;">
+        <div class="qp-question">{{question}}</div>
+      </div>
+      <div class="qp-timer-wrap">
+        <svg class="qp-timer-ring" viewBox="0 0 220 220">
+          <circle class="qp-timer-bg" cx="110" cy="110" r="100"/>
+          <circle class="qp-timer-bg" cx="110" cy="110" r="100"
+            style="stroke:color-mix(in srgb,var(--accent-1) 60%,transparent);stroke-width:18;
+                   stroke-dasharray:628;stroke-dashoffset:0;fill:none;stroke-linecap:round;"/>
+        </svg>
+        <div class="qp-timer-number">⏱️</div>
+      </div>
+      <div class="qp-options" style="opacity:1;animation:none;">
+        <div class="qp-option"><span class="qp-option-badge">A</span>{{options[0]}}</div>
+        <div class="qp-option"><span class="qp-option-badge">B</span>{{options[1]}}</div>
+        <div class="qp-option"><span class="qp-option-badge">C</span>{{options[2]}}</div>
+        <div class="qp-option"><span class="qp-option-badge">D</span>{{options[3]}}</div>
+      </div>
     </div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 12a. CTA1 — affiliate (shown when affiliate_url set) -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-cta1">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div><div class="bg-orb orb3"></div>
-  <div class="content">
-    <div class="cta-text glow">{{affiliate_text}}</div>
-    <div class="cta-url-pill">🔗 Check Description Link</div>
-    <div style="margin-top:30px;font-size:30px;color:rgba(255,255,255,.5);line-height:1.5">{{cta1_desc}}</div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 12b. CTA2 — platform fallback                       -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-cta2">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
-  <div class="content">
-    <div class="cta2-text glow">{{cta2_text}}</div>
-    <div class="cta-url-pill" style="background:linear-gradient(135deg,#00ff8c,#00bfff)">🌐 {{cta2_url}}</div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 13. MI INTRO — mission_intro_text (huge text)       -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-mi-intro">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
-  <div class="content">
-    <div style="font-size:100px;margin-bottom:30px;animation:shake .5s ease-in-out 3">🔥</div>
-    <div class="mi-intro-text">{{mission_intro_text}}</div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 14. MI QUESTION — hold 1s                           -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-mi-question">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
-  <div class="content">
-    <div class="mi-label">🔥 Mission Impossible</div>
-    <div class="q-card" style="border-color:rgba(255,59,59,.4);box-shadow:0 0 60px rgba(255,59,59,.35)">
-      <div class="mi-q-text" style="color:#fff">{{mission_question}}</div>
+  <!-- STEP 6-8: COUNTDOWN PHASE — screen-recorded CSS animation.
+       Timer drains over {{qtime}}s. Hint at 1/4. 50/50 at 1/2. -->
+  <div class="screen question-phase"
+       style="--qtime:{{qtime}}s;--hint-time:{{hint_time}}s;--fiftyfifty-time:{{fiftyfifty_time}}s;">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="content">
+      <div class="qp-card-question" style="opacity:1;animation:none;">
+        <div class="qp-question">{{question}}</div>
+      </div>
+      <div class="qp-timer-wrap">
+        <svg class="qp-timer-ring" viewBox="0 0 220 220">
+          <defs>
+            <linearGradient id="timerGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#00ffa3"/>
+              <stop offset="50%" stop-color="#ffcc00"/>
+              <stop offset="100%" stop-color="#ff3b3b"/>
+            </linearGradient>
+          </defs>
+          <circle class="qp-timer-bg" cx="110" cy="110" r="100"/>
+          <circle class="qp-timer-fill" cx="110" cy="110" r="100"/>
+        </svg>
+        <div class="qp-timer-number">⏱️</div>
+      </div>
+      <div class="qp-options" style="opacity:1;animation:none;">
+        <div class="qp-option {{opt0_class}}"><span class="qp-option-badge">A</span>{{options[0]}}</div>
+        <div class="qp-option {{opt1_class}}"><span class="qp-option-badge">B</span>{{options[1]}}</div>
+        <div class="qp-option {{opt2_class}}"><span class="qp-option-badge">C</span>{{options[2]}}</div>
+        <div class="qp-option {{opt3_class}}"><span class="qp-option-badge">D</span>{{options[3]}}</div>
+      </div>
+      <div class="qp-hint">🧩💡 {{hint}}</div>
     </div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 15. MI HINT — after 1s, hint + sfx                  -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-mi-hint">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
-  <div class="content">
-    <div class="mi-label">🔥 Mission Impossible</div>
-    <div class="q-card" style="border-color:rgba(255,59,59,.4);margin-bottom:30px">
-      <div class="mi-q-text" style="color:#fff;font-size:44px">{{mission_question}}</div>
+  <!-- STEP 9-10: PRE-REVEAL — timeup audio + 0.5s silence, options visible unhighlighted -->
+  <div class="screen pre-reveal-slide">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="content">
+      <div class="qp-card-question" style="opacity:1;animation:none;">
+        <div class="qp-question">{{question}}</div>
+      </div>
+      <div class="qp-options" style="opacity:1;animation:none;">
+        <div class="qp-option"><span class="qp-option-badge">A</span>{{options[0]}}</div>
+        <div class="qp-option"><span class="qp-option-badge">B</span>{{options[1]}}</div>
+        <div class="qp-option"><span class="qp-option-badge">C</span>{{options[2]}}</div>
+        <div class="qp-option"><span class="qp-option-badge">D</span>{{options[3]}}</div>
+      </div>
     </div>
-    <div class="mi-hint-text">💡 {{mission_hint}}</div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<!-- 16. CTA3 / FINAL — MI visible + CTA3 text           -->
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="screen slide-cta3">
-  <div class="bg"></div><div class="bg-grid"></div>
-  <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div><div class="bg-orb orb3"></div>
-  <div class="content">
-    <div class="cta3-mi-q">🔥 {{mission_question}}</div>
-    <div class="cta3-text glow">{{cta3_text}}</div>
-    <div class="cta3-icons">👍 🔔 🔁</div>
-    <div class="cta3-url">🌐 {{cta3_url}}</div>
+  <!-- STEP 10: ANSWER REVEAL — correct highlighted, wrong dimmed, confetti -->
+  <div class="screen answer-slide">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="confetti-piece" style="left:7%;  width:18px;height:32px;background:var(--accent-2);animation-duration:2.4s;animation-delay:0s;"></div>
+    <div class="confetti-piece" style="left:18%; width:14px;height:24px;background:var(--accent-1);animation-duration:2.0s;animation-delay:0.2s;"></div>
+    <div class="confetti-piece" style="left:33%; width:20px;height:34px;background:#ffd166;animation-duration:2.6s;animation-delay:0.05s;"></div>
+    <div class="confetti-piece" style="left:50%; width:16px;height:28px;background:var(--accent-3);animation-duration:2.2s;animation-delay:0.3s;"></div>
+    <div class="confetti-piece" style="left:66%; width:18px;height:32px;background:#00ff8c;animation-duration:2.5s;animation-delay:0.1s;"></div>
+    <div class="confetti-piece" style="left:80%; width:14px;height:24px;background:var(--accent-2);animation-duration:2.1s;animation-delay:0.25s;"></div>
+    <div class="confetti-piece" style="left:91%; width:20px;height:34px;background:var(--accent-1);animation-duration:2.7s;animation-delay:0.15s;"></div>
+    <div class="confetti-piece" style="left:13%; width:16px;height:28px;background:#ffcc00;animation-duration:2.3s;animation-delay:0.4s;"></div>
+    <div class="confetti-piece" style="left:58%; width:18px;height:30px;background:#ff6b6b;animation-duration:2.45s;animation-delay:0.35s;"></div>
+    <div class="content">
+      <div class="answer-badge">✅ {{correct_answer}}</div>
+      <div class="qp-options" style="opacity:1;animation:none;">
+        <div class="qp-option {{rev0_class}}"><span class="qp-option-badge">A</span>{{options[0]}}</div>
+        <div class="qp-option {{rev1_class}}"><span class="qp-option-badge">B</span>{{options[1]}}</div>
+        <div class="qp-option {{rev2_class}}"><span class="qp-option-badge">C</span>{{options[2]}}</div>
+        <div class="qp-option {{rev3_class}}"><span class="qp-option-badge">D</span>{{options[3]}}</div>
+      </div>
+    </div>
   </div>
-</div>
 
-<script>
-// Live countdown number in the donut timer
-(function(){
-  const numEl = document.getElementById('cdNum');
-  if(!numEl) return;
-  const total = parseInt('{{THINK_SEC}}', 10) || 18;
-  let t = total;
-  const iv = setInterval(()=>{
-    t--;
-    if(t <= 0){ numEl.textContent = '0'; clearInterval(iv); return; }
-    numEl.textContent = t;
-  }, 1000);
-})();
+  <!-- STEP 11: EXPLANATION (text + TTS, ≤20 words) -->
+  <div class="screen explanation-slide">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb3"></div>
+    {{theme_deco_html}}
+    <div class="content">
+      <div class="badge-label">🧠 Why?</div>
+      <div class="explanation-card">
+        <div class="explanation-text">{{explanation}}</div>
+      </div>
+    </div>
+  </div>
 
-// Logo: show img if base64 src loaded, else show text fallback
-(function(){
-  const img = document.getElementById('logoImg');
-  const fb  = document.getElementById('logoFb');
-  if(!img) return;
-  const src = img.getAttribute('src') || '';
-  if(src.startsWith('data:image')) {
-    img.style.display = 'block';
-    if(fb) fb.style.display = 'none';
-  } else {
-    img.style.display = 'none';
-    if(fb) fb.style.display = 'block';
-  }
-})();
-</script>
+  <!-- CTA1: affiliate (shown when affiliate_url present) -->
+  <div class="screen cta1-slide">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="content">
+      <div class="badge-label">💳 Exclusive Deal</div>
+      <div class="cta-text glow-text">{{affiliate_text}}</div>
+      <div class="cta-url">🔗 Link in description</div>
+    </div>
+  </div>
+
+  <!-- CTA2: platform fallback (shown when no affiliate_url) -->
+  <div class="screen cta2-slide">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="content">
+      <div class="badge-label">🏆 Real Challenge</div>
+      <div class="cta-text glow-text">{{cta2_text}}</div>
+      <div class="cta-url">🌐 jaasblog.online/quiz/{{niche}}</div>
+    </div>
+  </div>
+
+  <!-- STEP 14: Mission Impossible INTRO (mission_intro_text + audio sting) -->
+  <div class="screen mission-intro-slide">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="content">
+      <div class="mission-label">🔥 {{mission_intro_text}}</div>
+    </div>
+  </div>
+
+  <!-- STEP 15-18: Mission question + hint + CTA3 (combined final screen).
+       Worker screenshots three states:
+       State A: question only (no hint, no cta3)
+       State B: question + hint (cta3 hidden)
+       State C: question + hint + cta3 (final hold frame) -->
+  <div class="screen mission-final-slide">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="content">
+      <div class="mission-label">🔥 Mission Impossible</div>
+      <div class="mission-question" id="mi-question">{{mission_question}}</div>
+      <div class="mission-hint" id="mi-hint">💡 {{mission_hint}}</div>
+      <div class="cta3-text cta-text glow-text" id="mi-cta3" style="margin-top:44px;font-size:40px;">
+        {{cta3_text}}<br>
+        <span style="font-size:34px;color:var(--accent-1);">🌐 jaasblog.online/quiz/{{niche}}</span>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>
