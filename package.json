@@ -6,7 +6,8 @@
   },
   "dependencies": {
     "puppeteer": "^19.0.0",
-    "puppeteer-screen-recorder": "^3.0.5",
+       "puppeteer-screen-recorder": "^3.0.5",
+     "@aws-sdk/client-s3": "^3.400.0"
     "uuid": "^9.0.0"
   }
 }
