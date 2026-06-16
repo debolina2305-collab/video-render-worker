@@ -221,14 +221,6 @@ html,body { width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 }
 .mission-hint.shown { opacity:1; transform:scale(1); }
 
-.cta3-text {
-  opacity:0; transform:translateY(30px) scale(0.9);
-  transition: opacity 0.5s ease, transform 0.5s ease;
-}
-.cta3-text.show-cta3 {
-  opacity:1; transform:translateY(0) scale(1);
-}
-
 /* ===================== SHARED BACKGROUND LAYERS ===================== */
 .bg-anim { position:absolute; inset:0; z-index:0; }
 .bg-grid {
@@ -247,3 +239,9 @@ html,body { width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 .orb3 { width:260px; height:260px; background:var(--accent-3); bottom:-80px; left:30%; animation: floatA 13s ease-in-out infinite reverse; }
 @keyframes floatA { 0%,100%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(60px,80px) scale(1.2); } }
 @keyframes floatB { 0%,100%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(-50px,-60px) scale(1.15); } }
+
+/* ===== MISSION FINAL SLIDE state controls ===== */
+.mission-hint { opacity:0; transform:scale(0.9); transition: opacity 0.5s ease, transform 0.5s ease; }
+.mission-hint.shown { opacity:1; transform:scale(1); }
+.cta3-text { opacity:0; transform:translateY(30px) scale(0.9); transition: opacity 0.5s ease, transform 0.5s ease; }
+.cta3-text.shown { opacity:1; transform:translateY(0) scale(1); }
