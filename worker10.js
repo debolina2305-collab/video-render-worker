@@ -305,8 +305,11 @@ async function getLogoDataUri() {
 async function processJobs() {
   console.log('[WORKER] Checking for pending quizzes...');
 
+  // NOTE: is_human_approved is intentionally NOT checked here.
+  // Approval gates YouTube PUBLISHING (handled later), not rendering —
+  // a human can only approve a video after it has been rendered.
   const rows = await fetchSupabase(
-    'quiz?video_status=eq.pending&is_active=eq.true&is_human_approved=eq.true' +
+    'quiz?video_status=eq.pending&is_active=eq.true' +
     '&quiz_enriched=eq.true&select=*&order=created_at.asc&limit=1'
   );
 
