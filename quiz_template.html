@@ -255,7 +255,9 @@
        Worker screenshots three states:
        State A: question only (no hint, no cta3)
        State B: question + hint (cta3 hidden)
-       State C: question + hint + cta3 (final hold frame) -->
+       State C: question + hint + cta3 (final hold frame)
+       FIX #3: #mi-hint and #mi-cta3 carry inline hidden state so they are
+       NEVER visible in State A regardless of CSS specificity. -->
   <div class="screen mission-final-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -263,8 +265,8 @@
     <div class="content">
       <div class="mission-label">🔥 Mission Impossible</div>
       <div class="mission-question" id="mi-question">{{mission_question}}</div>
-      <div class="mission-hint" id="mi-hint">💡 {{mission_hint}}</div>
-      <div class="cta3-text cta-text glow-text" id="mi-cta3" style="margin-top:44px;font-size:40px;">
+      <div class="mission-hint" id="mi-hint" style="opacity:0;transform:scale(0.9);">💡 {{mission_hint}}</div>
+      <div class="cta3-text cta-text glow-text" id="mi-cta3" style="margin-top:44px;font-size:40px;opacity:0;transform:translateY(30px) scale(0.9);">
         {{cta3_text}}<br>
         <span style="font-size:34px;color:var(--accent-1);">🌐 jaasblog.online/quiz/{{niche}}</span>
       </div>
