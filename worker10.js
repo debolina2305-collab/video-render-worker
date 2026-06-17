@@ -401,26 +401,48 @@ async function buildVideo(quiz, workDir) {
   const logoDataUri = await getLogoDataUri();
 
   // ── DOWNLOAD ALL AUDIO IN PARALLEL ──
-  console.log('[AUDIO] Downloading audio assets...');
-  const [
-    hookFile, questionIntroFile, optionsIntroFile,
-    timeupFile, cta1AudioFile, cta2AudioFile,
-    missionIntroFile, cta3AudioFile,          // FIX #2: cta3AudioFile (was cta3File)
-    sfxFile, countdownFile, bgFile, correctSfxFile
-  ] = await Promise.all([
-    downloadAudio(quiz.hook_audio_url,               `hook_${quiz.id}`),
-    downloadAudio(quiz.question_intro_audio_url,     `qintro_${quiz.id}`),
-    downloadAudio(quiz.options_intro_audio_url,      `ointro_${quiz.id}`),
-    downloadAudio(quiz.timeup_audio_url,             `timeup_${quiz.id}`),
-    downloadAudio(quiz.cta1_audio_url,               `cta1_${quiz.id}`),
-    downloadAudio(quiz.cta2_audio_url,               `cta2_${quiz.id}`),
-    downloadAudio(quiz.mission_intro_audio_url,      `missintro_${quiz.id}`),
-    downloadAudio(quiz.cta3_audio_url,               `cta3_${quiz.id}`),
-    downloadAudio(quiz.sfx_audio_url,                `sfx_${quiz.id}`),
-    downloadAudio(quiz.countdown_music,              `countdown_${quiz.id}`),
-    downloadAudio(quiz.background_music || DEFAULT_BG_MUSIC, `bgmusic_${quiz.id}`),
-    downloadAudio(quiz.correct_answer_sfx_audio_url, `correctsfx_${quiz.id}`)
-  ]);
+console.log('[AUDIO] Downloading audio assets...');
+
+// Parse sfx_audio_url if it's JSON (contains question_appear, countdown_loop, etc.)
+let sfxFile = null;           // generic SFX (used for hints/50-50, etc.)
+let countdownFallback = null; // fallback countdown music
+if (quiz.sfx_audio_url) {
+  try {
+    const sfxObj = JSON.parse(quiz.sfx_audio_url);
+    if (sfxObj && typeof sfxObj === 'object') {
+      sfxFile = sfxObj.question_appear || null;      // use question_appear as generic SFX
+      if (!quiz.countdown_music) {
+        countdownFallback = sfxObj.countdown_loop || null;
+      }
+    } else {
+      sfxFile = quiz.sfx_audio_url;
+    }
+  } catch (e) {
+    sfxFile = quiz.sfx_audio_url;
+  }
+} else {
+  sfxFile = null;
+}
+
+const [
+  hookFile, questionIntroFile, optionsIntroFile,
+  timeupFile, cta1AudioFile, cta2AudioFile,
+  missionIntroFile, cta3AudioFile,
+  sfxGenericFile, countdownFile, bgFile, correctSfxFile
+] = await Promise.all([
+  downloadAudio(quiz.hook_audio_url,               `hook_${quiz.id}`),
+  downloadAudio(quiz.question_intro_audio_url,     `qintro_${quiz.id}`),
+  downloadAudio(quiz.options_intro_audio_url,      `ointro_${quiz.id}`),
+  downloadAudio(quiz.timeup_audio_url,             `timeup_${quiz.id}`),
+  downloadAudio(quiz.cta1_audio_url,               `cta1_${quiz.id}`),
+  downloadAudio(quiz.cta2_audio_url,               `cta2_${quiz.id}`),
+  downloadAudio(quiz.mission_intro_audio_url,      `missintro_${quiz.id}`),
+  downloadAudio(quiz.cta3_audio_url,               `cta3_${quiz.id}`),
+  downloadAudio(sfxFile,                           `sfx_${quiz.id}`),          // use parsed sfxFile
+  downloadAudio(quiz.countdown_music || countdownFallback, `countdown_${quiz.id}`), // use fallback if needed
+  downloadAudio(quiz.background_music || DEFAULT_BG_MUSIC, `bgmusic_${quiz.id}`),
+  downloadAudio(quiz.correct_answer_sfx_audio_url, `correctsfx_${quiz.id}`)
+]);
 
   // ── RESOLVE THEME ──
   const { themeCss, decoHtml } = await resolveTheme(quiz);
@@ -479,7 +501,7 @@ async function buildVideo(quiz, workDir) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920 });
   // FIX #4: networkidle0 so CSS/fonts/data-URI fully load
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0' });
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await new Promise(r => setTimeout(r, 500));
 
   const showOnly = async sel => {
@@ -583,7 +605,7 @@ async function buildVideo(quiz, workDir) {
   pushClip(await imgClip(optionsImg, step45Combined, Math.max(await audioDur(step45Combined), 3), workDir, 'clip_step45'));
 
   // ════════ STEP 6-8: COUNTDOWN (screen recorded) ════════
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0' });
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await new Promise(r => setTimeout(r, 300));
   await showOnly('.question-phase');
   await page.evaluate(() => { const el = document.querySelector('.question-phase'); if (el) el.offsetHeight; });
@@ -630,7 +652,7 @@ async function buildVideo(quiz, workDir) {
   pushClip({ path: qClipPath, dur: await videoDur(qClipPath) });
 
   // ════════ STEP 9: timeup ════════
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0' });
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await new Promise(r => setTimeout(r, 200));
   await showOnly('.pre-reveal-slide');
   const preRevealImg = await shot('pre_reveal');
