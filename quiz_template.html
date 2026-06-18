@@ -21,6 +21,14 @@
 @keyframes logoPop { to { opacity:1; transform:scale(1) rotate(0deg); } }
 .logo-wrap img { width:80%; height:80%; object-fit:contain; }
 
+/* ===== QUIZ INTRO SPEECH (step 2 waiting-slide) ===== */
+.intro-speech {
+  font-size:46px; font-weight:700; line-height:1.5; text-align:center;
+  color:#fff; padding:0 40px; margin-top:30px;
+  opacity:0; animation: fadeUp 0.7s ease-out 0.3s forwards;
+}
+@keyframes fadeUp { from{opacity:0;transform:translateY(30px);} to{opacity:1;transform:translateY(0);} }
+
 /* ===== OPTION CARD EXCELLENCE ===== */
 .qp-options { width:100%; display:flex; flex-direction:column; gap:24px; opacity:0; animation: fadeUp 0.7s ease-out 0.2s forwards; }
 .qp-option {
@@ -29,8 +37,7 @@
   border:2.5px solid rgba(255,255,255,0.2); border-radius:28px;
   padding:30px 34px; font-size:40px; font-weight:700;
   text-align:left; transition: opacity 0.6s ease, transform 0.6s ease;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.4),
-              inset 0 1px 0 rgba(255,255,255,0.12);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.12);
   backdrop-filter: blur(8px);
 }
 .qp-option-badge {
@@ -41,13 +48,8 @@
   box-shadow: 0 0 18px color-mix(in srgb, var(--accent-1) 50%, transparent);
   color:#fff;
 }
-.qp-option.eliminate {
-  animation: eliminateOpt 0.6s ease forwards;
-  animation-delay: var(--fiftyfifty-time);
-}
+.qp-option.eliminate { animation: eliminateOpt 0.6s ease forwards; animation-delay: var(--fiftyfifty-time); }
 @keyframes eliminateOpt { to { opacity:0.07; transform:scale(0.95); } }
-
-/* answer-reveal option states */
 .qp-option.correct {
   background: linear-gradient(135deg, rgba(0,255,140,0.25), rgba(0,200,100,0.12));
   border-color:#00ff8c;
@@ -57,11 +59,51 @@
 @keyframes pulseCorrect { 0%,100%{transform:scale(1);} 50%{transform:scale(1.025);} }
 .qp-option.wrong { opacity:0.15; }
 
+/* ===== MISSION IMPOSSIBLE LABEL — FIX 20: two-size layout ===== */
+.mission-title-huge {
+  font-size:96px; font-weight:900; letter-spacing:4px; text-transform:uppercase;
+  color:#ff3b3b; line-height:1.1; text-align:center;
+  text-shadow:0 0 40px rgba(255,59,59,0.9), 0 0 80px rgba(255,59,59,0.5);
+  animation: shakeLabel 0.5s ease-in-out infinite alternate;
+  margin-bottom:20px;
+}
+.mission-tagline {
+  font-size:42px; font-weight:700; color:#fff; text-align:center;
+  opacity:0; animation: fadeUp 0.7s ease-out 0.4s forwards;
+}
+@keyframes shakeLabel { from{transform:rotate(-1.5deg) scale(1);} to{transform:rotate(1.5deg) scale(1.04);} }
+
+/* Re-use for mission-final-slide label (smaller) */
+.mission-label {
+  font-size:52px; font-weight:900; letter-spacing:6px; text-transform:uppercase;
+  color:#ff3b3b; margin-bottom:32px;
+  text-shadow:0 0 30px rgba(255,59,59,0.8);
+  animation: shakeLabel 0.6s ease-in-out infinite alternate;
+}
+.mission-question {
+  font-size:58px; font-weight:900; line-height:1.4; margin-bottom:40px;
+  opacity:0; animation: bounceIn 0.7s cubic-bezier(.34,1.8,.64,1) forwards;
+}
+@keyframes bounceIn { to{opacity:1;transform:translateY(0) scale(1);} }
+.mission-hint {
+  font-size:40px; font-weight:600; color:#ffd166;
+  background:rgba(255,209,102,0.12); border:2px dashed #ffd166;
+  border-radius:20px; padding:30px; opacity:0;
+  transition: opacity 0.5s ease, transform 0.5s ease;
+  transform: scale(0.9);
+}
+.mission-hint.shown { opacity:1; transform:scale(1); }
+.cta3-text {
+  opacity:0; transform:translateY(30px) scale(0.9);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.cta3-text.show-cta3 { opacity:1; transform:translateY(0) scale(1); }
+
 </style>
 </head>
 <body>
 
-  <!-- STEP 1: HOOK + animated logo (2-3s, hook_phrase + hook_audio_url) -->
+  <!-- STEP 1: HOOK + animated logo -->
   <div class="screen hook-slide active">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div><div class="bg-orb orb3"></div>
@@ -74,7 +116,7 @@
     </div>
   </div>
 
-  <!-- STEP 2: question_intro_audio_url - audio only, waiting frame -->
+  <!-- STEP 2: quiz_intro_speech — text appears + prerecorded/TTS audio -->
   <div class="screen waiting-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -83,10 +125,12 @@
       <div class="logo-wrap" style="opacity:1;transform:scale(1) rotate(0deg);animation:none;">
         <img src="{{LOGO_DATA_URI}}" alt="JAASX">
       </div>
+      <!-- FIX 2a: show quiz_intro_speech text -->
+      <div class="intro-speech">{{quiz_intro_speech}}</div>
     </div>
   </div>
 
-  <!-- STEP 3: Question appears with animation (question_1 + edge TTS) -->
+  <!-- STEP 3: Question appears -->
   <div class="screen question-appear-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -98,8 +142,7 @@
     </div>
   </div>
 
-  <!-- STEP 4-5: Options appear (options_intro audio, then option TTS).
-       question-static = question + options, timer full (not yet draining) -->
+  <!-- STEP 4-5: Options + timer (static, not yet draining) -->
   <div class="screen question-static">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -126,8 +169,7 @@
     </div>
   </div>
 
-  <!-- STEP 6-8: COUNTDOWN PHASE — screen-recorded CSS animation.
-       Timer drains over {{qtime}}s. Hint at 1/4. 50/50 at 1/2. -->
+  <!-- STEP 6-8: COUNTDOWN — screen recorded. Timer drains. Hint at 1/4. 50/50 at 1/2. -->
   <div class="screen question-phase"
        style="--qtime:{{qtime}}s;--hint-time:{{hint_time}}s;--fiftyfifty-time:{{fiftyfifty_time}}s;">
     <div class="bg-anim"></div><div class="bg-grid"></div>
@@ -157,11 +199,12 @@
         <div class="qp-option {{opt2_class}}"><span class="qp-option-badge">C</span>{{options[2]}}</div>
         <div class="qp-option {{opt3_class}}"><span class="qp-option-badge">D</span>{{options[3]}}</div>
       </div>
-      <div class="qp-hint">🧩💡 {{hint}}</div>
+      <!-- FIX 9: "Hint: " prefix added -->
+      <div class="qp-hint">🧩 Hint: {{hint}}</div>
     </div>
   </div>
 
-  <!-- STEP 9-10: PRE-REVEAL — timeup audio + 0.5s silence, options visible unhighlighted -->
+  <!-- STEP 9: PRE-REVEAL — timeup audio, no text shown -->
   <div class="screen pre-reveal-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -179,20 +222,18 @@
     </div>
   </div>
 
-  <!-- STEP 10: ANSWER REVEAL — correct highlighted, wrong dimmed, confetti -->
+  <!-- STEP 10: ANSWER REVEAL -->
   <div class="screen answer-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
-    <div class="confetti-piece" style="left:7%;  width:18px;height:32px;background:var(--accent-2);animation-duration:2.4s;animation-delay:0s;"></div>
-    <div class="confetti-piece" style="left:18%; width:14px;height:24px;background:var(--accent-1);animation-duration:2.0s;animation-delay:0.2s;"></div>
-    <div class="confetti-piece" style="left:33%; width:20px;height:34px;background:#ffd166;animation-duration:2.6s;animation-delay:0.05s;"></div>
-    <div class="confetti-piece" style="left:50%; width:16px;height:28px;background:var(--accent-3);animation-duration:2.2s;animation-delay:0.3s;"></div>
-    <div class="confetti-piece" style="left:66%; width:18px;height:32px;background:#00ff8c;animation-duration:2.5s;animation-delay:0.1s;"></div>
-    <div class="confetti-piece" style="left:80%; width:14px;height:24px;background:var(--accent-2);animation-duration:2.1s;animation-delay:0.25s;"></div>
-    <div class="confetti-piece" style="left:91%; width:20px;height:34px;background:var(--accent-1);animation-duration:2.7s;animation-delay:0.15s;"></div>
-    <div class="confetti-piece" style="left:13%; width:16px;height:28px;background:#ffcc00;animation-duration:2.3s;animation-delay:0.4s;"></div>
-    <div class="confetti-piece" style="left:58%; width:18px;height:30px;background:#ff6b6b;animation-duration:2.45s;animation-delay:0.35s;"></div>
+    <div class="confetti-piece" style="left:7%;width:18px;height:32px;background:var(--accent-2);animation-duration:2.4s;animation-delay:0s;"></div>
+    <div class="confetti-piece" style="left:18%;width:14px;height:24px;background:var(--accent-1);animation-duration:2.0s;animation-delay:0.2s;"></div>
+    <div class="confetti-piece" style="left:33%;width:20px;height:34px;background:#ffd166;animation-duration:2.6s;animation-delay:0.05s;"></div>
+    <div class="confetti-piece" style="left:50%;width:16px;height:28px;background:var(--accent-3);animation-duration:2.2s;animation-delay:0.3s;"></div>
+    <div class="confetti-piece" style="left:66%;width:18px;height:32px;background:#00ff8c;animation-duration:2.5s;animation-delay:0.1s;"></div>
+    <div class="confetti-piece" style="left:80%;width:14px;height:24px;background:var(--accent-2);animation-duration:2.1s;animation-delay:0.25s;"></div>
+    <div class="confetti-piece" style="left:91%;width:20px;height:34px;background:var(--accent-1);animation-duration:2.7s;animation-delay:0.15s;"></div>
     <div class="content">
       <div class="answer-badge">✅ {{correct_answer}}</div>
       <div class="qp-options" style="opacity:1;animation:none;">
@@ -204,7 +245,7 @@
     </div>
   </div>
 
-  <!-- STEP 11: EXPLANATION (text + TTS, ≤20 words) -->
+  <!-- STEP 11: EXPLANATION -->
   <div class="screen explanation-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb3"></div>
@@ -217,7 +258,7 @@
     </div>
   </div>
 
-  <!-- CTA1: affiliate (shown when affiliate_url present) -->
+  <!-- CTA1: affiliate -->
   <div class="screen cta1-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -229,7 +270,7 @@
     </div>
   </div>
 
-  <!-- CTA2: platform fallback (shown when no affiliate_url) -->
+  <!-- CTA2: platform fallback -->
   <div class="screen cta2-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -241,23 +282,21 @@
     </div>
   </div>
 
-  <!-- STEP 14: Mission Impossible INTRO (mission_intro_text + audio sting) -->
+  <!-- STEP 14: Mission Impossible INTRO — FIX 20: huge title + normal tagline -->
   <div class="screen mission-intro-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
     <div class="content">
-      <div class="mission-label">🔥 {{mission_intro_text}}</div>
+      <div class="mission-title-huge">🔥 MISSION<br>IMPOSSIBLE</div>
+      <div class="mission-tagline">{{mission_intro_text}}</div>
     </div>
   </div>
 
-  <!-- STEP 15-18: Mission question + hint + CTA3 (combined final screen).
-       Worker screenshots three states:
-       State A: question only (no hint, no cta3)
+  <!-- STEP 15-18: Mission question + hint + CTA3
+       State A: question only (hint + cta3 hidden via inline style)
        State B: question + hint (cta3 hidden)
-       State C: question + hint + cta3 (final hold frame)
-       FIX #3: #mi-hint and #mi-cta3 carry inline hidden state so they are
-       NEVER visible in State A regardless of CSS specificity. -->
+       State C: question + hint + cta3 (final hold frame) -->
   <div class="screen mission-final-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -265,8 +304,12 @@
     <div class="content">
       <div class="mission-label">🔥 Mission Impossible</div>
       <div class="mission-question" id="mi-question">{{mission_question}}</div>
-      <div class="mission-hint" id="mi-hint" style="opacity:0;transform:scale(0.9);">💡 {{mission_hint}}</div>
-      <div class="cta3-text cta-text glow-text" id="mi-cta3" style="margin-top:44px;font-size:40px;opacity:0;transform:translateY(30px) scale(0.9);">
+      <!-- FIX 9-style: no "Hint" prefix needed here since it's MI hint -->
+      <div class="mission-hint" id="mi-hint" style="opacity:0;transform:scale(0.9);">
+        💡 {{mission_hint}}
+      </div>
+      <div class="cta3-text cta-text glow-text" id="mi-cta3"
+           style="margin-top:44px;font-size:40px;opacity:0;transform:translateY(30px) scale(0.9);">
         {{cta3_text}}<br>
         <span style="font-size:34px;color:var(--accent-1);">🌐 jaasblog.online/quiz/{{niche}}</span>
       </div>
