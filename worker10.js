@@ -80,19 +80,65 @@ async function fileExists(p) {
   try { await fs.access(p); return true; } catch { return false; }
 }
 
-function encodeR2Url(url) {
-  if (!url) return url;
-  try {
-    const u = new URL(url);
-    u.pathname = u.pathname.split('/').map(s => encodeURIComponent(decodeURIComponent(s))).join('/');
-    return u.toString();
-  } catch { return url; }
+// Some columns (e.g. sfx_audio_url) may contain a JSON object string instead
+// of a plain URL, like {"question_appear":"...","countdown_loop":"..."}.
+// This extracts a usable URL: if JSON, prefer the given key, else first URL value.
+function extractUrl(raw, preferKey) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  // Looks like JSON object?
+  if (s.startsWith('{')) {
+    try {
+      const obj = JSON.parse(s);
+      if (preferKey && obj[preferKey]) return obj[preferKey];
+      // fall back to first non-null string value that looks like a URL
+      for (const v of Object.values(obj)) {
+        if (typeof v === 'string' && v.startsWith('http')) return v;
+      }
+      return null;
+    } catch {
+      return null; // malformed JSON → treat as no URL
+    }
+  }
+  return s; // plain URL
 }
 
-async function downloadAudio(url, cacheKey) {
-  if (!url) return null;
+// Make an R2 URL safe for curl WITHOUT double-encoding values that are already
+// percent-encoded in the DB. We only touch the path, and only encode characters
+// that curl/HTTP won't accept raw — while leaving existing %XX escapes intact.
+function encodeR2Url(url) {
+  if (!url) return url;
+  const schemeIdx = url.indexOf('://');
+  if (schemeIdx === -1) return url;
+  const afterScheme = schemeIdx + 3;
+  const pathStart = url.indexOf('/', afterScheme);
+  if (pathStart === -1) return url; // no path to encode
+  const origin = url.slice(0, pathStart);
+  const pathAndRest = url.slice(pathStart);
+
+  // Encode char-by-char. Preserve existing valid %XX escapes. Leave structural
+  // chars (/ ? & = # . - _ ~) alone. Encode everything else that's unsafe.
+  let out = '';
+  for (let i = 0; i < pathAndRest.length; i++) {
+    const c = pathAndRest[i];
+    if (c === '%' && /^[0-9A-Fa-f]{2}$/.test(pathAndRest.substr(i + 1, 2))) {
+      out += pathAndRest.substr(i, 3); // already-encoded escape, keep as-is
+      i += 2;
+    } else if (/[A-Za-z0-9\/?&=#.\-_~]/.test(c)) {
+      out += c; // safe / structural char
+    } else {
+      out += encodeURIComponent(c); // raw unsafe char (space, %, comma, ', etc.)
+    }
+  }
+  return origin + out;
+}
+
+async function downloadAudio(url, cacheKey, preferKey) {
+  const resolved = extractUrl(url, preferKey);
+  if (!resolved) return null;
   await ensureDir(CACHE_DIR);
-  const encoded = encodeR2Url(url);
+  const encoded = encodeR2Url(resolved);
   let ext = '.mp3';
   try { ext = path.extname(new URL(encoded).pathname) || '.mp3'; } catch {}
   const safe = cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -102,7 +148,6 @@ async function downloadAudio(url, cacheKey) {
   try {
     await execPromise(`curl -sL --fail "${encoded}" -o "${local}" --max-time 30`);
     if (await fileExists(local)) {
-      // sanity check: non-empty file
       const st = await fs.stat(local);
       if (st.size > 0) return local;
       await fs.unlink(local).catch(() => {});
@@ -401,48 +446,26 @@ async function buildVideo(quiz, workDir) {
   const logoDataUri = await getLogoDataUri();
 
   // ── DOWNLOAD ALL AUDIO IN PARALLEL ──
-console.log('[AUDIO] Downloading audio assets...');
-
-// Parse sfx_audio_url if it's JSON (contains question_appear, countdown_loop, etc.)
-let sfxFile = null;           // generic SFX (used for hints/50-50, etc.)
-let countdownFallback = null; // fallback countdown music
-if (quiz.sfx_audio_url) {
-  try {
-    const sfxObj = JSON.parse(quiz.sfx_audio_url);
-    if (sfxObj && typeof sfxObj === 'object') {
-      sfxFile = sfxObj.question_appear || null;      // use question_appear as generic SFX
-      if (!quiz.countdown_music) {
-        countdownFallback = sfxObj.countdown_loop || null;
-      }
-    } else {
-      sfxFile = quiz.sfx_audio_url;
-    }
-  } catch (e) {
-    sfxFile = quiz.sfx_audio_url;
-  }
-} else {
-  sfxFile = null;
-}
-
-const [
-  hookFile, questionIntroFile, optionsIntroFile,
-  timeupFile, cta1AudioFile, cta2AudioFile,
-  missionIntroFile, cta3AudioFile,
-  sfxGenericFile, countdownFile, bgFile, correctSfxFile
-] = await Promise.all([
-  downloadAudio(quiz.hook_audio_url,               `hook_${quiz.id}`),
-  downloadAudio(quiz.question_intro_audio_url,     `qintro_${quiz.id}`),
-  downloadAudio(quiz.options_intro_audio_url,      `ointro_${quiz.id}`),
-  downloadAudio(quiz.timeup_audio_url,             `timeup_${quiz.id}`),
-  downloadAudio(quiz.cta1_audio_url,               `cta1_${quiz.id}`),
-  downloadAudio(quiz.cta2_audio_url,               `cta2_${quiz.id}`),
-  downloadAudio(quiz.mission_intro_audio_url,      `missintro_${quiz.id}`),
-  downloadAudio(quiz.cta3_audio_url,               `cta3_${quiz.id}`),
-  downloadAudio(sfxFile,                           `sfx_${quiz.id}`),          // use parsed sfxFile
-  downloadAudio(quiz.countdown_music || countdownFallback, `countdown_${quiz.id}`), // use fallback if needed
-  downloadAudio(quiz.background_music || DEFAULT_BG_MUSIC, `bgmusic_${quiz.id}`),
-  downloadAudio(quiz.correct_answer_sfx_audio_url, `correctsfx_${quiz.id}`)
-]);
+  console.log('[AUDIO] Downloading audio assets...');
+  const [
+    hookFile, questionIntroFile, optionsIntroFile,
+    timeupFile, cta1AudioFile, cta2AudioFile,
+    missionIntroFile, cta3AudioFile,          // FIX #2: cta3AudioFile (was cta3File)
+    sfxFile, countdownFile, bgFile, correctSfxFile
+  ] = await Promise.all([
+    downloadAudio(quiz.hook_audio_url,               `hook_${quiz.id}`),
+    downloadAudio(quiz.question_intro_audio_url,     `qintro_${quiz.id}`),
+    downloadAudio(quiz.options_intro_audio_url,      `ointro_${quiz.id}`),
+    downloadAudio(quiz.timeup_audio_url,             `timeup_${quiz.id}`),
+    downloadAudio(quiz.cta1_audio_url,               `cta1_${quiz.id}`),
+    downloadAudio(quiz.cta2_audio_url,               `cta2_${quiz.id}`),
+    downloadAudio(quiz.mission_intro_audio_url,      `missintro_${quiz.id}`),
+    downloadAudio(quiz.cta3_audio_url,               `cta3_${quiz.id}`),
+    downloadAudio(quiz.sfx_audio_url,                `sfx_${quiz.id}`, 'question_appear'),
+    downloadAudio(quiz.countdown_music,              `countdown_${quiz.id}`),
+    downloadAudio(quiz.background_music || DEFAULT_BG_MUSIC, `bgmusic_${quiz.id}`),
+    downloadAudio(quiz.correct_answer_sfx_audio_url, `correctsfx_${quiz.id}`)
+  ]);
 
   // ── RESOLVE THEME ──
   const { themeCss, decoHtml } = await resolveTheme(quiz);
@@ -500,9 +523,12 @@ const [
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920 });
-  // FIX #4: networkidle0 so CSS/fonts/data-URI fully load
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await new Promise(r => setTimeout(r, 500));
+  // FIX #4 (revised): everything is inlined (CSS in <style>, logo as base64
+  // data URI, no external fetches). The page also has infinite CSS animations
+  // (particles/orbs/grid) so it NEVER reaches network-idle — networkidle0 would
+  // time out. domcontentloaded + a fixed settle delay is correct and instant.
+    await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await new Promise(r => setTimeout(r, 600));
 
   const showOnly = async sel => {
     await page.evaluate(s => {
@@ -605,8 +631,8 @@ const [
   pushClip(await imgClip(optionsImg, step45Combined, Math.max(await audioDur(step45Combined), 3), workDir, 'clip_step45'));
 
   // ════════ STEP 6-8: COUNTDOWN (screen recorded) ════════
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await new Promise(r => setTimeout(r, 300));
+   await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await new Promise(r => setTimeout(r, 400));
   await showOnly('.question-phase');
   await page.evaluate(() => { const el = document.querySelector('.question-phase'); if (el) el.offsetHeight; });
   await new Promise(r => setTimeout(r, 100));
@@ -652,8 +678,8 @@ const [
   pushClip({ path: qClipPath, dur: await videoDur(qClipPath) });
 
   // ════════ STEP 9: timeup ════════
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await new Promise(r => setTimeout(r, 200));
+   await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await new Promise(r => setTimeout(r, 300));
   await showOnly('.pre-reveal-slide');
   const preRevealImg = await shot('pre_reveal');
   const timeupAudio = await buildAudio({
