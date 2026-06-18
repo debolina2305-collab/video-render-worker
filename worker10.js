@@ -28,27 +28,42 @@ const VOICE_MAP = {
   es: 'es-ES-ElviraNeural',
   pt: 'pt-BR-FranciscaNeural'
 };
-const THEMES_DIR = path.join(__dirname, 'themes');
-const CACHE_DIR  = path.join(__dirname, 'audio_cache');
+const THEMES_DIR    = path.join(__dirname, 'themes');
+const CACHE_DIR     = path.join(__dirname, 'audio_cache');
 const DEFAULT_THEME = 'particle_field';
-
-// FIX #1: Logo path resolved from assets folder
-const LOGO_PATH = path.join(__dirname, 'assets', 'jaasX-logo-saved-for-web.png');
-
-// Background music: default R2 URL (used if quiz.background_music is null)
+const LOGO_PATH     = path.join(__dirname, 'assets', 'jaasX-logo-saved-for-web.png');
 const DEFAULT_BG_MUSIC = 'https://pub-3578d297d3904e1d8ffedfc9dd4102f2.r2.dev/audio/background_music/The_Midnight_Audit.mp3';
 
 // Audio levels
-const BG_VOL_BASE  = 0.10;   // very soft background
-const BG_VOL_DUCK  = 0.035;  // ducked ~65% when voice plays
-const DUCK_RAMP    = 0.12;   // fade window in seconds
+const BG_VOL_BASE = 0.10;
+const BG_VOL_DUCK = 0.035;
+const DUCK_RAMP   = 0.12;
 
-// Human-like gaps
+// Human-like gaps (seconds)
 const GAP_DEFAULT     = 0.35;
 const GAP_AFTER_STEP2 = 0.30;
 const GAP_OPTIONS     = 0.70;
 const GAP_ANSWER      = 0.50;
 const GAP_EXPL        = 0.50;
+
+// Timeouts (ms) — prevents any single operation from hanging forever
+const TIMEOUT_FFMPEG   = 120_000;   // 2 min per FFmpeg command
+const TIMEOUT_CURL     = 35_000;    // 35s per download (curl --max-time 30 + buffer)
+const TIMEOUT_TTS      = 40_000;    // 40s per edge-tts call
+const TIMEOUT_RECORDER = 60_000;    // 1 min max for recorder.stop()
+const TIMEOUT_JOB      = 45 * 60 * 1000; // 45 min overall watchdog
+
+// ──────────────────────────────────────────────
+// TIMEOUT WRAPPER — prevents any promise hanging forever
+// ──────────────────────────────────────────────
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`TIMEOUT after ${ms}ms: ${label}`)), ms)
+    )
+  ]);
+}
 
 // ──────────────────────────────────────────────
 // SUPABASE HELPER
@@ -80,55 +95,43 @@ async function fileExists(p) {
   try { await fs.access(p); return true; } catch { return false; }
 }
 
-// Some columns (e.g. sfx_audio_url) may contain a JSON object string instead
-// of a plain URL, like {"question_appear":"...","countdown_loop":"..."}.
-// This extracts a usable URL: if JSON, prefer the given key, else first URL value.
+// Extracts a URL from a value that may be a plain URL or a JSON object string.
+// e.g. sfx_audio_url = '{"question_appear":"https://...","countdown_loop":"https://..."}'
 function extractUrl(raw, preferKey) {
   if (!raw) return null;
   const s = String(raw).trim();
   if (!s) return null;
-  // Looks like JSON object?
   if (s.startsWith('{')) {
     try {
       const obj = JSON.parse(s);
       if (preferKey && obj[preferKey]) return obj[preferKey];
-      // fall back to first non-null string value that looks like a URL
       for (const v of Object.values(obj)) {
         if (typeof v === 'string' && v.startsWith('http')) return v;
       }
       return null;
-    } catch {
-      return null; // malformed JSON → treat as no URL
-    }
+    } catch { return null; }
   }
-  return s; // plain URL
+  return s;
 }
 
-// Make an R2 URL safe for curl WITHOUT double-encoding values that are already
-// percent-encoded in the DB. We only touch the path, and only encode characters
-// that curl/HTTP won't accept raw — while leaving existing %XX escapes intact.
+// Encodes an R2 URL without double-encoding already-escaped sequences.
 function encodeR2Url(url) {
   if (!url) return url;
   const schemeIdx = url.indexOf('://');
   if (schemeIdx === -1) return url;
-  const afterScheme = schemeIdx + 3;
-  const pathStart = url.indexOf('/', afterScheme);
-  if (pathStart === -1) return url; // no path to encode
+  const pathStart = url.indexOf('/', schemeIdx + 3);
+  if (pathStart === -1) return url;
   const origin = url.slice(0, pathStart);
   const pathAndRest = url.slice(pathStart);
-
-  // Encode char-by-char. Preserve existing valid %XX escapes. Leave structural
-  // chars (/ ? & = # . - _ ~) alone. Encode everything else that's unsafe.
   let out = '';
   for (let i = 0; i < pathAndRest.length; i++) {
     const c = pathAndRest[i];
     if (c === '%' && /^[0-9A-Fa-f]{2}$/.test(pathAndRest.substr(i + 1, 2))) {
-      out += pathAndRest.substr(i, 3); // already-encoded escape, keep as-is
-      i += 2;
-    } else if (/[A-Za-z0-9\/?&=#.\-_~]/.test(c)) {
-      out += c; // safe / structural char
+      out += pathAndRest.substr(i, 3); i += 2; // keep existing escape
+    } else if (/[A-Za-z0-9/?&=#.\-_~]/.test(c)) {
+      out += c; // safe char
     } else {
-      out += encodeURIComponent(c); // raw unsafe char (space, %, comma, ', etc.)
+      out += encodeURIComponent(c); // encode raw unsafe char
     }
   }
   return origin + out;
@@ -141,12 +144,16 @@ async function downloadAudio(url, cacheKey, preferKey) {
   const encoded = encodeR2Url(resolved);
   let ext = '.mp3';
   try { ext = path.extname(new URL(encoded).pathname) || '.mp3'; } catch {}
-  const safe = cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safe  = cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_');
   const local = path.join(CACHE_DIR, `${safe}${ext}`);
   if (await fileExists(local)) { console.log(`[CACHE HIT] ${safe}`); return local; }
   console.log(`[DOWNLOAD] ${encoded}`);
   try {
-    await execPromise(`curl -sL --fail "${encoded}" -o "${local}" --max-time 30`);
+    // curl --max-time 30 + outer timeout wrapper
+    await withTimeout(
+      execPromise(`curl -sL --fail "${encoded}" -o "${local}" --max-time 30`),
+      TIMEOUT_CURL, `download ${safe}`
+    );
     if (await fileExists(local)) {
       const st = await fs.stat(local);
       if (st.size > 0) return local;
@@ -161,21 +168,23 @@ async function downloadAudio(url, cacheKey, preferKey) {
 
 async function audioDur(p) {
   try {
-    const { stdout } = await execPromise(
-      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${p}"`
+    const { stdout } = await withTimeout(
+      execPromise(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${p}"`),
+      10_000, `audioDur ${p}`
     );
     const d = parseFloat(stdout.trim());
     return isNaN(d) ? 0 : d;
   } catch { return 0; }
 }
 
-async function videoDur(p) {
-  return audioDur(p); // same ffprobe call
-}
+async function videoDur(p) { return audioDur(p); }
 
 async function silence(sec, out) {
   const s = Math.max(parseFloat(sec) || 0.1, 0.05);
-  await execPromise(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${s} -q:a 9 -acodec libmp3lame "${out}"`);
+  await withTimeout(
+    execPromise(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${s} -q:a 9 -acodec libmp3lame "${out}"`),
+    15_000, `silence ${s}s`
+  );
 }
 
 async function tts(text, voice, out, fallbackSec = 1.5) {
@@ -184,20 +193,25 @@ async function tts(text, voice, out, fallbackSec = 1.5) {
   const tmp = out + '.txt';
   await fs.writeFile(tmp, t, 'utf8');
   try {
-    await execPromise(`edge-tts --voice "${voice}" --file "${tmp}" --write-media "${out}"`);
-    // Verify edge-tts actually produced audio
+    await withTimeout(
+      execPromise(`edge-tts --voice "${voice}" --file "${tmp}" --write-media "${out}"`),
+      TIMEOUT_TTS, `tts "${t.slice(0,40)}"`
+    );
     if (!(await fileExists(out)) || (await audioDur(out)) === 0) {
-      console.warn(`[TTS WARN] edge-tts produced empty output, using silence`);
+      console.warn('[TTS WARN] Empty output, using silence');
       await silence(fallbackSec, out);
     }
   } catch (e) {
-    console.warn(`[TTS WARN] edge-tts failed: ${e.message}, using silence fallback`);
+    console.warn(`[TTS WARN] ${e.message}, using silence`);
     await silence(fallbackSec, out);
   }
   await fs.unlink(tmp).catch(() => {});
 }
 
-// FIX #6: Concatenate audio files — filters out null/undefined/missing parts
+async function ffmpeg(args, label) {
+  await withTimeout(execPromise(`ffmpeg ${args}`), TIMEOUT_FFMPEG, label || 'ffmpeg');
+}
+
 async function concatAudio(parts, out, workDir) {
   const validParts = [];
   for (const p of parts) {
@@ -206,41 +220,36 @@ async function concatAudio(parts, out, workDir) {
   if (validParts.length === 0) { await silence(0.5, out); return; }
   if (validParts.length === 1) { await fs.copyFile(validParts[0], out); return; }
   const listP = path.join(workDir, `cat_${uuidv4()}.txt`);
-  const lines = validParts
-    .map(p => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`)
-    .join('\n');
-  await fs.writeFile(listP, lines);
-  // re-encode (not copy) to normalise sample rate / codec across mixed sources
-  await execPromise(`ffmpeg -y -f concat -safe 0 -i "${listP}" -ar 44100 -acodec libmp3lame "${out}"`);
+  await fs.writeFile(listP,
+    validParts.map(p => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n')
+  );
+  await ffmpeg(`-y -f concat -safe 0 -i "${listP}" -ar 44100 -acodec libmp3lame "${out}"`, 'concatAudio');
   await fs.unlink(listP).catch(() => {});
 }
 
-// Build audio: optional leading silence + audio (prerecorded or TTS fallback)
 async function buildAudio({ prerecorded, fallbackText, fallbackSec, voice, leadGap, workDir, name }) {
-  const silP   = path.join(workDir, `${name}_gap.mp3`);
-  const audioP = path.join(workDir, `${name}_src.mp3`);
-  const outP   = path.join(workDir, `${name}_audio.mp3`);
-  const gap    = leadGap != null ? leadGap : GAP_DEFAULT;
-
+  const silP  = path.join(workDir, `${name}_gap.mp3`);
+  const audioP= path.join(workDir, `${name}_src.mp3`);
+  const outP  = path.join(workDir, `${name}_audio.mp3`);
+  const gap   = leadGap != null ? leadGap : GAP_DEFAULT;
   await silence(gap, silP);
-
   if (prerecorded && await fileExists(prerecorded)) {
     await concatAudio([silP, prerecorded], outP, workDir);
   } else {
     await tts(fallbackText || '', voice, audioP, fallbackSec || 1.5);
     await concatAudio([silP, audioP], outP, workDir);
   }
-  const dur = await audioDur(outP);
-  return { path: outP, dur };
+  return { path: outP, dur: await audioDur(outP) };
 }
 
-// Make a clip: static image + audio track → mp4 (h264/yuv420p/30fps)
 async function imgClip(img, audioP, dur, workDir, name) {
   const out = path.join(workDir, `${name}.mp4`);
-  await execPromise(
-    `ffmpeg -y -loop 1 -i "${img}" -i "${audioP}" ` +
-    `-c:v libx264 -t ${dur} -pix_fmt yuv420p -r 30 -vf "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2" ` +
-    `-c:a aac -b:a 128k -ar 44100 -shortest "${out}"`
+  await ffmpeg(
+    `-y -loop 1 -i "${img}" -i "${audioP}" ` +
+    `-c:v libx264 -t ${dur} -pix_fmt yuv420p -r 30 ` +
+    `-vf "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2" ` +
+    `-c:a aac -b:a 128k -ar 44100 -shortest "${out}"`,
+    `imgClip ${name}`
   );
   return { path: out, dur };
 }
@@ -250,14 +259,11 @@ async function imgClip(img, audioP, dur, workDir, name) {
 // ──────────────────────────────────────────────
 async function applyBgMusic(concatMp4, totalDur, voiceRanges, bgFile, workDir) {
   if (!bgFile || !(await fileExists(bgFile))) {
-    console.log('[BGMUSIC] No bg music file — skipping ducking');
+    console.log('[BGMUSIC] No bg music — skipping');
     return concatMp4;
   }
-
   const bgLooped = path.join(workDir, 'bg_looped.mp3');
-  await execPromise(
-    `ffmpeg -y -stream_loop -1 -i "${bgFile}" -t ${totalDur} -af "volume=${BG_VOL_BASE}" -ar 44100 -acodec libmp3lame "${bgLooped}"`
-  );
+  await ffmpeg(`-y -stream_loop -1 -i "${bgFile}" -t ${totalDur} -af "volume=${BG_VOL_BASE}" -ar 44100 -acodec libmp3lame "${bgLooped}"`, 'bgLoop');
 
   const bgDucked = path.join(workDir, 'bg_ducked.mp3');
   if (voiceRanges.length > 0) {
@@ -267,46 +273,60 @@ async function applyBgMusic(concatMp4, totalDur, voiceRanges, bgFile, workDir) {
       const e = (r.end + DUCK_RAMP).toFixed(3);
       return `volume=enable='between(t,${s},${e})':volume=${ratio}`;
     }).join(',');
-    await execPromise(`ffmpeg -y -i "${bgLooped}" -af "${filters}" -ar 44100 -acodec libmp3lame "${bgDucked}"`);
+    await ffmpeg(`-y -i "${bgLooped}" -af "${filters}" -ar 44100 -acodec libmp3lame "${bgDucked}"`, 'bgDuck');
   } else {
     await fs.copyFile(bgLooped, bgDucked);
   }
 
-  const fgAudio = path.join(workDir, 'fg_audio.mp3');
-  await execPromise(`ffmpeg -y -i "${concatMp4}" -vn -ar 44100 -acodec libmp3lame "${fgAudio}"`);
-
+  const fgAudio    = path.join(workDir, 'fg_audio.mp3');
   const mixedAudio = path.join(workDir, 'mixed_audio.mp3');
-  await execPromise(
-    `ffmpeg -y -i "${fgAudio}" -i "${bgDucked}" ` +
-    `-filter_complex "[0:a]volume=1.0[fg];[1:a]volume=1.0[bg];[fg][bg]amix=inputs=2:duration=first:dropout_transition=0[a]" ` +
-    `-map "[a]" -ar 44100 -acodec libmp3lame "${mixedAudio}"`
-  );
+  const finalMp4   = path.join(workDir, 'final_with_music.mp4');
 
-  const finalMp4 = path.join(workDir, 'final_with_music.mp4');
-  await execPromise(
-    `ffmpeg -y -i "${concatMp4}" -i "${mixedAudio}" -c:v copy -map 0:v:0 -map 1:a:0 -c:a aac -b:a 192k -shortest -movflags +faststart "${finalMp4}"`
+  await ffmpeg(`-y -i "${concatMp4}" -vn -ar 44100 -acodec libmp3lame "${fgAudio}"`, 'extractFg');
+  await ffmpeg(
+    `-y -i "${fgAudio}" -i "${bgDucked}" ` +
+    `-filter_complex "[0:a]volume=1.0[fg];[1:a]volume=1.0[bg];[fg][bg]amix=inputs=2:duration=first:dropout_transition=0[a]" ` +
+    `-map "[a]" -ar 44100 -acodec libmp3lame "${mixedAudio}"`,
+    'mixAudio'
+  );
+  await ffmpeg(
+    `-y -i "${concatMp4}" -i "${mixedAudio}" -c:v copy -map 0:v:0 -map 1:a:0 -c:a aac -b:a 192k -shortest -movflags +faststart "${finalMp4}"`,
+    'remux'
   );
   return finalMp4;
 }
 
 // ──────────────────────────────────────────────
-// THEME RESOLUTION
+// THEME RESOLUTION + quiz_background_css support
 // ──────────────────────────────────────────────
 async function resolveTheme(quiz) {
-  const base = await fs.readFile(path.join(THEMES_DIR, '_base.css'), 'utf8');
+  const base    = await fs.readFile(path.join(THEMES_DIR, '_base.css'), 'utf8');
   const themeId = quiz.visual_theme_id || DEFAULT_THEME;
   let themeFile = path.join(THEMES_DIR, `${themeId}.css`);
   if (!(await fileExists(themeFile))) {
-    console.warn(`Theme '${themeId}' not found, using default`);
+    console.warn(`[THEME] '${themeId}' not found, using default`);
     themeFile = path.join(THEMES_DIR, `${DEFAULT_THEME}.css`);
   }
+
+  // Base + theme file CSS with accent colours substituted
   let themeCss = base + '\n' + (await fs.readFile(themeFile, 'utf8'));
   const a1 = quiz.theme_accent_primary   || '#00e0ff';
   const a2 = quiz.theme_accent_secondary || '#7b2ff7';
   const a3 = quiz.theme_accent_tertiary  || '#ff2ec4';
-  themeCss = themeCss.split('{{accent_primary}}').join(a1)
-                     .split('{{accent_secondary}}').join(a2)
-                     .split('{{accent_tertiary}}').join(a3);
+  themeCss = themeCss
+    .split('{{accent_primary}}').join(a1)
+    .split('{{accent_secondary}}').join(a2)
+    .split('{{accent_tertiary}}').join(a3);
+
+  // quiz_background_css: if the quiz has custom background CSS stored in the DB,
+  // append it at the end so it overrides the theme's .bg-anim rules.
+  // This is how each quiz gets a dynamically unique background.
+  if (quiz.quiz_background_css && quiz.quiz_background_css.trim()) {
+    console.log('[THEME] Applying quiz_background_css override');
+    themeCss += '\n/* === QUIZ-SPECIFIC BACKGROUND OVERRIDE === */\n';
+    themeCss += quiz.quiz_background_css;
+  }
+
   const decoHtml = buildDecoHtml(themeId);
   return { themeCss, decoHtml };
 }
@@ -332,14 +352,14 @@ function buildDecoHtml(id) {
 }
 
 // ──────────────────────────────────────────────
-// FIX #1: LOGO DATA URI
+// LOGO DATA URI
 // ──────────────────────────────────────────────
 async function getLogoDataUri() {
   try {
     const buf = await fs.readFile(LOGO_PATH);
     return `data:image/png;base64,${buf.toString('base64')}`;
   } catch (e) {
-    console.warn(`[LOGO] Could not read logo at ${LOGO_PATH}: ${e.message}`);
+    console.warn(`[LOGO] ${e.message}`);
     return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
   }
 }
@@ -350,13 +370,28 @@ async function getLogoDataUri() {
 async function processJobs() {
   console.log('[WORKER] Checking for pending quizzes...');
 
-  // NOTE: is_human_approved is intentionally NOT checked here.
-  // Approval gates YouTube PUBLISHING (handled later), not rendering —
-  // a human can only approve a video after it has been rendered.
+  // Also recover stuck 'processing' rows older than 30 minutes
+  // (caused by cancelled GitHub Actions runs that never wrote 'error').
+  const stuckCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+
   const rows = await fetchSupabase(
     'quiz?video_status=eq.pending&is_active=eq.true' +
     '&quiz_enriched=eq.true&select=*&order=created_at.asc&limit=1'
   );
+
+  // Also check for stuck processing rows and reset them
+  const stuckRows = await fetchSupabase(
+    `quiz?video_status=eq.processing&is_active=eq.true&updated_at=lt.${stuckCutoff}&select=id,topic&limit=5`
+  ).catch(() => null);
+  if (stuckRows?.length) {
+    console.log(`[WORKER] Resetting ${stuckRows.length} stuck 'processing' rows → 'pending'`);
+    for (const r of stuckRows) {
+      await fetchSupabase(`quiz?id=eq.${r.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ video_status: 'pending', updated_at: new Date().toISOString() })
+      }).catch(() => {});
+    }
+  }
 
   if (!rows || rows.length === 0) {
     console.log('[WORKER] No pending quizzes.');
@@ -368,17 +403,23 @@ async function processJobs() {
 
   await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
     method: 'PATCH',
-    body: JSON.stringify({ video_status: 'processing' })
+    body: JSON.stringify({ video_status: 'processing', updated_at: new Date().toISOString() })
   });
 
   const workDir = `/tmp/video_${uuidv4()}`;
   await ensureDir(workDir);
 
+  // Overall job watchdog — if anything hangs beyond 45 min, throw and mark error
   try {
-    const videoPath = await buildVideo(quiz, workDir);
-    const stats     = await fs.stat(videoPath);
-    const sizeMb    = parseFloat((stats.size / (1024 * 1024)).toFixed(2));
-    const dur       = await videoDur(videoPath);
+    const videoPath = await withTimeout(
+      buildVideo(quiz, workDir),
+      TIMEOUT_JOB,
+      `buildVideo job ${quiz.id}`
+    );
+
+    const stats  = await fs.stat(videoPath);
+    const sizeMb = parseFloat((stats.size / (1024 * 1024)).toFixed(2));
+    const dur    = await videoDur(videoPath);
 
     console.log(`[WORKER] Done. Duration: ${dur.toFixed(2)}s, Size: ${sizeMb}MB`);
 
@@ -400,7 +441,7 @@ async function processJobs() {
     console.log(`[WORKER] Artifact: ${artifactPath}`);
 
   } catch (err) {
-    console.error('[WORKER] FAILED:', err);
+    console.error('[WORKER] FAILED:', err.message);
     await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -438,19 +479,17 @@ async function buildVideo(quiz, workDir) {
   const elimIdx  = allIdx.filter(i => !keepIdx.includes(i));
   const optClass = i => elimIdx.includes(i) ? 'eliminate' : '';
   const revClass = i => options[i] === correct ? 'correct' : 'wrong';
-
   const hasCta1  = !!(quiz.affiliate_url && quiz.affiliate_url.trim());
 
-  // FIX #1: Load logo as base64 data URI
-  console.log('[LOGO] Loading logo as base64 data URI...');
+  console.log('[LOGO] Loading...');
   const logoDataUri = await getLogoDataUri();
 
   // ── DOWNLOAD ALL AUDIO IN PARALLEL ──
-  console.log('[AUDIO] Downloading audio assets...');
+  console.log('[AUDIO] Downloading...');
   const [
     hookFile, questionIntroFile, optionsIntroFile,
     timeupFile, cta1AudioFile, cta2AudioFile,
-    missionIntroFile, cta3AudioFile,          // FIX #2: cta3AudioFile (was cta3File)
+    missionIntroFile, cta3AudioFile,
     sfxFile, countdownFile, bgFile, correctSfxFile
   ] = await Promise.all([
     downloadAudio(quiz.hook_audio_url,               `hook_${quiz.id}`),
@@ -467,7 +506,7 @@ async function buildVideo(quiz, workDir) {
     downloadAudio(quiz.correct_answer_sfx_audio_url, `correctsfx_${quiz.id}`)
   ]);
 
-  // ── RESOLVE THEME ──
+  // ── RESOLVE THEME (includes quiz_background_css) ──
   const { themeCss, decoHtml } = await resolveTheme(quiz);
 
   // ── BUILD HTML ──
@@ -475,7 +514,7 @@ async function buildVideo(quiz, workDir) {
   const R = {
     '{{theme_css}}':          themeCss,
     '{{theme_deco_html}}':    decoHtml,
-    '{{LOGO_DATA_URI}}':      logoDataUri,   // FIX #1
+    '{{LOGO_DATA_URI}}':      logoDataUri,
     '{{hook_phrase}}':        quiz.hook_phrase || 'Stop scrolling! Can you beat this?',
     '{{question}}':           question,
     '{{options[0]}}':         options[0] || '',
@@ -513,21 +552,14 @@ async function buildVideo(quiz, workDir) {
   const browser = await puppeteer.launch({
     headless: 'new',
     args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-web-security',          // FIX #7: allow data URIs on file:// pages
-      '--allow-file-access-from-files'
+      '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+      '--disable-gpu', '--disable-web-security', '--allow-file-access-from-files'
     ]
   });
+
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920 });
-  // FIX #4 (revised): everything is inlined (CSS in <style>, logo as base64
-  // data URI, no external fetches). The page also has infinite CSS animations
-  // (particles/orbs/grid) so it NEVER reaches network-idle — networkidle0 would
-  // time out. domcontentloaded + a fixed settle delay is correct and instant.
-    await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded' });
   await new Promise(r => setTimeout(r, 600));
 
   const showOnly = async sel => {
@@ -566,7 +598,7 @@ async function buildVideo(quiz, workDir) {
   });
   pushClip(await imgClip(hookImg, hookAudio.path, Math.max(hookAudio.dur, 2.0), workDir, 'clip_hook'));
 
-  // ════════ STEP 2: question_intro audio only ════════
+  // ════════ STEP 2: question intro audio only ════════
   await showOnly('.waiting-slide');
   await new Promise(r => setTimeout(r, 200));
   const waitImg = await shot('waiting');
@@ -577,7 +609,7 @@ async function buildVideo(quiz, workDir) {
   });
   pushClip(await imgClip(waitImg, step2Audio.path, step2Audio.dur, workDir, 'clip_step2'));
 
-  // ════════ STEP 3: Question appears (SFX + TTS) ════════
+  // ════════ STEP 3: Question appears ════════
   await showOnly('.question-appear-slide');
   await new Promise(r => setTimeout(r, 700));
   const qAppearImg = await shot('question_appear');
@@ -595,7 +627,7 @@ async function buildVideo(quiz, workDir) {
   await concatAudio(step3Parts, step3Combined, workDir);
   pushClip(await imgClip(qAppearImg, step3Combined, Math.max(await audioDur(step3Combined), 2), workDir, 'clip_step3'));
 
-  // ════════ STEP 4-5: Options intro + each option TTS ════════
+  // ════════ STEP 4-5: Options ════════
   await showOnly('.question-static');
   await new Promise(r => setTimeout(r, 900));
   const optionsImg = await shot('options_static');
@@ -631,10 +663,10 @@ async function buildVideo(quiz, workDir) {
   pushClip(await imgClip(optionsImg, step45Combined, Math.max(await audioDur(step45Combined), 3), workDir, 'clip_step45'));
 
   // ════════ STEP 6-8: COUNTDOWN (screen recorded) ════════
-   await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded' });
   await new Promise(r => setTimeout(r, 400));
   await showOnly('.question-phase');
-  await page.evaluate(() => { const el = document.querySelector('.question-phase'); if (el) el.offsetHeight; });
+  await page.evaluate(() => { document.querySelector('.question-phase')?.offsetHeight; });
   await new Promise(r => setTimeout(r, 100));
 
   const rawVideo = path.join(workDir, 'phase_raw.mp4');
@@ -645,40 +677,39 @@ async function buildVideo(quiz, workDir) {
   });
   await recorder.start(rawVideo);
   await new Promise(r => setTimeout(r, QTIME * 1000));
-  await recorder.stop();
+  // Wrap recorder.stop() with a timeout — this is a common hang point
+  await withTimeout(recorder.stop(), TIMEOUT_RECORDER, 'recorder.stop()');
 
-  // Countdown audio bed
+  // Countdown audio
   const cdBase = path.join(workDir, 'cd_base.mp3');
   if (countdownFile) {
-    await execPromise(`ffmpeg -y -stream_loop -1 -i "${countdownFile}" -t ${QTIME} -af "volume=0.75" -ar 44100 -acodec libmp3lame "${cdBase}"`);
+    await ffmpeg(`-y -stream_loop -1 -i "${countdownFile}" -t ${QTIME} -af "volume=0.75" -ar 44100 -acodec libmp3lame "${cdBase}"`, 'cdLoop');
   } else {
     await silence(QTIME, cdBase);
   }
   let cdFinal = cdBase;
-  const stings = [];
   if (sfxFile) {
-    stings.push({ file: sfxFile, delayMs: Math.round(HINT_AT  * 1000) });
-    stings.push({ file: sfxFile, delayMs: Math.round(FIFTY_AT * 1000) });
-  }
-  if (stings.length > 0) {
     const stingMixed = path.join(workDir, 'cd_mixed.mp3');
-    const ins  = [`-i "${cdBase}"`, ...stings.map(s => `-i "${s.file}"`)].join(' ');
-    const dels = stings.map((s,i) => `[${i+1}:a]adelay=${s.delayMs}|${s.delayMs}[s${i}]`).join(';');
-    const mix  = ['[0:a]', ...stings.map((_,i) => `[s${i}]`)].join('');
-    await execPromise(`ffmpeg -y ${ins} -filter_complex "${dels};${mix}amix=inputs=${stings.length+1}:duration=first[a]" -map "[a]" -t ${QTIME} -ar 44100 -acodec libmp3lame "${stingMixed}"`);
+    const hDelayMs   = Math.round(HINT_AT  * 1000);
+    const fDelayMs   = Math.round(FIFTY_AT * 1000);
+    await ffmpeg(
+      `-y -i "${cdBase}" -i "${sfxFile}" -i "${sfxFile}" ` +
+      `-filter_complex "[1:a]adelay=${hDelayMs}|${hDelayMs}[s0];[2:a]adelay=${fDelayMs}|${fDelayMs}[s1];[0:a][s0][s1]amix=inputs=3:duration=first[a]" ` +
+      `-map "[a]" -t ${QTIME} -ar 44100 -acodec libmp3lame "${stingMixed}"`,
+      'cdStings'
+    );
     cdFinal = stingMixed;
   }
 
-  // FIX #5: re-encode VP8/WebM screen recording to h264 before concat
-  const qClipRaw = path.join(workDir, 'phase_h264.mp4');
-  await execPromise(`ffmpeg -y -i "${rawVideo}" -c:v libx264 -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${qClipRaw}"`);
-
+  // Re-encode WebM → h264 (VP8 from recorder can't concat with mp4 clips)
+  const qClipRaw  = path.join(workDir, 'phase_h264.mp4');
   const qClipPath = path.join(workDir, 'clip_countdown.mp4');
-  await execPromise(`ffmpeg -y -i "${qClipRaw}" -i "${cdFinal}" -c:v libx264 -c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 -shortest -t ${QTIME} "${qClipPath}"`);
+  await ffmpeg(`-y -i "${rawVideo}" -c:v libx264 -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${qClipRaw}"`, 'reencodeRecording');
+  await ffmpeg(`-y -i "${qClipRaw}" -i "${cdFinal}" -c:v libx264 -c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 -shortest -t ${QTIME} "${qClipPath}"`, 'countdownClip');
   pushClip({ path: qClipPath, dur: await videoDur(qClipPath) });
 
   // ════════ STEP 9: timeup ════════
-   await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded' });
   await new Promise(r => setTimeout(r, 300));
   await showOnly('.pre-reveal-slide');
   const preRevealImg = await shot('pre_reveal');
@@ -727,26 +758,19 @@ async function buildVideo(quiz, workDir) {
   await showOnly(ctaSlide);
   await new Promise(r => setTimeout(r, 400));
   const ctaImg = await shot('cta');
-  let ctaAudio;
-  if (hasCta1) {
-    ctaAudio = await buildAudio({
-      prerecorded: cta1AudioFile,
-      fallbackText: quiz.affiliate_text || 'Check the link in description!',
-      fallbackSec: 3, voice, leadGap: GAP_DEFAULT, workDir, name: 'cta1'
-    });
-  } else {
-    ctaAudio = await buildAudio({
-      prerecorded: cta2AudioFile,
-      fallbackText: quiz.cta2_text || 'Play real quiz and earn ONS tokens!',
-      fallbackSec: 3, voice, leadGap: GAP_DEFAULT, workDir, name: 'cta2'
-    });
-  }
+  const ctaAudio = await buildAudio({
+    prerecorded: hasCta1 ? cta1AudioFile : cta2AudioFile,
+    fallbackText: hasCta1
+      ? (quiz.affiliate_text || 'Check the link in description!')
+      : (quiz.cta2_text || 'Play real quiz and earn ONS tokens!'),
+    fallbackSec: 3, voice, leadGap: GAP_DEFAULT, workDir,
+    name: hasCta1 ? 'cta1' : 'cta2'
+  });
   pushClip(await imgClip(ctaImg, ctaAudio.path, ctaAudio.dur, workDir, 'clip_cta'));
 
   // ════════ STEPS 14-18: MISSION IMPOSSIBLE ════════
   if (quiz.mission_impossible_enabled !== false && quiz.mission_impossible_question) {
 
-    // STEP 14: MI intro
     await showOnly('.mission-intro-slide');
     await new Promise(r => setTimeout(r, 400));
     const miIntroImg = await shot('mi_intro');
@@ -757,9 +781,7 @@ async function buildVideo(quiz, workDir) {
     });
     pushClip(await imgClip(miIntroImg, miIntroAudio.path, miIntroAudio.dur, workDir, 'clip_mi_intro'));
 
-    // STEP 15: MI question (hint + cta3 hidden)
     await showOnly('.mission-final-slide');
-    // FIX #3: force hint & cta3 hidden before screenshot
     await page.evaluate(() => {
       const hint = document.getElementById('mi-hint');
       const cta3 = document.getElementById('mi-cta3');
@@ -776,7 +798,6 @@ async function buildVideo(quiz, workDir) {
     await concatAudio([miQTts, miQSil], miQAudio, workDir);
     pushClip(await imgClip(miQImg, miQAudio, Math.max(await audioDur(miQAudio), 2), workDir, 'clip_mi_q'));
 
-    // STEP 16: Hint appears (SFX + 2.5s)
     await page.evaluate(() => {
       const hint = document.getElementById('mi-hint');
       if (hint) { hint.classList.add('shown'); hint.style.opacity = ''; hint.style.transform = ''; }
@@ -792,14 +813,12 @@ async function buildVideo(quiz, workDir) {
     await concatAudio(miHintParts, miHintAudio, workDir);
     pushClip(await imgClip(miHintImg, miHintAudio, await audioDur(miHintAudio), workDir, 'clip_mi_hint'), false);
 
-    // STEP 17: CTA3 revealed
     await page.evaluate(() => {
       const cta3 = document.getElementById('mi-cta3');
       if (cta3) { cta3.classList.add('show-cta3'); cta3.style.opacity = ''; cta3.style.transform = ''; }
     });
     await new Promise(r => setTimeout(r, 500));
     const cta3Img = await shot('cta3');
-    // FIX #2: cta3AudioFile (was undefined cta3File)
     const cta3Audio = await buildAudio({
       prerecorded: cta3AudioFile,
       fallbackText: quiz.cta3_text || 'Like, share and challenge a friend! Subscribe!',
@@ -807,7 +826,6 @@ async function buildVideo(quiz, workDir) {
     });
     pushClip(await imgClip(cta3Img, cta3Audio.path, cta3Audio.dur, workDir, 'clip_cta3'));
 
-    // STEP 18: Hold 1s
     const holdSil = path.join(workDir, 'hold_sil.mp3');
     await silence(1.0, holdSil);
     pushClip(await imgClip(cta3Img, holdSil, 1.0, workDir, 'clip_hold'), false);
@@ -818,18 +836,19 @@ async function buildVideo(quiz, workDir) {
   // ════════ FINAL ASSEMBLY ════════
   console.log(`[VIDEO] Assembling ${clips.length} clips...`);
   const concatTxt = path.join(workDir, 'concat.txt');
-  await fs.writeFile(concatTxt, clips.map(c => `file '${c.path.replace(/'/g, "'\\''")}'`).join('\n'));
-
+  await fs.writeFile(concatTxt,
+    clips.map(c => `file '${c.path.replace(/'/g, "'\\''")}'`).join('\n')
+  );
   const concatenated = path.join(workDir, 'concatenated.mp4');
-  await execPromise(
-    `ffmpeg -y -f concat -safe 0 -i "${concatTxt}" -c:v libx264 -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k -ar 44100 -movflags +faststart "${concatenated}"`
+  await ffmpeg(
+    `-y -f concat -safe 0 -i "${concatTxt}" -c:v libx264 -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k -ar 44100 -movflags +faststart "${concatenated}"`,
+    'finalConcat'
   );
 
   const total = await videoDur(concatenated);
   console.log(`[VIDEO] Concatenated: ${total.toFixed(2)}s | voice ranges: ${voiceRanges.length}`);
 
-  const finalPath = await applyBgMusic(concatenated, total, voiceRanges, bgFile, workDir);
-  return finalPath;
+  return applyBgMusic(concatenated, total, voiceRanges, bgFile, workDir);
 }
 
 // ──────────────────────────────────────────────
