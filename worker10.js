@@ -70,6 +70,14 @@ const GAP_ANSWER      = 0.35;
 const DEFAULT_THINKING_TIME = 10;
 const MAX_TTS_FALLBACK_SEC = 6; // hard cap so a missing audio file can't balloon a clip
 
+// Hard per-segment duration caps — guarantee total video never exceeds 56s
+// even with maximum-length DB content. Sum of these caps (with QTIME=12) ≈ 51.7s.
+const CAP = {
+  hook: 4.0, introFlash: 2.0, qWaiting: 2.0, qReveal: 3.5,
+  oWaiting: 2.2, oReveal: 8.5, qtimeMax: 12, timeup: 2.5,
+  answer: 3.0, miCombined: 3.5, cta3: 4.5, ctaFinal: 4.0
+};
+
 const TIMEOUT_FFMPEG   = 120_000;
 const TIMEOUT_CURL     = 35_000;
 const TIMEOUT_TTS      = 40_000;
@@ -238,6 +246,33 @@ async function imgClip(img, audioP, dur, workDir, name) {
   return { path: out, dur: actualDur };
 }
 
+// recordedClip: screen-records the CURRENT page state for exactly `dur` seconds,
+// then muxes with the pre-built `audioP`. Used for EVERY segment so CSS animations
+// (logo glow pulse, niche background motion) actually play instead of freezing on
+// a single screenshot frame. `dur` is hard-clamped at mux time via -t.
+async function recordedClip(page, audioP, dur, workDir, name) {
+  const safeDur = Math.max(0.3, dur);
+  const rawVideo = path.join(workDir, `${name}_raw.mp4`);
+  const recorder = new PuppeteerScreenRecorder(page, { fps:30, videoFrame:{width:1080,height:1920}, aspectRatio:'9:16' });
+  await recorder.start(rawVideo);
+  await new Promise(r=>setTimeout(r, safeDur*1000));
+  await withTimeout(recorder.stop(), TIMEOUT_RECORDER, `${name} recorder.stop()`);
+
+  const h264 = path.join(workDir, `${name}_h264.mp4`);
+  await ffmpeg(`-y -i "${rawVideo}" -c:v libx264 -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264}"`, `${name} reencode`);
+
+  const out = path.join(workDir, `${name}.mp4`);
+  // -stream_loop -1 on the (already-correct-length) recording is harmless padding
+  // safety net in case the recording came in a hair short; -t hard-clamps either way.
+  await ffmpeg(
+    `-y -stream_loop -1 -i "${h264}" -i "${audioP}" -c:v libx264 -t ${safeDur} -pix_fmt yuv420p -r 30 ` +
+    `-c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 "${out}"`, `${name} mux`
+  );
+  const actualDur = await videoDur(out);
+  console.log(`[CLIP] ${name}: requested=${safeDur.toFixed(2)}s actual=${actualDur.toFixed(2)}s (recorded)`);
+  return { path: out, dur: actualDur };
+}
+
 // ─────────────────────────────────────────────
 // BG MUSIC DUCKING
 // ─────────────────────────────────────────────
@@ -390,7 +425,7 @@ async function buildVideo(quiz, workDir) {
   const miOptions  = quiz.mission_options_1           || [];
   const hasMI      = !!(miQuestion);
 
-  const QTIME    = Math.min(quiz.thinking_time_sec || DEFAULT_THINKING_TIME, 14);
+  const QTIME    = Math.min(quiz.thinking_time_sec || DEFAULT_THINKING_TIME, CAP.qtimeMax);
   // FIX (checklist item 10): 50/50 fires at 2/3 of thinking time, not 1/2
   const HINT_AT  = QTIME / 4;
   const FIFTY_AT = QTIME * 2 / 3;
@@ -490,88 +525,69 @@ async function buildVideo(quiz, workDir) {
     cursor+=clip.dur; clips.push(clip);
   }
 
-  // ══ DEDICATED THUMBNAIL — captured first, before any other state change ══
+  // ══ DEDICATED THUMBNAIL — captured first (static is fine, it's a still image by design) ══
   await showOnly('.thumb-screen');
   await new Promise(r=>setTimeout(r,500));
   const thumbImg = await shot('thumbnail_master');
   let thumbnailUrl = null;
   if (R2_CONFIGURED) thumbnailUrl = await uploadThumbnailToR2(thumbImg, quiz.id);
 
-  // ══ STEP 1: HOOK — SCREEN-RECORDED so logoPop + hook-text animations actually
-  // play (checklist item 28: a static screenshot can never show CSS animation) ══
+  // ══ STEP 1: HOOK — screen-recorded (logoPop + hook-text animations + glow) ══
   await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded'});
   await new Promise(r=>setTimeout(r,300));
   await showOnly('.hook-slide');
-  // Re-trigger animation from a clean state right before recording starts
   await page.evaluate(()=>{
     const lw = document.querySelector('.hook-slide .logo-wrap');
     const ht = document.querySelector('.hook-slide .hook-text');
     [lw,ht].forEach(el=>{ if(el){ el.style.animation='none'; el.offsetHeight; el.style.animation=''; }});
   });
-  const HOOK_RECORD_SEC = 2.6;
-  const hookRawVideo = path.join(workDir,'hook_raw.mp4');
-  const hookRecorder = new PuppeteerScreenRecorder(page,{fps:30,videoFrame:{width:1080,height:1920},aspectRatio:'9:16'});
-  await hookRecorder.start(hookRawVideo);
-  await new Promise(r=>setTimeout(r,HOOK_RECORD_SEC*1000));
-  await withTimeout(hookRecorder.stop(),TIMEOUT_RECORDER,'hookRecorder.stop()');
-
   const hookAudio = await buildAudio({
     prerecorded:hookFile, fallbackText:quiz.hook_phrase||'Stop scrolling!',
     fallbackSec:2.5, voice, leadGap:0.1, workDir, name:'hook'
   });
-  const hookClipDur = Math.min(Math.max(hookAudio.dur, HOOK_RECORD_SEC), 4.0); // hard cap 4s
-  const hookH264 = path.join(workDir,'hook_h264.mp4');
-  await ffmpeg(`-y -i "${hookRawVideo}" -c:v libx264 -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${hookH264}"`, 'hookReencode');
-  const hookClipPath = path.join(workDir,'clip_hook.mp4');
-  // Loop the recorded video if audio is longer than the recording, then hard-clamp to hookClipDur
-  await ffmpeg(
-    `-y -stream_loop -1 -i "${hookH264}" -i "${hookAudio.path}" -c:v libx264 -t ${hookClipDur} -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 "${hookClipPath}"`,
-    'hookFinalClip'
-  );
-  pushClip({ path: hookClipPath, dur: await videoDur(hookClipPath) });
+  const hookDur = Math.min(Math.max(hookAudio.dur, 2.0), CAP.hook);
+  pushClip(await recordedClip(page, hookAudio.path, hookDur, workDir, 'clip_hook'));
 
   // ══ STEP 2: quiz_intro_speech — 2s WHITE FLASH (checklist item 2a) ══
   await showOnly('.intro-flash-slide');
-  await new Promise(r=>setTimeout(r,250));
-  const flashImg = await shot('intro_flash');
-  const flashSil = path.join(workDir,'flash_sil.mp3'); await silence(2.0,flashSil);
-  pushClip(await imgClip(flashImg,flashSil,2.0,workDir,'clip_flash'),false);
+  await new Promise(r=>setTimeout(r,100));
+  const flashSil = path.join(workDir,'flash_sil.mp3'); await silence(CAP.introFlash,flashSil);
+  pushClip(await recordedClip(page, flashSil, CAP.introFlash, workDir, 'clip_flash'), false);
 
-  // ══ STEP 3a: question_intro_audio_url plays, question HIDDEN (checklist item 4a fix) ══
+  // ══ STEP 3a: question_intro_audio_url plays, question HIDDEN (glow/bg animate) ══
   await showOnly('.question-waiting-slide');
-  await new Promise(r=>setTimeout(r,200));
-  const qWaitImg = await shot('question_waiting');
+  await new Promise(r=>setTimeout(r,100));
   const qIntroAudio = await buildAudio({
     prerecorded: questionIntroFile, fallbackText: '', fallbackSec: 0.8,
     voice, leadGap: 0.15, workDir, name: 'qintro'
   });
-  pushClip(await imgClip(qWaitImg, qIntroAudio.path, qIntroAudio.dur, workDir, 'clip_qwait'), false);
+  const qWaitDur = Math.min(qIntroAudio.dur, CAP.qWaiting);
+  pushClip(await recordedClip(page, qIntroAudio.path, qWaitDur, workDir, 'clip_qwait'), false);
 
-  // ══ STEP 3b: question_1 REVEALED + sfx + TTS (checklist item 4b) ══
+  // ══ STEP 3b: question_1 REVEALED + sfx + TTS ══
   await showOnly('.question-appear-slide');
-  await new Promise(r=>setTimeout(r,500));
-  const qAppearImg = await shot('question_appear');
+  await new Promise(r=>setTimeout(r,100));
   const step3bParts=[];
   if(sfxFile){ const g=path.join(workDir,'sfx_gap.mp3'); await silence(0.1,g); step3bParts.push(sfxFile,g); }
   const qTts=path.join(workDir,'q_tts.mp3'); await tts(question,voice,qTts,3); step3bParts.push(qTts);
   const step3bCombined=path.join(workDir,'step3b.mp3');
   await concatAudio(step3bParts,step3bCombined,workDir);
-  pushClip(await imgClip(qAppearImg,step3bCombined,Math.max(await audioDur(step3bCombined),2),workDir,'clip_q_reveal'));
+  const qRevealDur = Math.min(Math.max(await audioDur(step3bCombined),2), CAP.qReveal);
+  pushClip(await recordedClip(page, step3bCombined, qRevealDur, workDir, 'clip_q_reveal'));
 
-  // ══ STEP 4a: options_intro_audio_url plays, options HIDDEN (checklist item 6a fix) ══
+  // ══ STEP 4a: options_intro_audio_url plays, options HIDDEN ══
   await showOnly('.options-waiting-slide');
-  await new Promise(r=>setTimeout(r,200));
-  const oWaitImg = await shot('options_waiting');
+  await new Promise(r=>setTimeout(r,100));
   const oIntroAudio = await buildAudio({
     prerecorded: optionsIntroFile, fallbackText: 'And your options are', fallbackSec: 1.5,
     voice, leadGap: GAP_OPTIONS, workDir, name: 'ointro'
   });
-  pushClip(await imgClip(oWaitImg, oIntroAudio.path, oIntroAudio.dur, workDir, 'clip_owait'), false);
+  const oWaitDur = Math.min(oIntroAudio.dur, CAP.oWaiting);
+  pushClip(await recordedClip(page, oIntroAudio.path, oWaitDur, workDir, 'clip_owait'), false);
 
-  // ══ STEP 4b: options_1 REVEALED + sfx + TTS each + "time starts now" (checklist item 6b,7) ══
+  // ══ STEP 4b: options_1 REVEALED + sfx + TTS each + "time starts now" ══
   await showOnly('.question-static');
-  await new Promise(r=>setTimeout(r,500));
-  const optionsImg = await shot('options_static');
+  await new Promise(r=>setTimeout(r,100));
   const s4bp=[];
   if(sfxFile){ const sg=path.join(workDir,'sfxgap2.mp3'); await silence(0.1,sg); s4bp.push(sfxFile,sg); }
   for(let i=0;i<options.length;i++){
@@ -586,20 +602,13 @@ async function buildVideo(quiz, workDir) {
   s4bp.push(sng,snt);
   const step4bCombined=path.join(workDir,'step4b.mp3');
   await concatAudio(s4bp,step4bCombined,workDir);
-  pushClip(await imgClip(optionsImg,step4bCombined,Math.max(await audioDur(step4bCombined),3),workDir,'clip_options_reveal'));
+  const oRevealDur = Math.min(Math.max(await audioDur(step4bCombined),3), CAP.oReveal);
+  pushClip(await recordedClip(page, step4bCombined, oRevealDur, workDir, 'clip_options_reveal'));
 
-  // ══ STEP 6-8: COUNTDOWN — screen recorded, 50/50 at 2/3 of QTIME ══
-  await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded'});
-  await new Promise(r=>setTimeout(r,400));
+  // ══ STEP 6-8: COUNTDOWN — already screen-recorded, 50/50 at 2/3 of QTIME ══
   await showOnly('.question-phase');
   await page.evaluate(()=>{ document.querySelector('.question-phase')?.offsetHeight; });
   await new Promise(r=>setTimeout(r,100));
-
-  const rawVideo=path.join(workDir,'phase_raw.mp4');
-  const recorder=new PuppeteerScreenRecorder(page,{fps:30,videoFrame:{width:1080,height:1920},aspectRatio:'9:16'});
-  await recorder.start(rawVideo);
-  await new Promise(r=>setTimeout(r,QTIME*1000));
-  await withTimeout(recorder.stop(),TIMEOUT_RECORDER,'recorder.stop()');
 
   const cdBase=path.join(workDir,'cd_base.mp3');
   if(countdownFile){ await ffmpeg(`-y -stream_loop -1 -i "${countdownFile}" -t ${QTIME} -af "volume=0.75" -ar 44100 -acodec libmp3lame "${cdBase}"`, 'cdLoop'); }
@@ -611,51 +620,40 @@ async function buildVideo(quiz, workDir) {
     await ffmpeg(`-y -i "${cdBase}" -i "${sfxFile}" -i "${sfxFile}" -filter_complex "[1:a]adelay=${hMs}|${hMs}[s0];[2:a]adelay=${fMs}|${fMs}[s1];[0:a][s0][s1]amix=inputs=3:duration=first[a]" -map "[a]" -t ${QTIME} -ar 44100 -acodec libmp3lame "${stingMixed}"`, 'cdStings');
     cdFinal=stingMixed;
   }
-  const qClipRaw=path.join(workDir,'phase_h264.mp4'), qClipPath=path.join(workDir,'clip_countdown.mp4');
-  await ffmpeg(`-y -i "${rawVideo}" -c:v libx264 -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${qClipRaw}"`, 'reencodeRecording');
-  await ffmpeg(`-y -i "${qClipRaw}" -i "${cdFinal}" -c:v libx264 -c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 -shortest -t ${QTIME} "${qClipPath}"`, 'countdownClip');
-  pushClip({path:qClipPath,dur:await videoDur(qClipPath)});
+  pushClip(await recordedClip(page, cdFinal, QTIME, workDir, 'clip_countdown'));
 
-  // ══ STEP 9: Timeup — audio only, no text changes ══
-  await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded'});
-  await new Promise(r=>setTimeout(r,300));
+  // ══ STEP 9: Timeup — audio only, no text changes (bg/logo still animate) ══
   await showOnly('.pre-reveal-slide');
-  const preRevealImg = await shot('pre_reveal');
+  await new Promise(r=>setTimeout(r,100));
   const timeupAudio = await buildAudio({
     prerecorded:timeupFile, fallbackText:quiz.timeup_text||"Time's up!",
     fallbackSec:2, voice, leadGap:GAP_DEFAULT, workDir, name:'timeup'
   });
-  pushClip(await imgClip(preRevealImg,timeupAudio.path,timeupAudio.dur,workDir,'clip_timeup'));
+  const timeupDur = Math.min(timeupAudio.dur, CAP.timeup);
+  pushClip(await recordedClip(page, timeupAudio.path, timeupDur, workDir, 'clip_timeup'));
 
   // ══ STEP 10: Answer reveal ══
   await showOnly('.answer-slide');
-  await new Promise(r=>setTimeout(r,300));
-  const answerImg = await shot('answer');
+  await new Promise(r=>setTimeout(r,100));
   const s10p=[];
   const silRev=path.join(workDir,'sil_reveal.mp3'); await silence(GAP_ANSWER,silRev); s10p.push(silRev);
   if(correctSfxFile){ s10p.push(correctSfxFile); const sg3=path.join(workDir,'sfxgap3.mp3'); await silence(0.15,sg3); s10p.push(sg3); }
   const correctTts=path.join(workDir,'correct_tts.mp3'); await tts(correct,voice,correctTts,1.5); s10p.push(correctTts);
   const step10Combined=path.join(workDir,'step10.mp3');
   await concatAudio(s10p,step10Combined,workDir);
-  pushClip(await imgClip(answerImg,step10Combined,Math.max(await audioDur(step10Combined),2),workDir,'clip_answer'));
+  const answerDur = Math.min(Math.max(await audioDur(step10Combined),2), CAP.answer);
+  pushClip(await recordedClip(page, step10Combined, answerDur, workDir, 'clip_answer'));
 
-  // ══ MISSION IMPOSSIBLE — comes BEFORE the final CTA (checklist item 30).
-  // Skip entirely if mission_impossible_question is null.
-  // ONE combined screen: title + tagline + question + 4 options appear TOGETHER
-  // (sfx_mission_impossible then mission_intro_audio, NO TTS on Q/options).
-  // After 2.5s, cta3 fades in with cta3 audio. No 1s hold (item 31b). ══
+  // ══ MISSION IMPOSSIBLE — comes BEFORE the final CTA. Skip if mission_impossible_question
+  // is null. ONE combined screen: title+tagline+question+4 options appear TOGETHER. ══
   if (hasMI) {
-    // ── State A: everything visible EXCEPT cta3 ──
     await showOnly('.mission-final-slide');
     await page.evaluate(()=>{
       const c=document.getElementById('mi-cta3');
       if(c) c.classList.remove('show-cta3');
     });
-    await new Promise(r=>setTimeout(r,400));
-    const miImg = await shot('mi_combined');
+    await new Promise(r=>setTimeout(r,150));
 
-    // Audio: sfx_mission THEN mission_intro_audio. Pad to >= 2.5s so cta3 appears
-    // "after 2.5 sec" from when the title+question+options appeared (item 23).
     const miParts=[];
     if(sfxMissionFile){ miParts.push(sfxMissionFile); const g=path.join(workDir,'sfx_mi_gap.mp3'); await silence(0.25,g); miParts.push(g); }
     if(missionIntroFile){ miParts.push(missionIntroFile); }
@@ -670,36 +668,36 @@ async function buildVideo(quiz, workDir) {
       await concatAudio([miAudioRaw,pad],miAudio,workDir);
       miAudioDur = 2.5;
     }
-    pushClip(await imgClip(miImg,miAudio,Math.max(miAudioDur,2.5),workDir,'clip_mi'));
+    const miDur = Math.min(Math.max(miAudioDur,2.5), CAP.miCombined);
+    pushClip(await recordedClip(page, miAudio, miDur, workDir, 'clip_mi'));
 
-    // ── State B: cta3 fades in + cta3 audio (prerecorded or TTS fallback) ──
+    // cta3 fades in + cta3 audio
     await page.evaluate(()=>{
       const c=document.getElementById('mi-cta3');
       if(c) c.classList.add('show-cta3');
     });
-    await new Promise(r=>setTimeout(r,400));
-    const cta3Img = await shot('mi_with_cta3');
+    await new Promise(r=>setTimeout(r,150));
     const cta3Audio = await buildAudio({
       prerecorded:cta3AudioFile, fallbackText:quiz.cta3_text||'Like, share and challenge a friend! Subscribe!',
       fallbackSec:4, voice, leadGap:0.15, workDir, name:'cta3'
     });
-    pushClip(await imgClip(cta3Img,cta3Audio.path,cta3Audio.dur,workDir,'clip_cta3'));
+    const cta3Dur = Math.min(cta3Audio.dur, CAP.cta3);
+    pushClip(await recordedClip(page, cta3Audio.path, cta3Dur, workDir, 'clip_cta3'));
   }
 
-  // ══ FINAL CTA — comes LAST, after MI (checklist item 30). ONE cta only:
-  // CTA1 if affiliate/cta1_description_text exists, else CTA2 (item 17/25). ══
+  // ══ FINAL CTA — comes LAST, after MI. ONE cta only: CTA1 if affiliate/
+  // cta1_description_text exists, else CTA2. ══
   await showOnly(hasCta1?'.cta1-slide':'.cta2-slide');
-  await new Promise(r=>setTimeout(r,400));
-  const ctaImg = await shot('cta');
+  await new Promise(r=>setTimeout(r,150));
   const ctaAudio = await buildAudio({
     prerecorded:hasCta1?cta1AudioFile:cta2AudioFile,
-    // Hard default fallback strings guarantee CTA2 always has audio (item 26 fix)
     fallbackText:hasCta1
       ?(cta1Desc||quiz.affiliate_text||'Check the exclusive link in the description below!')
       :(quiz.cta2_text||'Play the real quiz and earn O.N.S tokens! Tap the link now!'),
     fallbackSec:3, voice, leadGap:GAP_DEFAULT, workDir, name:hasCta1?'cta1':'cta2'
   });
-  pushClip(await imgClip(ctaImg,ctaAudio.path,ctaAudio.dur,workDir,'clip_cta'));
+  const ctaDur = Math.min(ctaAudio.dur, CAP.ctaFinal);
+  pushClip(await recordedClip(page, ctaAudio.path, ctaDur, workDir, 'clip_cta'));
 
   await browser.close();
 
