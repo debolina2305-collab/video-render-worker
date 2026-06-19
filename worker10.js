@@ -180,13 +180,14 @@ async function silence(sec, out) {
 
 // TTS with a hard duration cap — prevents one missing audio file from
 // silently ballooning a clip (root cause candidate for checklist item 27b)
-async function tts(text, voice, out, fallbackSec = 1.5) {
+async function tts(text, voice, out, fallbackSec = 1.5, rate = null) {
   const t = (text || '').trim();
   if (!t) { await silence(fallbackSec, out); return; }
   const tmp = out + '.txt';
   await fs.writeFile(tmp, t, 'utf8');
+  const rateArg = rate ? ` --rate="${rate}"` : '';
   try {
-    await withTimeout(execPromise(`edge-tts --voice "${voice}" --file "${tmp}" --write-media "${out}"`), TIMEOUT_TTS, 'tts');
+    await withTimeout(execPromise(`edge-tts --voice "${voice}"${rateArg} --file "${tmp}" --write-media "${out}"`), TIMEOUT_TTS, 'tts');
     if (!(await fileExists(out)) || (await audioDur(out)) === 0) { console.warn('[TTS WARN] empty output'); await silence(fallbackSec, out); }
     else {
       const d = await audioDur(out);
@@ -611,7 +612,7 @@ async function buildVideo(quiz, workDir) {
   for(let i=0;i<options.length;i++){
     if(!options[i]) continue;
     const os=path.join(workDir,`o_sil_${i}.mp3`); await silence(0.2,os);
-    const ot=path.join(workDir,`o_tts_${i}.mp3`); await tts(`${String.fromCharCode(65+i)}. ${options[i]}`,voice,ot,1);
+    const ot=path.join(workDir,`o_tts_${i}.mp3`); await tts(`${String.fromCharCode(65+i)}. ${options[i]}`,voice,ot,1,'+100%');
     s4bp.push(os,ot);
   }
   const sng=path.join(workDir,'start_now_gap.mp3'); await silence(0.3,sng);
