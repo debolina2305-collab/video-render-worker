@@ -21,16 +21,8 @@
 @keyframes logoPop { to { opacity:1; transform:scale(1) rotate(0deg); } }
 .logo-wrap img { width:80%; height:80%; object-fit:contain; }
 
-/* ===== QUIZ INTRO SPEECH (step 2 waiting-slide) ===== */
-.intro-speech {
-  font-size:46px; font-weight:700; line-height:1.5; text-align:center;
-  color:#fff; padding:0 40px; margin-top:30px;
-  opacity:0; animation: fadeUp 0.7s ease-out 0.3s forwards;
-}
-@keyframes fadeUp { from{opacity:0;transform:translateY(30px);} to{opacity:1;transform:translateY(0);} }
-
-/* ===== OPTION CARD EXCELLENCE ===== */
-.qp-options { width:100%; display:flex; flex-direction:column; gap:24px; opacity:0; animation: fadeUp 0.7s ease-out 0.2s forwards; }
+/* ===== OPTION CARDS ===== */
+.qp-options { width:100%; display:flex; flex-direction:column; gap:24px; }
 .qp-option {
   display:flex; align-items:center; gap:24px;
   background: linear-gradient(135deg, rgba(255,255,255,0.09), rgba(255,255,255,0.04));
@@ -59,51 +51,121 @@
 @keyframes pulseCorrect { 0%,100%{transform:scale(1);} 50%{transform:scale(1.025);} }
 .qp-option.wrong { opacity:0.15; }
 
-/* ===== MISSION IMPOSSIBLE LABEL — FIX 20: two-size layout ===== */
+/* ===== MISSION IMPOSSIBLE — single combined screen, NO hint anywhere ===== */
 .mission-title-huge {
   font-size:96px; font-weight:900; letter-spacing:4px; text-transform:uppercase;
-  color:#ff3b3b; line-height:1.1; text-align:center;
+  color:#ff3b3b; line-height:1.0; text-align:center;
   text-shadow:0 0 40px rgba(255,59,59,0.9), 0 0 80px rgba(255,59,59,0.5);
   animation: shakeLabel 0.5s ease-in-out infinite alternate;
-  margin-bottom:20px;
+  margin-bottom:24px;
 }
 .mission-tagline {
-  font-size:42px; font-weight:700; color:#fff; text-align:center;
-  opacity:0; animation: fadeUp 0.7s ease-out 0.4s forwards;
+  font-size:44px; font-weight:700; color:#fff; text-align:center;
 }
-@keyframes shakeLabel { from{transform:rotate(-1.5deg) scale(1);} to{transform:rotate(1.5deg) scale(1.04);} }
-
-/* Re-use for mission-final-slide label (smaller) */
-.mission-label {
-  font-size:52px; font-weight:900; letter-spacing:6px; text-transform:uppercase;
-  color:#ff3b3b; margin-bottom:32px;
-  text-shadow:0 0 30px rgba(255,59,59,0.8);
+.mission-label-small {
+  font-size:42px; font-weight:900; letter-spacing:5px; text-transform:uppercase;
+  color:#ff3b3b; margin-bottom:28px;
+  text-shadow:0 0 24px rgba(255,59,59,0.7);
   animation: shakeLabel 0.6s ease-in-out infinite alternate;
 }
 .mission-question {
-  font-size:58px; font-weight:900; line-height:1.4; margin-bottom:40px;
-  opacity:0; animation: bounceIn 0.7s cubic-bezier(.34,1.8,.64,1) forwards;
+  font-size:52px; font-weight:900; line-height:1.35; margin-bottom:30px;
 }
-@keyframes bounceIn { to{opacity:1;transform:translateY(0) scale(1);} }
-.mission-hint {
-  font-size:40px; font-weight:600; color:#ffd166;
-  background:rgba(255,209,102,0.12); border:2px dashed #ffd166;
-  border-radius:20px; padding:30px; opacity:0;
-  transition: opacity 0.5s ease, transform 0.5s ease;
-  transform: scale(0.9);
+.mi-options { width:100%; display:flex; flex-direction:column; gap:18px; margin-bottom:10px; }
+.mi-option {
+  display:flex; align-items:center; gap:20px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+  border:2px solid rgba(255,80,80,0.25); border-radius:24px;
+  padding:24px 28px; font-size:34px; font-weight:700; text-align:left;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.35);
 }
-.mission-hint.shown { opacity:1; transform:scale(1); }
+.mi-option-badge {
+  flex-shrink:0; width:54px; height:54px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:28px; font-weight:900; color:#fff;
+  background: linear-gradient(135deg, #ff3b3b, #ff8800);
+  box-shadow: 0 0 16px rgba(255,59,59,0.5);
+}
+/* cta3 hidden by default via class, not inline style, so JS toggling is unambiguous */
 .cta3-text {
-  opacity:0; transform:translateY(30px) scale(0.9);
-  transition: opacity 0.5s ease, transform 0.5s ease;
+  opacity:0 !important; transform:translateY(30px) scale(0.9) !important;
+  transition:opacity 0.5s ease, transform 0.5s ease;
 }
-.cta3-text.show-cta3 { opacity:1; transform:translateY(0) scale(1); }
+.cta3-text.show-cta3 {
+  opacity:1 !important; transform:translateY(0) scale(1) !important;
+}
+@keyframes shakeLabel { from{ transform:rotate(-1.5deg) scale(1);} to{ transform:rotate(1.5deg) scale(1.04);} }
 
+/* ===== CTA2 platform URL — HIGH CONTRAST finger pointer block (checklist 27) ===== */
+.cta-url-finger {
+  display:flex; align-items:center; gap:20px; justify-content:center;
+  font-size:34px; font-weight:900;
+  background:#ffffff; color:#0a0014;
+  border-radius:24px; padding:26px 40px;
+  box-shadow:0 0 60px rgba(255,255,255,0.6), 0 12px 30px rgba(0,0,0,0.5);
+  border:4px solid #000;
+}
+.cta-url-finger .finger { font-size:52px; animation: fingerPoint 1s ease-in-out infinite; }
+@keyframes fingerPoint { 0%,100%{transform:translateX(0);} 50%{transform:translateX(12px);} }
+
+/* ===== DEDICATED THUMBNAIL DESIGN ===== */
+.thumb-screen { padding:0; }
+.thumb-bg-overlay {
+  position:absolute; inset:0; z-index:2;
+  background: linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.55) 55%, rgba(0,0,0,0.85) 100%);
+}
+.thumb-content {
+  position:relative; z-index:5; width:100%; height:100%;
+  display:flex; flex-direction:column; justify-content:space-between;
+  padding:70px 56px;
+}
+.thumb-top { display:flex; flex-direction:column; align-items:center; }
+.thumb-logo {
+  width:140px; height:140px; border-radius:50%;
+  background:rgba(5,3,15,0.85);
+  border:5px solid var(--accent-3);
+  box-shadow:0 0 50px color-mix(in srgb, var(--accent-3) 70%, transparent);
+  display:flex; align-items:center; justify-content:center;
+  margin-bottom:30px; overflow:hidden;
+}
+.thumb-logo img { width:75%; height:75%; object-fit:contain; }
+.thumb-hook {
+  font-size:64px; font-weight:900; text-align:center; line-height:1.2;
+  color:#fff;
+  text-shadow: 0 0 30px rgba(0,0,0,0.9), 0 4px 12px rgba(0,0,0,0.8);
+  -webkit-text-stroke: 2px rgba(0,0,0,0.3);
+}
+.thumb-badge {
+  display:inline-block; align-self:center;
+  font-size:30px; font-weight:900; letter-spacing:4px; text-transform:uppercase;
+  color:#fff; padding:16px 40px; border-radius:50px; margin-top:24px;
+  background:linear-gradient(135deg, var(--accent-1), var(--accent-3));
+  box-shadow:0 0 50px color-mix(in srgb, var(--accent-1) 80%, transparent), 0 8px 24px rgba(0,0,0,0.5);
+}
+.thumb-question-card {
+  width:100%; background:rgba(8,4,20,0.72);
+  border:4px solid color-mix(in srgb, var(--accent-2) 60%, transparent);
+  border-radius:40px; padding:50px 44px;
+  box-shadow: 0 0 70px color-mix(in srgb, var(--accent-2) 50%, transparent), 0 20px 60px rgba(0,0,0,0.6);
+  backdrop-filter: blur(10px);
+}
+.thumb-question-label {
+  font-size:26px; font-weight:900; letter-spacing:6px; text-transform:uppercase;
+  color: var(--accent-3); margin-bottom:18px;
+}
+.thumb-question-text {
+  font-size:58px; font-weight:900; line-height:1.25; color:#fff;
+  text-shadow: 0 4px 16px rgba(0,0,0,0.6);
+}
+
+/* ===== Helper: hide an element completely (used for "not yet revealed" states) ===== */
+.hidden-pre-reveal { opacity:0 !important; visibility:hidden !important; }
 </style>
 </head>
 <body>
 
-  <!-- STEP 1: HOOK + animated logo -->
+  <!-- STEP 1: HOOK + animated logo. This screen is SCREEN-RECORDED (not screenshotted)
+       so the logoPop + hook-text animations actually play in the final video. -->
   <div class="screen hook-slide active">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div><div class="bg-orb orb3"></div>
@@ -116,7 +178,7 @@
     </div>
   </div>
 
-  <!-- STEP 2: quiz_intro_speech — text appears + prerecorded/TTS audio -->
+  <!-- STEP 2: quiz_intro_speech (not required per checklist — kept but unused) -->
   <div class="screen waiting-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -125,24 +187,53 @@
       <div class="logo-wrap" style="opacity:1;transform:scale(1) rotate(0deg);animation:none;">
         <img src="{{LOGO_DATA_URI}}" alt="JAASX">
       </div>
-      <!-- FIX 2a: show quiz_intro_speech text -->
       <div class="intro-speech">{{quiz_intro_speech}}</div>
     </div>
   </div>
 
-  <!-- STEP 3: Question appears -->
-  <div class="screen question-appear-slide">
+  <!-- STEP 3a: question_intro_audio_url plays — question TEXT HIDDEN -->
+  <div class="screen question-waiting-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
     <div class="content">
-      <div class="qp-card-question">
+      <div class="qp-card-question" style="opacity:0;animation:none;">
         <div class="qp-question">{{question}}</div>
       </div>
     </div>
   </div>
 
-  <!-- STEP 4-5: Options + timer (static, not yet draining) -->
+  <!-- STEP 3b: question_1 REVEALED + TTS -->
+  <div class="screen question-appear-slide">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="content">
+      <div class="qp-card-question" style="opacity:1;animation:none;">
+        <div class="qp-question">{{question}}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 4a: options_intro_audio_url plays — options HIDDEN, question stays visible -->
+  <div class="screen options-waiting-slide">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="content">
+      <div class="qp-card-question" style="opacity:1;animation:none;">
+        <div class="qp-question">{{question}}</div>
+      </div>
+      <div class="qp-options" style="opacity:0;">
+        <div class="qp-option"><span class="qp-option-badge">A</span>{{options[0]}}</div>
+        <div class="qp-option"><span class="qp-option-badge">B</span>{{options[1]}}</div>
+        <div class="qp-option"><span class="qp-option-badge">C</span>{{options[2]}}</div>
+        <div class="qp-option"><span class="qp-option-badge">D</span>{{options[3]}}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 4b: options_1 REVEALED + TTS + "time starts now" -->
   <div class="screen question-static">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -160,7 +251,7 @@
         </svg>
         <div class="qp-timer-number">⏱️</div>
       </div>
-      <div class="qp-options" style="opacity:1;animation:none;">
+      <div class="qp-options" style="opacity:1;">
         <div class="qp-option"><span class="qp-option-badge">A</span>{{options[0]}}</div>
         <div class="qp-option"><span class="qp-option-badge">B</span>{{options[1]}}</div>
         <div class="qp-option"><span class="qp-option-badge">C</span>{{options[2]}}</div>
@@ -169,7 +260,7 @@
     </div>
   </div>
 
-  <!-- STEP 6-8: COUNTDOWN — screen recorded. Timer drains. Hint at 1/4. 50/50 at 1/2. -->
+  <!-- STEP 6-8: COUNTDOWN — screen recorded. 50/50 at 2/3 of QTIME (checklist item 10) -->
   <div class="screen question-phase"
        style="--qtime:{{qtime}}s;--hint-time:{{hint_time}}s;--fiftyfifty-time:{{fiftyfifty_time}}s;">
     <div class="bg-anim"></div><div class="bg-grid"></div>
@@ -193,18 +284,17 @@
         </svg>
         <div class="qp-timer-number">⏱️</div>
       </div>
-      <div class="qp-options" style="opacity:1;animation:none;">
+      <div class="qp-options" style="opacity:1;">
         <div class="qp-option {{opt0_class}}"><span class="qp-option-badge">A</span>{{options[0]}}</div>
         <div class="qp-option {{opt1_class}}"><span class="qp-option-badge">B</span>{{options[1]}}</div>
         <div class="qp-option {{opt2_class}}"><span class="qp-option-badge">C</span>{{options[2]}}</div>
         <div class="qp-option {{opt3_class}}"><span class="qp-option-badge">D</span>{{options[3]}}</div>
       </div>
-      <!-- FIX 9: "Hint: " prefix added -->
       <div class="qp-hint">🧩 Hint: {{hint}}</div>
     </div>
   </div>
 
-  <!-- STEP 9: PRE-REVEAL — timeup audio, no text shown -->
+  <!-- STEP 9: PRE-REVEAL — audio only, no text changes -->
   <div class="screen pre-reveal-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -213,7 +303,7 @@
       <div class="qp-card-question" style="opacity:1;animation:none;">
         <div class="qp-question">{{question}}</div>
       </div>
-      <div class="qp-options" style="opacity:1;animation:none;">
+      <div class="qp-options" style="opacity:1;">
         <div class="qp-option"><span class="qp-option-badge">A</span>{{options[0]}}</div>
         <div class="qp-option"><span class="qp-option-badge">B</span>{{options[1]}}</div>
         <div class="qp-option"><span class="qp-option-badge">C</span>{{options[2]}}</div>
@@ -236,7 +326,7 @@
     <div class="confetti-piece" style="left:91%;width:20px;height:34px;background:var(--accent-1);animation-duration:2.7s;animation-delay:0.15s;"></div>
     <div class="content">
       <div class="answer-badge">✅ {{correct_answer}}</div>
-      <div class="qp-options" style="opacity:1;animation:none;">
+      <div class="qp-options" style="opacity:1;">
         <div class="qp-option {{rev0_class}}"><span class="qp-option-badge">A</span>{{options[0]}}</div>
         <div class="qp-option {{rev1_class}}"><span class="qp-option-badge">B</span>{{options[1]}}</div>
         <div class="qp-option {{rev2_class}}"><span class="qp-option-badge">C</span>{{options[2]}}</div>
@@ -245,32 +335,19 @@
     </div>
   </div>
 
-  <!-- STEP 11: EXPLANATION -->
-  <div class="screen explanation-slide">
-    <div class="bg-anim"></div><div class="bg-grid"></div>
-    <div class="bg-orb orb1"></div><div class="bg-orb orb3"></div>
-    {{theme_deco_html}}
-    <div class="content">
-      <div class="badge-label">🧠 Why?</div>
-      <div class="explanation-card">
-        <div class="explanation-text">{{explanation}}</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- CTA1: affiliate -->
+  <!-- CTA1: affiliate (checklist item 17) -->
   <div class="screen cta1-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
     <div class="content">
       <div class="badge-label">💳 Exclusive Deal</div>
-      <div class="cta-text glow-text">{{affiliate_text}}</div>
+      <div class="cta-text glow-text">{{cta1_description_text}}</div>
       <div class="cta-url">🔗 Link in description</div>
     </div>
   </div>
 
-  <!-- CTA2: platform fallback -->
+  <!-- CTA2: SINGLE SCREEN combining items 25-27 — cta2_description_text + finger + URL -->
   <div class="screen cta2-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -278,11 +355,12 @@
     <div class="content">
       <div class="badge-label">🏆 Real Challenge</div>
       <div class="cta-text glow-text">{{cta2_text}}</div>
-      <div class="cta-url">🌐 jaasblog.online/quiz/{{niche}}</div>
+      <div class="cta-url-finger"><span class="finger">👉</span><span>{{platform_url}}</span></div>
     </div>
   </div>
 
-  <!-- STEP 14: Mission Impossible INTRO — FIX 20: huge title + normal tagline -->
+  <!-- MISSION IMPOSSIBLE — items 18-24 in ONE combined screen, JS toggles reveal state.
+       NO hint, NO 50-50, NO correct-answer reveal — question + 4 options only, then cta3. -->
   <div class="screen mission-intro-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -293,25 +371,41 @@
     </div>
   </div>
 
-  <!-- STEP 15-18: Mission question + hint + CTA3
-       State A: question only (hint + cta3 hidden via inline style)
-       State B: question + hint (cta3 hidden)
-       State C: question + hint + cta3 (final hold frame) -->
   <div class="screen mission-final-slide">
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
     <div class="content">
-      <div class="mission-label">🔥 Mission Impossible</div>
+      <div class="mission-label-small">🔥 Mission Impossible</div>
       <div class="mission-question" id="mi-question">{{mission_question}}</div>
-      <!-- FIX 9-style: no "Hint" prefix needed here since it's MI hint -->
-      <div class="mission-hint" id="mi-hint" style="opacity:0;transform:scale(0.9);">
-        💡 {{mission_hint}}
+      <div class="mi-options" id="mi-options">
+        <div class="mi-option"><span class="mi-option-badge">A</span>{{mi_option_0}}</div>
+        <div class="mi-option"><span class="mi-option-badge">B</span>{{mi_option_1}}</div>
+        <div class="mi-option"><span class="mi-option-badge">C</span>{{mi_option_2}}</div>
+        <div class="mi-option"><span class="mi-option-badge">D</span>{{mi_option_3}}</div>
       </div>
-      <div class="cta3-text cta-text glow-text" id="mi-cta3"
-           style="margin-top:44px;font-size:40px;opacity:0;transform:translateY(30px) scale(0.9);">
+      <div class="cta3-text cta-text glow-text" id="mi-cta3" style="margin-top:36px;font-size:38px;">
         {{cta3_text}}<br>
-        <span style="font-size:34px;color:var(--accent-1);">🌐 jaasblog.online/quiz/{{niche}}</span>
+        <span style="font-size:32px;color:var(--accent-1);">👉 {{platform_url}}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- DEDICATED THUMBNAIL SCREEN -->
+  <div class="screen thumb-screen">
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div><div class="bg-orb orb3"></div>
+    {{theme_deco_html}}
+    <div class="thumb-bg-overlay"></div>
+    <div class="thumb-content">
+      <div class="thumb-top">
+        <div class="thumb-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+        <div class="thumb-hook">{{hook_phrase}}</div>
+        <div class="thumb-badge">⚡ {{niche}} Quiz</div>
+      </div>
+      <div class="thumb-question-card">
+        <div class="thumb-question-label">Can You Answer?</div>
+        <div class="thumb-question-text">{{question}}</div>
       </div>
     </div>
   </div>
