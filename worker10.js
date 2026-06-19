@@ -19,20 +19,21 @@ console.log('SUPABASE_SERVICE_KEY:', supabaseKey ? '*** (set)' : 'NOT SET');
 const cleanUrl = supabaseUrl ? supabaseUrl.replace(/\/$/, '') : null;
 if (!cleanUrl || !supabaseKey) { console.error('Missing Supabase credentials'); process.exit(1); }
 
-// R2 thumbnail upload — optional; if not configured, thumbnail step is skipped
-const R2_ACCOUNT_ID       = process.env.R2_ACCOUNT_ID;
-const R2_ACCESS_KEY_ID    = process.env.R2_ACCESS_KEY_ID;
-const R2_SECRET_ACCESS_KEY= process.env.R2_SECRET_ACCESS_KEY;
-const R2_BUCKET_NAME      = process.env.R2_BUCKET_NAME;
-const R2_PUBLIC_URL_BASE  = process.env.R2_PUBLIC_URL_BASE; // e.g. https://pub-xxxx.r2.dev
-const R2_CONFIGURED = !!(R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_BUCKET_NAME && R2_PUBLIC_URL_BASE);
+// R2 thumbnail upload — uses existing repo secrets
+const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY;
+const R2_SECRET_KEY = process.env.R2_SECRET_KEY;
+const R2_ENDPOINT   = process.env.R2_ENDPOINT;
+const R2_BUCKET     = process.env.R2_BUCKET;
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL;
+const R2_CONFIGURED = !!(R2_ACCESS_KEY && R2_SECRET_KEY && R2_ENDPOINT && R2_BUCKET && R2_PUBLIC_URL);
 if (!R2_CONFIGURED) {
-  console.warn('[R2] Thumbnail upload NOT configured — missing one of R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET_NAME/R2_PUBLIC_URL_BASE. Thumbnail will be skipped.');
+  console.warn('[R2] NOT configured — missing one of R2_ACCESS_KEY/R2_SECRET_KEY/R2_ENDPOINT/R2_BUCKET/R2_PUBLIC_URL.');
+} else {
+  console.log('[R2] Configured. Endpoint:', R2_ENDPOINT, '| Bucket:', R2_BUCKET);
 }
 const s3Client = R2_CONFIGURED ? new S3Client({
-  region: 'auto',
-  endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-  credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY }
+  region: 'auto', endpoint: R2_ENDPOINT,
+  credentials: { accessKeyId: R2_ACCESS_KEY, secretAccessKey: R2_SECRET_KEY }
 }) : null;
 
 // ─────────────────────────────────────────────
@@ -54,10 +55,10 @@ const BG_VOL_DUCK = 0.035;
 const DUCK_RAMP   = 0.12;
 
 const GAP_DEFAULT     = 0.25;
-const GAP_AFTER_STEP2 = 0.20;
-const GAP_OPTIONS     = 0.45;
+const GAP_OPTIONS     = 0.30;
 const GAP_ANSWER      = 0.35;
 const DEFAULT_THINKING_TIME = 10;
+const MAX_TTS_FALLBACK_SEC = 6; // hard cap so a missing audio file can't balloon a clip
 
 const TIMEOUT_FFMPEG   = 120_000;
 const TIMEOUT_CURL     = 35_000;
@@ -66,16 +67,13 @@ const TIMEOUT_RECORDER = 60_000;
 const TIMEOUT_JOB      = 45 * 60 * 1000;
 
 function withTimeout(p, ms, lbl) {
-  return Promise.race([p, new Promise((_, rej) =>
-    setTimeout(() => rej(new Error(`TIMEOUT ${ms}ms: ${lbl}`)), ms))]);
+  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`TIMEOUT ${ms}ms: ${lbl}`)), ms))]);
 }
 
 // ─────────────────────────────────────────────
 // SUPABASE
 // ─────────────────────────────────────────────
-const baseHeaders = {
-  apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}`, 'Content-Type': 'application/json'
-};
+const baseHeaders = { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' };
 async function fetchSupabase(p, opts = {}) {
   const url = `${cleanUrl}/rest/v1/${p}`;
   console.log(`[DB] ${opts.method || 'GET'} ${url}`);
@@ -126,22 +124,22 @@ function encodeR2Url(url) {
 
 async function downloadAudio(url, cacheKey, preferKey) {
   const resolved = extractUrl(url, preferKey);
-  if (!resolved) return null;
+  if (!resolved) { console.log(`[AUDIO] ${cacheKey}: source URL is null/empty — will use fallback`); return null; }
   await ensureDir(CACHE_DIR);
   const encoded = encodeR2Url(resolved);
   const safe    = cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_');
   const local   = path.join(CACHE_DIR, `${safe}.mp3`);
   if (await fileExists(local)) { console.log(`[CACHE HIT] ${safe}`); return local; }
-  console.log(`[DOWNLOAD] ${encoded}`);
+  console.log(`[DOWNLOAD] ${safe} <- ${encoded}`);
   const rawFile = path.join(CACHE_DIR, `${safe}_raw`);
   try {
     await withTimeout(execPromise(`curl -sL --fail "${encoded}" -o "${rawFile}" --max-time 30`), TIMEOUT_CURL, `download ${safe}`);
-    if (!(await fileExists(rawFile))) return null;
+    if (!(await fileExists(rawFile))) { console.warn(`[DOWNLOAD] ${safe}: curl produced no file`); return null; }
     const st = await fs.stat(rawFile);
-    if (st.size === 0) { await fs.unlink(rawFile).catch(()=>{}); return null; }
+    if (st.size === 0) { console.warn(`[DOWNLOAD] ${safe}: downloaded file is empty`); await fs.unlink(rawFile).catch(()=>{}); return null; }
     await withTimeout(execPromise(`ffmpeg -y -i "${rawFile}" -ar 44100 -ac 2 -acodec libmp3lame -q:a 4 "${local}"`), TIMEOUT_FFMPEG, `convert ${safe}`);
     await fs.unlink(rawFile).catch(()=>{});
-    if (await fileExists(local)) return local;
+    if (await fileExists(local)) { console.log(`[DOWNLOAD] ${safe}: OK (${(await audioDur(local)).toFixed(2)}s)`); return local; }
   } catch (e) {
     console.warn(`[DOWNLOAD FAIL] ${safe}: ${e.message}`);
     await fs.unlink(rawFile).catch(()=>{});
@@ -165,6 +163,8 @@ async function silence(sec, out) {
   await withTimeout(execPromise(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${s} -q:a 9 -acodec libmp3lame "${out}"`), 15_000, `silence ${s}s`);
 }
 
+// TTS with a hard duration cap — prevents one missing audio file from
+// silently ballooning a clip (root cause candidate for checklist item 27b)
 async function tts(text, voice, out, fallbackSec = 1.5) {
   const t = (text || '').trim();
   if (!t) { await silence(fallbackSec, out); return; }
@@ -172,7 +172,13 @@ async function tts(text, voice, out, fallbackSec = 1.5) {
   await fs.writeFile(tmp, t, 'utf8');
   try {
     await withTimeout(execPromise(`edge-tts --voice "${voice}" --file "${tmp}" --write-media "${out}"`), TIMEOUT_TTS, 'tts');
-    if (!(await fileExists(out)) || (await audioDur(out)) === 0) { console.warn('[TTS WARN] empty'); await silence(fallbackSec, out); }
+    if (!(await fileExists(out)) || (await audioDur(out)) === 0) { console.warn('[TTS WARN] empty output'); await silence(fallbackSec, out); }
+    else {
+      const d = await audioDur(out);
+      if (d > MAX_TTS_FALLBACK_SEC + 10) {
+        console.warn(`[TTS WARN] unexpectedly long TTS (${d.toFixed(1)}s) for text: "${t.slice(0,60)}..."`);
+      }
+    }
   } catch (e) { console.warn(`[TTS WARN] ${e.message}`); await silence(fallbackSec, out); }
   await fs.unlink(tmp).catch(()=>{});
 }
@@ -197,18 +203,29 @@ async function buildAudio({ prerecorded, fallbackText, fallbackSec, voice, leadG
   const gap   = leadGap != null ? leadGap : GAP_DEFAULT;
   await silence(gap, silP);
   if (prerecorded && await fileExists(prerecorded)) { await concatAudio([silP, prerecorded], outP, workDir); }
-  else { await tts(fallbackText || '', voice, audioP, fallbackSec || 1.5); await concatAudio([silP, audioP], outP, workDir); }
-  return { path: outP, dur: await audioDur(outP) };
+  else {
+    const cappedFallback = Math.min(fallbackSec || 1.5, MAX_TTS_FALLBACK_SEC);
+    await tts(fallbackText || '', voice, audioP, cappedFallback);
+    await concatAudio([silP, audioP], outP, workDir);
+  }
+  const dur = await audioDur(outP);
+  console.log(`[AUDIO] ${name}: ${dur.toFixed(2)}s (prerecorded=${!!prerecorded && await fileExists(prerecorded)})`);
+  return { path: outP, dur };
 }
 
+// imgClip ALWAYS enforces the exact requested duration via -t — this guarantees
+// no clip can silently run longer than intended (checklist item 27b root cause guard)
 async function imgClip(img, audioP, dur, workDir, name) {
   const out = path.join(workDir, `${name}.mp4`);
+  const safeDur = Math.max(0.3, dur);
   await ffmpeg(
-    `-y -loop 1 -i "${img}" -i "${audioP}" -c:v libx264 -t ${dur} -pix_fmt yuv420p -r 30 ` +
+    `-y -loop 1 -i "${img}" -i "${audioP}" -c:v libx264 -t ${safeDur} -pix_fmt yuv420p -r 30 ` +
     `-vf "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2" ` +
     `-c:a aac -b:a 128k -ar 44100 -shortest "${out}"`, `imgClip ${name}`
   );
-  return { path: out, dur };
+  const actualDur = await videoDur(out);
+  console.log(`[CLIP] ${name}: requested=${safeDur.toFixed(2)}s actual=${actualDur.toFixed(2)}s`);
+  return { path: out, dur: actualDur };
 }
 
 // ─────────────────────────────────────────────
@@ -230,7 +247,10 @@ async function applyBgMusic(concatMp4, totalDur, voiceRanges, bgFile, workDir) {
   } else { await fs.copyFile(bgLooped, bgDucked); }
   await ffmpeg(`-y -i "${concatMp4}" -vn -ar 44100 -acodec libmp3lame "${fgAudio}"`, 'extractFg');
   await ffmpeg(`-y -i "${fgAudio}" -i "${bgDucked}" -filter_complex "[0:a]volume=1.0[fg];[1:a]volume=1.0[bg];[fg][bg]amix=inputs=2:duration=first:dropout_transition=0[a]" -map "[a]" -ar 44100 -acodec libmp3lame "${mixedAudio}"`, 'mixAudio');
+  // -t totalDur is a hard duration clamp — final video CANNOT exceed the sum of intended clips
   await ffmpeg(`-y -i "${concatMp4}" -i "${mixedAudio}" -c:v copy -map 0:v:0 -map 1:a:0 -c:a aac -b:a 192k -t ${totalDur} -movflags +faststart "${finalMp4}"`, 'remux');
+  const finalDur = await videoDur(finalMp4);
+  console.log(`[BGMUSIC] Final video duration after remux: ${finalDur.toFixed(2)}s (target was ${totalDur.toFixed(2)}s)`);
   return finalMp4;
 }
 
@@ -246,8 +266,10 @@ async function resolveTheme(quiz) {
   const a1=quiz.theme_accent_primary||'#00e0ff', a2=quiz.theme_accent_secondary||'#7b2ff7', a3=quiz.theme_accent_tertiary||'#ff2ec4';
   css = css.split('{{accent_primary}}').join(a1).split('{{accent_secondary}}').join(a2).split('{{accent_tertiary}}').join(a3);
   if (quiz.quiz_background_css?.trim()) {
-    console.log('[THEME] Applying quiz_background_css');
+    console.log('[THEME] Applying quiz_background_css (per-quiz dynamic background)');
     css += '\n/* === QUIZ-SPECIFIC BACKGROUND === */\n' + quiz.quiz_background_css;
+  } else {
+    console.log('[THEME] No quiz_background_css set — using theme default');
   }
   return { themeCss: css, decoHtml: buildDecoHtml(themeId) };
 }
@@ -278,13 +300,10 @@ async function uploadThumbnailToR2(localPngPath, quizId) {
     const buf = await fs.readFile(localPngPath);
     const key = `thumbnails/${quizId}.png`;
     await withTimeout(
-      s3Client.send(new PutObjectCommand({
-        Bucket: R2_BUCKET_NAME, Key: key, Body: buf, ContentType: 'image/png',
-        CacheControl: 'public, max-age=31536000'
-      })),
+      s3Client.send(new PutObjectCommand({ Bucket: R2_BUCKET, Key: key, Body: buf, ContentType: 'image/png', CacheControl: 'public, max-age=31536000' })),
       30_000, 'R2 thumbnail upload'
     );
-    const publicUrl = `${R2_PUBLIC_URL_BASE.replace(/\/$/,'')}/${key}`;
+    const publicUrl = `${R2_PUBLIC_URL.replace(/\/$/,'')}/${key}`;
     console.log(`[R2] Thumbnail uploaded: ${publicUrl}`);
     return publicUrl;
   } catch (e) {
@@ -326,9 +345,7 @@ async function processJobs() {
     await fs.copyFile(videoPath, artifactPath);
     await fs.writeFile('/tmp/artifact_ready', artifactPath);
 
-    const patchBody = {
-      video_status:'rendered', render_duration_sec:Math.round(dur), file_size_mb:sizeMb, updated_at:new Date().toISOString()
-    };
+    const patchBody = { video_status:'rendered', render_duration_sec:Math.round(dur), file_size_mb:sizeMb, updated_at:new Date().toISOString() };
     if (thumbnailUrl) patchBody.thumbnail_url = thumbnailUrl;
     await fetchSupabase(`quiz?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(patchBody)});
 
@@ -359,21 +376,26 @@ async function buildVideo(quiz, workDir) {
   const keep5050    = quiz.keep_5050_1      || [];
   const introSpeech = quiz.quiz_intro_speech|| '';
 
-  // MI: skip entire segment if mission_impossible_question is null (requirement A)
   const miQuestion = quiz.mission_impossible_question || null;
   const miOptions  = quiz.mission_options_1           || [];
   const hasMI      = !!(miQuestion);
 
-  const QTIME    = Math.min(quiz.thinking_time_sec || DEFAULT_THINKING_TIME, 12);
+  const QTIME    = Math.min(quiz.thinking_time_sec || DEFAULT_THINKING_TIME, 14);
+  // FIX (checklist item 10): 50/50 fires at 2/3 of thinking time, not 1/2
   const HINT_AT  = QTIME / 4;
-  const FIFTY_AT = QTIME / 2;
+  const FIFTY_AT = QTIME * 2 / 3;
 
   const allIdx  = [0,1,2,3];
   const keepIdx = keep5050.map(v=>(typeof v==='string'?parseInt(v):v));
   const elimIdx = allIdx.filter(i=>!keepIdx.includes(i));
   const optClass= i=>elimIdx.includes(i)?'eliminate':'';
   const revClass= i=>options[i]===correct?'correct':'wrong';
-  const hasCta1 = !!(quiz.cta1_description_text?.trim() || quiz.affiliate_url?.trim());
+
+  // FIX (checklist item 26 diagnosis): airtight non-empty check, treat whitespace as falsy
+  const cta1Desc = (quiz.cta1_description_text || '').trim();
+  const affUrl   = (quiz.affiliate_url || '').trim();
+  const hasCta1  = !!(cta1Desc || affUrl);
+  console.log(`[CTA] hasCta1=${hasCta1} (cta1_description_text="${cta1Desc.slice(0,30)}" affiliate_url="${affUrl.slice(0,30)}")`);
 
   console.log('[LOGO] Loading...');
   const logoDataUri = await getLogoDataUri();
@@ -383,7 +405,7 @@ async function buildVideo(quiz, workDir) {
     hookFile, questionIntroFile, optionsIntroFile,
     timeupFile, cta1AudioFile, cta2AudioFile,
     missionIntroFile, cta3AudioFile,
-    sfxFile, countdownFile, bgFile, correctSfxFile
+    sfxFile, countdownFile, bgFile, correctSfxFile, sfxMissionFile
   ] = await Promise.all([
     downloadAudio(quiz.hook_audio_url,               `hook_${quiz.id}`),
     downloadAudio(quiz.question_intro_audio_url,     `qintro_${quiz.id}`),
@@ -396,8 +418,10 @@ async function buildVideo(quiz, workDir) {
     downloadAudio(quiz.sfx_audio_url,                `sfx_${quiz.id}`,'question_appear'),
     downloadAudio(quiz.countdown_music,              `countdown_${quiz.id}`),
     downloadAudio(quiz.background_music||DEFAULT_BG_MUSIC,`bgmusic_${quiz.id}`),
-    downloadAudio(quiz.correct_answer_sfx_audio_url, `correctsfx_${quiz.id}`)
+    downloadAudio(quiz.correct_answer_sfx_audio_url, `correctsfx_${quiz.id}`),
+    downloadAudio(quiz.sfx_mission_impossible,       `sfxmission_${quiz.id}`)
   ]);
+  console.log(`[CTA] cta2AudioFile=${cta2AudioFile ? 'OK' : 'NULL (will use TTS fallback)'} cta1AudioFile=${cta1AudioFile ? 'OK' : 'NULL'}`);
 
   const { themeCss, decoHtml } = await resolveTheme(quiz);
 
@@ -414,7 +438,7 @@ async function buildVideo(quiz, workDir) {
     '{{rev0_class}}':revClass(0), '{{rev1_class}}':revClass(1),
     '{{rev2_class}}':revClass(2), '{{rev3_class}}':revClass(3),
     '{{hint}}':hint, '{{correct_answer}}':correct,
-    '{{cta1_description_text}}':quiz.cta1_description_text||quiz.affiliate_text||'',
+    '{{cta1_description_text}}':cta1Desc||quiz.affiliate_text||'',
     '{{cta2_text}}':quiz.cta2_text||'Play real quiz and earn ONS tokens!',
     '{{cta3_text}}':quiz.cta3_text||'Like, Share & Challenge a friend! Subscribe!',
     '{{niche}}':niche,
@@ -455,76 +479,105 @@ async function buildVideo(quiz, workDir) {
     cursor+=clip.dur; clips.push(clip);
   }
 
-  // ══ DEDICATED THUMBNAIL — captured first, before any other state changes ══
-  // Original design combining hook + question + niche background (requirement B)
+  // ══ DEDICATED THUMBNAIL — captured first, before any other state change ══
   await showOnly('.thumb-screen');
-  await new Promise(r=>setTimeout(r,500)); // let any entrance animation settle
+  await new Promise(r=>setTimeout(r,500));
   const thumbImg = await shot('thumbnail_master');
   let thumbnailUrl = null;
-  if (R2_CONFIGURED) {
-    thumbnailUrl = await uploadThumbnailToR2(thumbImg, quiz.id);
-  }
+  if (R2_CONFIGURED) thumbnailUrl = await uploadThumbnailToR2(thumbImg, quiz.id);
 
-  // ══ STEP 1: HOOK ══
+  // ══ STEP 1: HOOK — SCREEN-RECORDED so logoPop + hook-text animations actually
+  // play (checklist item 28: a static screenshot can never show CSS animation) ══
+  await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded'});
+  await new Promise(r=>setTimeout(r,300));
   await showOnly('.hook-slide');
+  // Re-trigger animation from a clean state right before recording starts
   await page.evaluate(()=>{
     const lw = document.querySelector('.hook-slide .logo-wrap');
-    if(lw){ lw.style.animation='none'; lw.style.opacity='1'; lw.style.transform='scale(1) rotate(0deg)'; }
-    lw?.offsetHeight;
-    if(lw){ lw.style.animation=''; lw.style.opacity=''; lw.style.transform=''; }
+    const ht = document.querySelector('.hook-slide .hook-text');
+    [lw,ht].forEach(el=>{ if(el){ el.style.animation='none'; el.offsetHeight; el.style.animation=''; }});
   });
-  await new Promise(r=>setTimeout(r,1000));
-  const hookImg = await shot('hook');
+  const HOOK_RECORD_SEC = 2.6;
+  const hookRawVideo = path.join(workDir,'hook_raw.mp4');
+  const hookRecorder = new PuppeteerScreenRecorder(page,{fps:30,videoFrame:{width:1080,height:1920},aspectRatio:'9:16'});
+  await hookRecorder.start(hookRawVideo);
+  await new Promise(r=>setTimeout(r,HOOK_RECORD_SEC*1000));
+  await withTimeout(hookRecorder.stop(),TIMEOUT_RECORDER,'hookRecorder.stop()');
+
   const hookAudio = await buildAudio({
     prerecorded:hookFile, fallbackText:quiz.hook_phrase||'Stop scrolling!',
     fallbackSec:2.5, voice, leadGap:0.1, workDir, name:'hook'
   });
-  pushClip(await imgClip(hookImg,hookAudio.path,Math.max(hookAudio.dur,2.5),workDir,'clip_hook'));
+  const hookClipDur = Math.max(hookAudio.dur, HOOK_RECORD_SEC);
+  const hookH264 = path.join(workDir,'hook_h264.mp4');
+  await ffmpeg(`-y -i "${hookRawVideo}" -c:v libx264 -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${hookH264}"`, 'hookReencode');
+  const hookClipPath = path.join(workDir,'clip_hook.mp4');
+  // Loop the recorded video if audio is longer than the recording, then hard-clamp to hookClipDur
+  await ffmpeg(
+    `-y -stream_loop -1 -i "${hookH264}" -i "${hookAudio.path}" -c:v libx264 -t ${hookClipDur} -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 "${hookClipPath}"`,
+    'hookFinalClip'
+  );
+  pushClip({ path: hookClipPath, dur: await videoDur(hookClipPath) });
 
-  // ══ STEP 2: Intro text flash (1.5s, no TTS) ══
+  // ══ STEP 2: Intro text flash (not required per checklist — kept minimal) ══
   await showOnly('.waiting-slide');
   await new Promise(r=>setTimeout(r,300));
   const waitImg = await shot('waiting');
-  const waitSil = path.join(workDir,'wait_sil.mp3'); await silence(1.5,waitSil);
-  pushClip(await imgClip(waitImg,waitSil,1.5,workDir,'clip_wait'),false);
+  const waitSil = path.join(workDir,'wait_sil.mp3'); await silence(1.2,waitSil);
+  pushClip(await imgClip(waitImg,waitSil,1.2,workDir,'clip_wait'),false);
 
-  // ══ STEP 3: Question appears ══
+  // ══ STEP 3a: question_intro_audio_url plays, question HIDDEN (checklist item 4a fix) ══
+  await showOnly('.question-waiting-slide');
+  await new Promise(r=>setTimeout(r,200));
+  const qWaitImg = await shot('question_waiting');
+  const qIntroAudio = await buildAudio({
+    prerecorded: questionIntroFile, fallbackText: '', fallbackSec: 0.8,
+    voice, leadGap: 0.15, workDir, name: 'qintro'
+  });
+  pushClip(await imgClip(qWaitImg, qIntroAudio.path, qIntroAudio.dur, workDir, 'clip_qwait'), false);
+
+  // ══ STEP 3b: question_1 REVEALED + sfx + TTS (checklist item 4b) ══
   await showOnly('.question-appear-slide');
-  await new Promise(r=>setTimeout(r,700));
+  await new Promise(r=>setTimeout(r,500));
   const qAppearImg = await shot('question_appear');
-  const step3Parts=[];
-  if(questionIntroFile){ step3Parts.push(questionIntroFile); const g=path.join(workDir,'qi_gap.mp3'); await silence(0.2,g); step3Parts.push(g); }
-  if(sfxFile){ const g=path.join(workDir,'sfx_gap.mp3'); await silence(0.1,g); step3Parts.push(sfxFile,g); }
-  const qTts=path.join(workDir,'q_tts.mp3'); await tts(question,voice,qTts,3); step3Parts.push(qTts);
-  const step3Combined=path.join(workDir,'step3.mp3');
-  await concatAudio(step3Parts,step3Combined,workDir);
-  pushClip(await imgClip(qAppearImg,step3Combined,Math.max(await audioDur(step3Combined),2),workDir,'clip_step3'));
+  const step3bParts=[];
+  if(sfxFile){ const g=path.join(workDir,'sfx_gap.mp3'); await silence(0.1,g); step3bParts.push(sfxFile,g); }
+  const qTts=path.join(workDir,'q_tts.mp3'); await tts(question,voice,qTts,3); step3bParts.push(qTts);
+  const step3bCombined=path.join(workDir,'step3b.mp3');
+  await concatAudio(step3bParts,step3bCombined,workDir);
+  pushClip(await imgClip(qAppearImg,step3bCombined,Math.max(await audioDur(step3bCombined),2),workDir,'clip_q_reveal'));
 
-  // ══ STEP 4-5: Options + "time starts now" ══
+  // ══ STEP 4a: options_intro_audio_url plays, options HIDDEN (checklist item 6a fix) ══
+  await showOnly('.options-waiting-slide');
+  await new Promise(r=>setTimeout(r,200));
+  const oWaitImg = await shot('options_waiting');
+  const oIntroAudio = await buildAudio({
+    prerecorded: optionsIntroFile, fallbackText: 'And your options are', fallbackSec: 1.5,
+    voice, leadGap: GAP_OPTIONS, workDir, name: 'ointro'
+  });
+  pushClip(await imgClip(oWaitImg, oIntroAudio.path, oIntroAudio.dur, workDir, 'clip_owait'), false);
+
+  // ══ STEP 4b: options_1 REVEALED + sfx + TTS each + "time starts now" (checklist item 6b,7) ══
   await showOnly('.question-static');
-  await new Promise(r=>setTimeout(r,900));
+  await new Promise(r=>setTimeout(r,500));
   const optionsImg = await shot('options_static');
-  const s45p=[];
-  const g4=path.join(workDir,'gap4.mp3'); await silence(GAP_OPTIONS,g4); s45p.push(g4);
-  if(optionsIntroFile){ s45p.push(optionsIntroFile); }
-  else { const oi=path.join(workDir,'ointro_tts.mp3'); await tts('And your options are',voice,oi,1.5); s45p.push(oi); }
-  const g5=path.join(workDir,'gap5.mp3'); await silence(0.2,g5); s45p.push(g5);
-  if(sfxFile){ const sg=path.join(workDir,'sfxgap2.mp3'); await silence(0.1,sg); s45p.push(sfxFile,sg); }
+  const s4bp=[];
+  if(sfxFile){ const sg=path.join(workDir,'sfxgap2.mp3'); await silence(0.1,sg); s4bp.push(sfxFile,sg); }
   for(let i=0;i<options.length;i++){
     if(!options[i]) continue;
     const os=path.join(workDir,`o_sil_${i}.mp3`); await silence(0.2,os);
     const ot=path.join(workDir,`o_tts_${i}.mp3`); await tts(`${String.fromCharCode(65+i)}. ${options[i]}`,voice,ot,1);
-    s45p.push(os,ot);
+    s4bp.push(os,ot);
   }
   const sng=path.join(workDir,'start_now_gap.mp3'); await silence(0.3,sng);
   const snt=path.join(workDir,'start_now.mp3');
-  await tts(`You have only ${QTIME} seconds to crack the challenge — time starts now!`,voice,snt,2);
-  s45p.push(sng,snt);
-  const step45Combined=path.join(workDir,'step45.mp3');
-  await concatAudio(s45p,step45Combined,workDir);
-  pushClip(await imgClip(optionsImg,step45Combined,Math.max(await audioDur(step45Combined),3),workDir,'clip_step45'));
+  await tts(`You have only ${QTIME} seconds to crack the challenge — and your time starts now!`,voice,snt,3);
+  s4bp.push(sng,snt);
+  const step4bCombined=path.join(workDir,'step4b.mp3');
+  await concatAudio(s4bp,step4bCombined,workDir);
+  pushClip(await imgClip(optionsImg,step4bCombined,Math.max(await audioDur(step4bCombined),3),workDir,'clip_options_reveal'));
 
-  // ══ STEP 6-8: COUNTDOWN ══
+  // ══ STEP 6-8: COUNTDOWN — screen recorded, 50/50 at 2/3 of QTIME ══
   await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded'});
   await new Promise(r=>setTimeout(r,400));
   await showOnly('.question-phase');
@@ -552,13 +605,13 @@ async function buildVideo(quiz, workDir) {
   await ffmpeg(`-y -i "${qClipRaw}" -i "${cdFinal}" -c:v libx264 -c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 -shortest -t ${QTIME} "${qClipPath}"`, 'countdownClip');
   pushClip({path:qClipPath,dur:await videoDur(qClipPath)});
 
-  // ══ STEP 9: Timeup ══
+  // ══ STEP 9: Timeup — audio only, no text changes ══
   await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded'});
   await new Promise(r=>setTimeout(r,300));
   await showOnly('.pre-reveal-slide');
   const preRevealImg = await shot('pre_reveal');
   const timeupAudio = await buildAudio({
-    prerecorded:timeupFile, fallbackText:quiz.timeup_text||"Time's up! Let's reveal the correct answer.",
+    prerecorded:timeupFile, fallbackText:quiz.timeup_text||"Time's up!",
     fallbackSec:2, voice, leadGap:GAP_DEFAULT, workDir, name:'timeup'
   });
   pushClip(await imgClip(preRevealImg,timeupAudio.path,timeupAudio.dur,workDir,'clip_timeup'));
@@ -575,48 +628,47 @@ async function buildVideo(quiz, workDir) {
   await concatAudio(s10p,step10Combined,workDir);
   pushClip(await imgClip(answerImg,step10Combined,Math.max(await audioDur(step10Combined),2),workDir,'clip_answer'));
 
-  // ══ STEP 11: CTA ══
+  // ══ STEP 11: CTA — CTA1 if cta1_description_text/affiliate_url present, else CTA2 ══
   await showOnly(hasCta1?'.cta1-slide':'.cta2-slide');
   await new Promise(r=>setTimeout(r,400));
   const ctaImg = await shot('cta');
   const ctaAudio = await buildAudio({
     prerecorded:hasCta1?cta1AudioFile:cta2AudioFile,
-    fallbackText:hasCta1
-      ?(quiz.cta1_description_text||quiz.affiliate_text||'Check the link in description!')
-      :(quiz.cta2_text||'Play real quiz and earn ONS tokens!'),
+    fallbackText:hasCta1?(cta1Desc||quiz.affiliate_text||'Check the link in description!'):(quiz.cta2_text||'Play real quiz and earn ONS tokens!'),
     fallbackSec:3, voice, leadGap:GAP_DEFAULT, workDir, name:hasCta1?'cta1':'cta2'
   });
   pushClip(await imgClip(ctaImg,ctaAudio.path,ctaAudio.dur,workDir,'clip_cta'));
 
-  // ══ STEPS 12-17: MISSION IMPOSSIBLE (skip entirely if mission_impossible_question is null) ══
+  // ══ MISSION IMPOSSIBLE — skip entirely if mission_impossible_question is null ══
   if (hasMI) {
-    // ── State A: MI intro (huge title + tagline, sfx then mission_intro_audio) ──
+    // ── State A: MI intro — huge title, sfx_mission_impossible THEN mission_intro_audio ──
     await showOnly('.mission-intro-slide');
     await new Promise(r=>setTimeout(r,400));
     const miIntroImg = await shot('mi_intro');
     const miIntroParts=[];
-    if(sfxFile){ const g=path.join(workDir,'sfx_mi_gap.mp3'); await silence(0.15,g); miIntroParts.push(g,sfxFile); const g2=path.join(workDir,'sfx_mi_gap2.mp3'); await silence(0.3,g2); miIntroParts.push(g2); }
+    if(sfxMissionFile){ miIntroParts.push(sfxMissionFile); const g=path.join(workDir,'sfx_mi_gap.mp3'); await silence(0.3,g); miIntroParts.push(g); }
     if(missionIntroFile){ miIntroParts.push(missionIntroFile); }
     else { const mt=path.join(workDir,'mi_tts.mp3'); await tts(quiz.mission_intro_text||'MISSION IMPOSSIBLE!',voice,mt,2); miIntroParts.push(mt); }
     const miIntroAudio=path.join(workDir,'mi_intro_audio.mp3');
     await concatAudio(miIntroParts,miIntroAudio,workDir);
     pushClip(await imgClip(miIntroImg,miIntroAudio,Math.max(await audioDur(miIntroAudio),2),workDir,'clip_mi_intro'));
 
-    // ── State B: question + 4 options visible (no TTS), cta3 hidden — checklist items 4,5 ──
+    // ── State B: question + 4 options visible together, NO TTS, cta3 hidden.
+    // 2.5s timer starts from THIS appearance (checklist confirmed: from item 21) ──
     await showOnly('.mission-final-slide');
     await page.evaluate(()=>{
       const c=document.getElementById('mi-cta3');
-      if(c){ c.classList.remove('show-cta3'); c.style.opacity='0'; c.style.transform='translateY(30px) scale(0.9)'; }
+      if(c) c.classList.remove('show-cta3');
     });
-    await new Promise(r=>setTimeout(r,600)); // let option fly-in animations finish
+    await new Promise(r=>setTimeout(r,300));
     const miQImg = await shot('mi_question_with_options');
-    const miQSil=path.join(workDir,'mi_q_sil.mp3'); await silence(2.5,miQSil); // checklist item 6: 2.5s before cta3
+    const miQSil=path.join(workDir,'mi_q_sil.mp3'); await silence(2.5,miQSil);
     pushClip(await imgClip(miQImg,miQSil,2.5,workDir,'clip_mi_q'),false);
 
-    // ── State C: cta3_text fades in + cta3 audio — checklist items 6,7 ──
+    // ── State C: cta3_text fades in (class toggle, !important defeats any stale inline style) ──
     await page.evaluate(()=>{
       const c=document.getElementById('mi-cta3');
-      if(c){ c.classList.add('show-cta3'); c.style.opacity=''; c.style.transform=''; }
+      if(c) c.classList.add('show-cta3');
     });
     await new Promise(r=>setTimeout(r,400));
     const cta3Img = await shot('mi_with_cta3');
@@ -626,7 +678,7 @@ async function buildVideo(quiz, workDir) {
     });
     pushClip(await imgClip(cta3Img,cta3Audio.path,cta3Audio.dur,workDir,'clip_cta3'));
 
-    // ── State D: 1s frozen hold — checklist item 11 ──
+    // ── State D: exactly 1s frozen hold (checklist item 27b) ──
     const holdSil=path.join(workDir,'hold_sil.mp3'); await silence(1.0,holdSil);
     pushClip(await imgClip(cta3Img,holdSil,1.0,workDir,'clip_hold'),false);
   }
@@ -634,13 +686,16 @@ async function buildVideo(quiz, workDir) {
   await browser.close();
 
   // ══ FINAL ASSEMBLY ══
-  console.log(`[VIDEO] Assembling ${clips.length} clips...`);
+  console.log(`[VIDEO] Assembling ${clips.length} clips. Per-clip durations:`);
+  let runningTotal = 0;
+  for (const c of clips) { runningTotal += c.dur; console.log(`  ${path.basename(c.path)}: ${c.dur.toFixed(2)}s (cumulative ${runningTotal.toFixed(2)}s)`); }
+
   const concatTxt=path.join(workDir,'concat.txt');
   await fs.writeFile(concatTxt,clips.map(c=>`file '${c.path.replace(/'/g,"'\\''")}' `).join('\n'));
   const concatenated=path.join(workDir,'concatenated.mp4');
   await ffmpeg(`-y -f concat -safe 0 -i "${concatTxt}" -c:v libx264 -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k -ar 44100 -movflags +faststart "${concatenated}"`, 'finalConcat');
   const total=await videoDur(concatenated);
-  console.log(`[VIDEO] Concatenated: ${total.toFixed(1)}s`);
+  console.log(`[VIDEO] Concatenated: ${total.toFixed(1)}s (sum of clip durations was ${runningTotal.toFixed(1)}s)`);
   const finalVideoPath = await applyBgMusic(concatenated,total,voiceRanges,bgFile,workDir);
   return { videoPath: finalVideoPath, thumbnailUrl };
 }
