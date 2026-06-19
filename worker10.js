@@ -250,10 +250,37 @@ async function imgClip(img, audioP, dur, workDir, name) {
 async function recordedClip(page, audioP, dur, workDir, name) {
   const safeDur = Math.max(0.3, dur);
   const rawVideo = path.join(workDir, `${name}_raw.mp4`);
-  const recorder = new PuppeteerScreenRecorder(page, { fps:30, videoFrame:{width:1080,height:1920}, aspectRatio:'9:16' });
+  // DIAGNOSTIC: confirm exactly what page/URL/title is about to be recorded.
+  // If a render ever shows wrong content again, this log line pinpoints whether
+  // `page` had drifted away from our file:// HTML at the moment of capture.
+  try {
+    const diagUrl = page.url();
+    const diagTitle = await page.title().catch(()=>'(title fetch failed)');
+    const diagPagesCount = (await page.browser().pages()).length;
+    console.log(`[RECORD-DIAG] ${name}: url=${diagUrl} title="${diagTitle}" openPages=${diagPagesCount}`);
+  } catch (e) {
+    console.warn(`[RECORD-DIAG] ${name}: diagnostic check failed: ${e.message}`);
+  }
+  // Defensive: close any stray extra pages/tabs that may have appeared (popups,
+  // redirects, etc.) so the recorder has zero ambiguity about which target to use.
+  try {
+    const allPages = await page.browser().pages();
+    for (const p of allPages) {
+      if (p !== page && !p.isClosed()) { console.warn(`[RECORD-DIAG] ${name}: closing stray page url=${p.url()}`); await p.close().catch(()=>{}); }
+    }
+  } catch (e) { console.warn(`[RECORD-DIAG] ${name}: stray page cleanup failed: ${e.message}`); }
+
+  const recorder = new PuppeteerScreenRecorder(page, { fps:30, videoFrame:{width:1080,height:1920}, aspectRatio:'9:16', followNewTab:false });
   await recorder.start(rawVideo);
   await new Promise(r=>setTimeout(r, safeDur*1000));
   await withTimeout(recorder.stop(), TIMEOUT_RECORDER, `${name} recorder.stop()`);
+  // Verify the raw recording actually has frames / non-trivial size before proceeding
+  try {
+    const rawStat = await fs.stat(rawVideo);
+    console.log(`[RECORD-DIAG] ${name}: raw recording size=${(rawStat.size/1024).toFixed(1)}KB`);
+  } catch (e) {
+    console.warn(`[RECORD-DIAG] ${name}: raw recording stat failed: ${e.message}`);
+  }
 
   const h264 = path.join(workDir, `${name}_h264.mp4`);
   await ffmpeg(`-y -i "${rawVideo}" -c:v libx264 -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264}"`, `${name} reencode`);
