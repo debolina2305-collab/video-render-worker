@@ -68,15 +68,12 @@ const GAP_DEFAULT     = 0.25;
 const GAP_OPTIONS     = 0.30;
 const GAP_ANSWER      = 0.35;
 const DEFAULT_THINKING_TIME = 10;
-const MAX_TTS_FALLBACK_SEC = 6; // hard cap so a missing audio file can't balloon a clip
+const MAX_TTS_FALLBACK_SEC = 6; // hard cap so a MISSING audio file's fallback TTS can't run away
 
-// Hard per-segment duration caps — guarantee total video never exceeds 56s
-// even with maximum-length DB content. Sum of these caps (with QTIME=12) ≈ 51.7s.
-const CAP = {
-  hook: 4.0, introFlash: 2.0, qWaiting: 2.0, qReveal: 3.5,
-  oWaiting: 2.2, oReveal: 8.5, qtimeMax: 12, timeup: 2.5,
-  answer: 3.0, miCombined: 3.5, cta3: 4.5, ctaFinal: 4.0
-};
+// NOTE: no per-segment duration caps. Every clip is recorded for the FULL
+// actual length of its built audio — capping below that truncates real speech
+// mid-sentence (confirmed bug). Total length is checked after render, not
+// enforced mid-flow.
 
 const TIMEOUT_FFMPEG   = 120_000;
 const TIMEOUT_CURL     = 35_000;
@@ -419,13 +416,12 @@ async function buildVideo(quiz, workDir) {
   const correct     = quiz.correct_answer_1 || '';
   const hint        = quiz.hint_1           || '';
   const keep5050    = quiz.keep_5050_1      || [];
-  const introSpeech = quiz.quiz_intro_speech|| '';
 
   const miQuestion = quiz.mission_impossible_question || null;
   const miOptions  = quiz.mission_options_1           || [];
   const hasMI      = !!(miQuestion);
 
-  const QTIME    = Math.min(quiz.thinking_time_sec || DEFAULT_THINKING_TIME, CAP.qtimeMax);
+  const QTIME    = quiz.thinking_time_sec || DEFAULT_THINKING_TIME; // no artificial ceiling — DB controls this
   // FIX (checklist item 10): 50/50 fires at 2/3 of thinking time, not 1/2
   const HINT_AT  = QTIME / 4;
   const FIFTY_AT = QTIME * 2 / 3;
@@ -474,7 +470,6 @@ async function buildVideo(quiz, workDir) {
   const R = {
     '{{theme_css}}':themeCss, '{{theme_deco_html}}':decoHtml, '{{LOGO_DATA_URI}}':logoDataUri,
     '{{hook_phrase}}':quiz.hook_phrase||'Stop scrolling! Can you beat this?',
-    '{{quiz_intro_speech}}':introSpeech,
     '{{question}}':question,
     '{{options[0]}}':options[0]||'', '{{options[1]}}':options[1]||'',
     '{{options[2]}}':options[2]||'', '{{options[3]}}':options[3]||'',
@@ -545,26 +540,21 @@ async function buildVideo(quiz, workDir) {
     prerecorded:hookFile, fallbackText:quiz.hook_phrase||'Stop scrolling!',
     fallbackSec:2.5, voice, leadGap:0.1, workDir, name:'hook'
   });
-  const hookDur = Math.min(Math.max(hookAudio.dur, 2.0), CAP.hook);
-  pushClip(await recordedClip(page, hookAudio.path, hookDur, workDir, 'clip_hook'));
+  // No cap — record for the full actual hook audio length
+  pushClip(await recordedClip(page, hookAudio.path, Math.max(hookAudio.dur, 1.5), workDir, 'clip_hook'));
 
-  // ══ STEP 2: quiz_intro_speech — 2s WHITE FLASH (checklist item 2a) ══
-  await showOnly('.intro-flash-slide');
-  await new Promise(r=>setTimeout(r,100));
-  const flashSil = path.join(workDir,'flash_sil.mp3'); await silence(CAP.introFlash,flashSil);
-  pushClip(await recordedClip(page, flashSil, CAP.introFlash, workDir, 'clip_flash'), false);
+  // ══ STEP 2 (white intro-flash removed per feedback — straight to question_intro) ══
 
-  // ══ STEP 3a: question_intro_audio_url plays, question HIDDEN (glow/bg animate) ══
+  // ══ STEP 3a: question_intro_audio_url plays, question HIDDEN ══
   await showOnly('.question-waiting-slide');
   await new Promise(r=>setTimeout(r,100));
   const qIntroAudio = await buildAudio({
     prerecorded: questionIntroFile, fallbackText: '', fallbackSec: 0.8,
     voice, leadGap: 0.15, workDir, name: 'qintro'
   });
-  const qWaitDur = Math.min(qIntroAudio.dur, CAP.qWaiting);
-  pushClip(await recordedClip(page, qIntroAudio.path, qWaitDur, workDir, 'clip_qwait'), false);
+  pushClip(await recordedClip(page, qIntroAudio.path, qIntroAudio.dur, workDir, 'clip_qwait'), false);
 
-  // ══ STEP 3b: question_1 REVEALED + sfx + TTS ══
+  // ══ STEP 3b: question_1 REVEALED + sfx + TTS — recorded for FULL audio, no truncation ══
   await showOnly('.question-appear-slide');
   await new Promise(r=>setTimeout(r,100));
   const step3bParts=[];
@@ -572,7 +562,7 @@ async function buildVideo(quiz, workDir) {
   const qTts=path.join(workDir,'q_tts.mp3'); await tts(question,voice,qTts,3); step3bParts.push(qTts);
   const step3bCombined=path.join(workDir,'step3b.mp3');
   await concatAudio(step3bParts,step3bCombined,workDir);
-  const qRevealDur = Math.min(Math.max(await audioDur(step3bCombined),2), CAP.qReveal);
+  const qRevealDur = Math.max(await audioDur(step3bCombined), 1.5);
   pushClip(await recordedClip(page, step3bCombined, qRevealDur, workDir, 'clip_q_reveal'));
 
   // ══ STEP 4a: options_intro_audio_url plays, options HIDDEN ══
@@ -582,10 +572,11 @@ async function buildVideo(quiz, workDir) {
     prerecorded: optionsIntroFile, fallbackText: 'And your options are', fallbackSec: 1.5,
     voice, leadGap: GAP_OPTIONS, workDir, name: 'ointro'
   });
-  const oWaitDur = Math.min(oIntroAudio.dur, CAP.oWaiting);
-  pushClip(await recordedClip(page, oIntroAudio.path, oWaitDur, workDir, 'clip_owait'), false);
+  pushClip(await recordedClip(page, oIntroAudio.path, oIntroAudio.dur, workDir, 'clip_owait'), false);
 
-  // ══ STEP 4b: options_1 REVEALED + sfx + TTS each + "time starts now" ══
+  // ══ STEP 4b: options_1 REVEALED + sfx + TTS each + "time starts now".
+  // This is the segment that was getting cut off mid-option before — now records
+  // for the FULL combined audio length, guaranteeing every option is heard. ══
   await showOnly('.question-static');
   await new Promise(r=>setTimeout(r,100));
   const s4bp=[];
@@ -602,10 +593,11 @@ async function buildVideo(quiz, workDir) {
   s4bp.push(sng,snt);
   const step4bCombined=path.join(workDir,'step4b.mp3');
   await concatAudio(s4bp,step4bCombined,workDir);
-  const oRevealDur = Math.min(Math.max(await audioDur(step4bCombined),3), CAP.oReveal);
+  const oRevealDur = Math.max(await audioDur(step4bCombined), 2);
   pushClip(await recordedClip(page, step4bCombined, oRevealDur, workDir, 'clip_options_reveal'));
 
-  // ══ STEP 6-8: COUNTDOWN — already screen-recorded, 50/50 at 2/3 of QTIME ══
+  // ══ STEP 6-8: COUNTDOWN — screen-recorded, 50/50 at 2/3 of QTIME.
+  // QTIME comes straight from the DB (thinking_time_sec), no ceiling applied. ══
   await showOnly('.question-phase');
   await page.evaluate(()=>{ document.querySelector('.question-phase')?.offsetHeight; });
   await new Promise(r=>setTimeout(r,100));
@@ -622,15 +614,14 @@ async function buildVideo(quiz, workDir) {
   }
   pushClip(await recordedClip(page, cdFinal, QTIME, workDir, 'clip_countdown'));
 
-  // ══ STEP 9: Timeup — audio only, no text changes (bg/logo still animate) ══
+  // ══ STEP 9: Timeup — audio only, no text changes ══
   await showOnly('.pre-reveal-slide');
   await new Promise(r=>setTimeout(r,100));
   const timeupAudio = await buildAudio({
     prerecorded:timeupFile, fallbackText:quiz.timeup_text||"Time's up!",
     fallbackSec:2, voice, leadGap:GAP_DEFAULT, workDir, name:'timeup'
   });
-  const timeupDur = Math.min(timeupAudio.dur, CAP.timeup);
-  pushClip(await recordedClip(page, timeupAudio.path, timeupDur, workDir, 'clip_timeup'));
+  pushClip(await recordedClip(page, timeupAudio.path, timeupAudio.dur, workDir, 'clip_timeup'));
 
   // ══ STEP 10: Answer reveal ══
   await showOnly('.answer-slide');
@@ -641,7 +632,7 @@ async function buildVideo(quiz, workDir) {
   const correctTts=path.join(workDir,'correct_tts.mp3'); await tts(correct,voice,correctTts,1.5); s10p.push(correctTts);
   const step10Combined=path.join(workDir,'step10.mp3');
   await concatAudio(s10p,step10Combined,workDir);
-  const answerDur = Math.min(Math.max(await audioDur(step10Combined),2), CAP.answer);
+  const answerDur = Math.max(await audioDur(step10Combined), 1.5);
   pushClip(await recordedClip(page, step10Combined, answerDur, workDir, 'clip_answer'));
 
   // ══ MISSION IMPOSSIBLE — comes BEFORE the final CTA. Skip if mission_impossible_question
@@ -668,8 +659,7 @@ async function buildVideo(quiz, workDir) {
       await concatAudio([miAudioRaw,pad],miAudio,workDir);
       miAudioDur = 2.5;
     }
-    const miDur = Math.min(Math.max(miAudioDur,2.5), CAP.miCombined);
-    pushClip(await recordedClip(page, miAudio, miDur, workDir, 'clip_mi'));
+    pushClip(await recordedClip(page, miAudio, miAudioDur, workDir, 'clip_mi'));
 
     // cta3 fades in + cta3 audio
     await page.evaluate(()=>{
@@ -681,8 +671,7 @@ async function buildVideo(quiz, workDir) {
       prerecorded:cta3AudioFile, fallbackText:quiz.cta3_text||'Like, share and challenge a friend! Subscribe!',
       fallbackSec:4, voice, leadGap:0.15, workDir, name:'cta3'
     });
-    const cta3Dur = Math.min(cta3Audio.dur, CAP.cta3);
-    pushClip(await recordedClip(page, cta3Audio.path, cta3Dur, workDir, 'clip_cta3'));
+    pushClip(await recordedClip(page, cta3Audio.path, cta3Audio.dur, workDir, 'clip_cta3'));
   }
 
   // ══ FINAL CTA — comes LAST, after MI. ONE cta only: CTA1 if affiliate/
@@ -696,8 +685,7 @@ async function buildVideo(quiz, workDir) {
       :(quiz.cta2_text||'Play the real quiz and earn O.N.S tokens! Tap the link now!'),
     fallbackSec:3, voice, leadGap:GAP_DEFAULT, workDir, name:hasCta1?'cta1':'cta2'
   });
-  const ctaDur = Math.min(ctaAudio.dur, CAP.ctaFinal);
-  pushClip(await recordedClip(page, ctaAudio.path, ctaDur, workDir, 'clip_cta'));
+  pushClip(await recordedClip(page, ctaAudio.path, ctaAudio.dur, workDir, 'clip_cta'));
 
   await browser.close();
 
