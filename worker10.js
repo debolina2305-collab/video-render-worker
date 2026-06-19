@@ -50,6 +50,16 @@ const LOGO_PATH         = path.join(__dirname, 'assets', 'jaasX-logo-saved-for-w
 const DEFAULT_BG_MUSIC  = 'https://pub-3578d297d3904e1d8ffedfc9dd4102f2.r2.dev/audio/background_music/The_Midnight_Audit.mp3';
 const PLATFORM_URL_BASE = 'https://jaasblog.online/quiz';
 
+// Niche-specific centerpiece icon for the thumbnail (checklist: make it lucrative, not generic)
+const NICHE_ICON = {
+  finance: '💰', tech: '🤖', health: '🧠', general: '🧠',
+  science: '🔬', history: '🏛️', sports: '🏆', geography: '🌍',
+  entertainment: '🎬', food: '🍔', nature: '🌿', space: '🚀'
+};
+function thumbIconFor(niche) {
+  return NICHE_ICON[(niche||'general').toLowerCase()] || '❓';
+}
+
 const BG_VOL_BASE = 0.10;
 const BG_VOL_DUCK = 0.035;
 const DUCK_RAMP   = 0.12;
@@ -442,6 +452,7 @@ async function buildVideo(quiz, workDir) {
     '{{cta2_text}}':quiz.cta2_text||'Play real quiz and earn ONS tokens!',
     '{{cta3_text}}':quiz.cta3_text||'Like, Share & Challenge a friend! Subscribe!',
     '{{niche}}':niche,
+    '{{thumb_icon}}':thumbIconFor(niche),
     '{{platform_url}}': `${PLATFORM_URL_BASE}/${niche}`,
     '{{mission_intro_text}}':quiz.mission_intro_text||'Are you smart enough?',
     '{{mission_question}}':miQuestion||'',
@@ -508,7 +519,7 @@ async function buildVideo(quiz, workDir) {
     prerecorded:hookFile, fallbackText:quiz.hook_phrase||'Stop scrolling!',
     fallbackSec:2.5, voice, leadGap:0.1, workDir, name:'hook'
   });
-  const hookClipDur = Math.max(hookAudio.dur, HOOK_RECORD_SEC);
+  const hookClipDur = Math.min(Math.max(hookAudio.dur, HOOK_RECORD_SEC), 4.0); // hard cap 4s
   const hookH264 = path.join(workDir,'hook_h264.mp4');
   await ffmpeg(`-y -i "${hookRawVideo}" -c:v libx264 -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${hookH264}"`, 'hookReencode');
   const hookClipPath = path.join(workDir,'clip_hook.mp4');
@@ -519,12 +530,12 @@ async function buildVideo(quiz, workDir) {
   );
   pushClip({ path: hookClipPath, dur: await videoDur(hookClipPath) });
 
-  // ══ STEP 2: Intro text flash (not required per checklist — kept minimal) ══
-  await showOnly('.waiting-slide');
-  await new Promise(r=>setTimeout(r,300));
-  const waitImg = await shot('waiting');
-  const waitSil = path.join(workDir,'wait_sil.mp3'); await silence(1.2,waitSil);
-  pushClip(await imgClip(waitImg,waitSil,1.2,workDir,'clip_wait'),false);
+  // ══ STEP 2: quiz_intro_speech — 2s WHITE FLASH (checklist item 2a) ══
+  await showOnly('.intro-flash-slide');
+  await new Promise(r=>setTimeout(r,250));
+  const flashImg = await shot('intro_flash');
+  const flashSil = path.join(workDir,'flash_sil.mp3'); await silence(2.0,flashSil);
+  pushClip(await imgClip(flashImg,flashSil,2.0,workDir,'clip_flash'),false);
 
   // ══ STEP 3a: question_intro_audio_url plays, question HIDDEN (checklist item 4a fix) ══
   await showOnly('.question-waiting-slide');
@@ -628,44 +639,40 @@ async function buildVideo(quiz, workDir) {
   await concatAudio(s10p,step10Combined,workDir);
   pushClip(await imgClip(answerImg,step10Combined,Math.max(await audioDur(step10Combined),2),workDir,'clip_answer'));
 
-  // ══ STEP 11: CTA — CTA1 if cta1_description_text/affiliate_url present, else CTA2 ══
-  await showOnly(hasCta1?'.cta1-slide':'.cta2-slide');
-  await new Promise(r=>setTimeout(r,400));
-  const ctaImg = await shot('cta');
-  const ctaAudio = await buildAudio({
-    prerecorded:hasCta1?cta1AudioFile:cta2AudioFile,
-    fallbackText:hasCta1?(cta1Desc||quiz.affiliate_text||'Check the link in description!'):(quiz.cta2_text||'Play real quiz and earn ONS tokens!'),
-    fallbackSec:3, voice, leadGap:GAP_DEFAULT, workDir, name:hasCta1?'cta1':'cta2'
-  });
-  pushClip(await imgClip(ctaImg,ctaAudio.path,ctaAudio.dur,workDir,'clip_cta'));
-
-  // ══ MISSION IMPOSSIBLE — skip entirely if mission_impossible_question is null ══
+  // ══ MISSION IMPOSSIBLE — comes BEFORE the final CTA (checklist item 30).
+  // Skip entirely if mission_impossible_question is null.
+  // ONE combined screen: title + tagline + question + 4 options appear TOGETHER
+  // (sfx_mission_impossible then mission_intro_audio, NO TTS on Q/options).
+  // After 2.5s, cta3 fades in with cta3 audio. No 1s hold (item 31b). ══
   if (hasMI) {
-    // ── State A: MI intro — huge title, sfx_mission_impossible THEN mission_intro_audio ──
-    await showOnly('.mission-intro-slide');
-    await new Promise(r=>setTimeout(r,400));
-    const miIntroImg = await shot('mi_intro');
-    const miIntroParts=[];
-    if(sfxMissionFile){ miIntroParts.push(sfxMissionFile); const g=path.join(workDir,'sfx_mi_gap.mp3'); await silence(0.3,g); miIntroParts.push(g); }
-    if(missionIntroFile){ miIntroParts.push(missionIntroFile); }
-    else { const mt=path.join(workDir,'mi_tts.mp3'); await tts(quiz.mission_intro_text||'MISSION IMPOSSIBLE!',voice,mt,2); miIntroParts.push(mt); }
-    const miIntroAudio=path.join(workDir,'mi_intro_audio.mp3');
-    await concatAudio(miIntroParts,miIntroAudio,workDir);
-    pushClip(await imgClip(miIntroImg,miIntroAudio,Math.max(await audioDur(miIntroAudio),2),workDir,'clip_mi_intro'));
-
-    // ── State B: question + 4 options visible together, NO TTS, cta3 hidden.
-    // 2.5s timer starts from THIS appearance (checklist confirmed: from item 21) ──
+    // ── State A: everything visible EXCEPT cta3 ──
     await showOnly('.mission-final-slide');
     await page.evaluate(()=>{
       const c=document.getElementById('mi-cta3');
       if(c) c.classList.remove('show-cta3');
     });
-    await new Promise(r=>setTimeout(r,300));
-    const miQImg = await shot('mi_question_with_options');
-    const miQSil=path.join(workDir,'mi_q_sil.mp3'); await silence(2.5,miQSil);
-    pushClip(await imgClip(miQImg,miQSil,2.5,workDir,'clip_mi_q'),false);
+    await new Promise(r=>setTimeout(r,400));
+    const miImg = await shot('mi_combined');
 
-    // ── State C: cta3_text fades in (class toggle, !important defeats any stale inline style) ──
+    // Audio: sfx_mission THEN mission_intro_audio. Pad to >= 2.5s so cta3 appears
+    // "after 2.5 sec" from when the title+question+options appeared (item 23).
+    const miParts=[];
+    if(sfxMissionFile){ miParts.push(sfxMissionFile); const g=path.join(workDir,'sfx_mi_gap.mp3'); await silence(0.25,g); miParts.push(g); }
+    if(missionIntroFile){ miParts.push(missionIntroFile); }
+    else { const mt=path.join(workDir,'mi_tts.mp3'); await tts(quiz.mission_intro_text||'Mission impossible! Are you smart enough?',voice,mt,2); miParts.push(mt); }
+    const miAudioRaw=path.join(workDir,'mi_audio_raw.mp3');
+    await concatAudio(miParts,miAudioRaw,workDir);
+    let miAudioDur = await audioDur(miAudioRaw);
+    let miAudio = miAudioRaw;
+    if (miAudioDur < 2.5) {
+      const pad=path.join(workDir,'mi_pad.mp3'); await silence(2.5 - miAudioDur, pad);
+      miAudio=path.join(workDir,'mi_audio.mp3');
+      await concatAudio([miAudioRaw,pad],miAudio,workDir);
+      miAudioDur = 2.5;
+    }
+    pushClip(await imgClip(miImg,miAudio,Math.max(miAudioDur,2.5),workDir,'clip_mi'));
+
+    // ── State B: cta3 fades in + cta3 audio (prerecorded or TTS fallback) ──
     await page.evaluate(()=>{
       const c=document.getElementById('mi-cta3');
       if(c) c.classList.add('show-cta3');
@@ -677,11 +684,22 @@ async function buildVideo(quiz, workDir) {
       fallbackSec:4, voice, leadGap:0.15, workDir, name:'cta3'
     });
     pushClip(await imgClip(cta3Img,cta3Audio.path,cta3Audio.dur,workDir,'clip_cta3'));
-
-    // ── State D: exactly 1s frozen hold (checklist item 27b) ──
-    const holdSil=path.join(workDir,'hold_sil.mp3'); await silence(1.0,holdSil);
-    pushClip(await imgClip(cta3Img,holdSil,1.0,workDir,'clip_hold'),false);
   }
+
+  // ══ FINAL CTA — comes LAST, after MI (checklist item 30). ONE cta only:
+  // CTA1 if affiliate/cta1_description_text exists, else CTA2 (item 17/25). ══
+  await showOnly(hasCta1?'.cta1-slide':'.cta2-slide');
+  await new Promise(r=>setTimeout(r,400));
+  const ctaImg = await shot('cta');
+  const ctaAudio = await buildAudio({
+    prerecorded:hasCta1?cta1AudioFile:cta2AudioFile,
+    // Hard default fallback strings guarantee CTA2 always has audio (item 26 fix)
+    fallbackText:hasCta1
+      ?(cta1Desc||quiz.affiliate_text||'Check the exclusive link in the description below!')
+      :(quiz.cta2_text||'Play the real quiz and earn O.N.S tokens! Tap the link now!'),
+    fallbackSec:3, voice, leadGap:GAP_DEFAULT, workDir, name:hasCta1?'cta1':'cta2'
+  });
+  pushClip(await imgClip(ctaImg,ctaAudio.path,ctaAudio.dur,workDir,'clip_cta'));
 
   await browser.close();
 
