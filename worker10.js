@@ -602,23 +602,17 @@ async function buildVideo(quiz, workDir) {
   });
   pushClip(await recordedClip(page, oIntroAudio.path, oIntroAudio.dur, workDir, 'clip_owait'), false);
 
-  // ══ STEP 4b: options_1 REVEALED + sfx + TTS each + "time starts now".
-  // This is the segment that was getting cut off mid-option before — now records
-  // for the FULL combined audio length, guaranteeing every option is heard. ══
+  // ══ STEP 4b: options_1 REVEALED — NO TTS per option (was unintelligible at 2x,
+  // and unacceptably long at 1x). Options are shown silently on screen for 4s
+  // (readable on their own), then ONE TTS line: "You have only Ns... time starts now". ══
   await showOnly('.question-static');
   await new Promise(r=>setTimeout(r,100));
   const s4bp=[];
   if(sfxFile){ const sg=path.join(workDir,'sfxgap2.mp3'); await silence(0.1,sg); s4bp.push(sfxFile,sg); }
-  for(let i=0;i<options.length;i++){
-    if(!options[i]) continue;
-    const os=path.join(workDir,`o_sil_${i}.mp3`); await silence(0.2,os);
-    const ot=path.join(workDir,`o_tts_${i}.mp3`); await tts(`${String.fromCharCode(65+i)}. ${options[i]}`,voice,ot,1,'+100%');
-    s4bp.push(os,ot);
-  }
-  const sng=path.join(workDir,'start_now_gap.mp3'); await silence(0.3,sng);
+  const optionsSilence=path.join(workDir,'options_silence.mp3'); await silence(4.0,optionsSilence); s4bp.push(optionsSilence);
   const snt=path.join(workDir,'start_now.mp3');
   await tts(`You have only ${QTIME} seconds to crack the challenge — and your time starts now!`,voice,snt,3);
-  s4bp.push(sng,snt);
+  s4bp.push(snt);
   const step4bCombined=path.join(workDir,'step4b.mp3');
   await concatAudio(s4bp,step4bCombined,workDir);
   const oRevealDur = Math.max(await audioDur(step4bCombined), 2);
