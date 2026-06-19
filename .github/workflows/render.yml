@@ -10,7 +10,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Install FFmpeg, Python (for TTS) and Chromium runtime deps
         run: |
           sudo apt-get update
@@ -20,36 +19,29 @@ jobs:
             libx11-xcb1 libxcomposite1 libxdamage1 libxfixes3 \
             libxkbcommon0 libxrandr2 xdg-utils
           pip3 install --break-system-packages edge-tts
-
       - name: Test edge-tts
         run: |
           edge-tts --voice en-US-JennyNeural --text "Hello, this is a test." --write-media /tmp/test.mp3
           ls -la /tmp/test.mp3
           file /tmp/test.mp3
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install dependencies
         run: npm install
-
-      - name: Download suspense SFX (one-time cache, skip if exists)
-        run: |
-          mkdir -p sfx
-          if [ ! -f sfx/default.mp3 ]; then
-            echo "No default.mp3 found in sfx/ - falling back to silence in worker."
-            echo "Add sfx/default.mp3 (and sfx/<niche>.mp3 variants) to the repo for suspense audio."
-          fi
-
       - name: Run video worker
         id: render
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # ── R2 thumbnail upload (optional — worker skips upload if unset) ──
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+          R2_PUBLIC_URL_BASE: ${{ vars.R2_PUBLIC_URL_BASE }}
         run: node worker10.js
-
       - name: Upload video artifact
         uses: actions/upload-artifact@v4
         with:
