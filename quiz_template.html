@@ -9,10 +9,11 @@
 .persistent-logo {
   position:absolute; top:38px; left:50%;
   width:100px; height:100px; border-radius:50%; z-index:50;
-  background:rgba(5,3,15,0.75);
+  background:radial-gradient(circle, #f5f3ef 0%, #e4e0d8 100%);
   display:flex; align-items:center; justify-content:center; overflow:visible;
   animation: logoSpin 4s linear infinite;
   transform-origin: center center;
+  box-shadow: inset 0 0 12px rgba(0,0,0,0.15);
 }
 .persistent-logo::before {
   content:''; position:absolute; inset:-8px; border-radius:50%;
@@ -224,6 +225,35 @@
   text-shadow: 0 4px 16px rgba(0,0,0,0.6);
 }
 
+/* ═══ Thumbnail layout variants A/B/C/D — one shown per render via JS toggle ═══ */
+.thumb-variant { display:none; width:100%; height:100%; }
+.thumb-variant.active { display:flex; flex-direction:column; justify-content:space-between; align-items:center; }
+
+/* Variant A: hook + 4-option mini list */
+.thumb-opt-list { width:100%; display:flex; flex-direction:column; gap:18px; }
+.thumb-opt-row {
+  display:flex; align-items:center; gap:18px; width:100%;
+  background:rgba(8,4,20,0.78); border:3px solid color-mix(in srgb, var(--accent-2) 55%, transparent);
+  border-radius:24px; padding:22px 30px;
+  box-shadow:0 0 30px color-mix(in srgb, var(--accent-2) 35%, transparent);
+}
+.thumb-opt-badge {
+  width:54px; height:54px; border-radius:50%; flex-shrink:0;
+  background:linear-gradient(135deg, var(--accent-1), var(--accent-3));
+  display:flex; align-items:center; justify-content:center;
+  font-size:28px; font-weight:900; color:#fff;
+}
+.thumb-opt-text { font-size:36px; font-weight:800; color:#fff; text-align:left; }
+
+/* Variant D: bottom CTA bar */
+.thumb-cta-bar {
+  width:100%; padding:24px 36px; border-radius:50px; text-align:center;
+  background:linear-gradient(135deg, #ff2d2d, #ff7a00);
+  border:4px solid #fff; box-shadow:0 0 60px rgba(255,60,0,0.7), 0 10px 30px rgba(0,0,0,0.6);
+  font-size:38px; font-weight:900; color:#fff; letter-spacing:1px;
+  text-shadow:0 2px 6px rgba(0,0,0,0.5);
+}
+
 /* ===== Helper: hide an element completely (used for "not yet revealed" states) ===== */
 .hidden-pre-reveal { opacity:0 !important; visibility:hidden !important; }
 </style>
@@ -248,10 +278,10 @@
   <!-- STEP 3a: question_intro_audio_url plays — question TEXT HIDDEN -->
   <div class="screen question-waiting-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
-    <div class="niche-marquee"><span>{{marquee_text}}</span></div>
-    <div class="float-icon-big fi-0" style="left:4%;top:70%;animation-delay:0s;">{{float_icon_0}}</div>
-    <div class="float-icon-big fi-1" style="right:2%;top:30%;animation-delay:1.5s;">{{float_icon_1}}</div>
-    <div class="float-icon-big fi-2" style="left:12%;top:50%;animation-delay:3s;">{{float_icon_2}}</div>
+    <div class="niche-marquee">{{marquee_text}}</div>
+    <div class="float-icon-big fi-0" style="left:2%;top:17%;animation-delay:0s;">{{float_icon_0}}</div>
+    <div class="float-icon-big fi-1" style="right:0%;top:19%;animation-delay:1.5s;">{{float_icon_1}}</div>
+    <div class="float-icon-big fi-2" style="left:30%;top:21%;animation-delay:3s;">{{float_icon_2}}</div>
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
@@ -265,10 +295,10 @@
   <!-- STEP 3b: question_1 REVEALED + TTS -->
   <div class="screen question-appear-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
-    <div class="niche-marquee"><span>{{marquee_text}}</span></div>
-    <div class="float-icon-big fi-0" style="left:4%;top:70%;animation-delay:0s;">{{float_icon_0}}</div>
-    <div class="float-icon-big fi-1" style="right:2%;top:30%;animation-delay:1.5s;">{{float_icon_1}}</div>
-    <div class="float-icon-big fi-2" style="left:12%;top:50%;animation-delay:3s;">{{float_icon_2}}</div>
+    <div class="niche-marquee">{{marquee_text}}</div>
+    <div class="float-icon-big fi-0" style="left:2%;top:17%;animation-delay:0s;">{{float_icon_0}}</div>
+    <div class="float-icon-big fi-1" style="right:0%;top:19%;animation-delay:1.5s;">{{float_icon_1}}</div>
+    <div class="float-icon-big fi-2" style="left:30%;top:21%;animation-delay:3s;">{{float_icon_2}}</div>
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
@@ -282,10 +312,10 @@
   <!-- STEP 4a: options_intro_audio_url plays — options HIDDEN, question stays visible -->
   <div class="screen options-waiting-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
-    <div class="niche-marquee"><span>{{marquee_text}}</span></div>
-    <div class="float-icon-big fi-0" style="left:4%;top:70%;animation-delay:0s;">{{float_icon_0}}</div>
-    <div class="float-icon-big fi-1" style="right:2%;top:30%;animation-delay:1.5s;">{{float_icon_1}}</div>
-    <div class="float-icon-big fi-2" style="left:12%;top:50%;animation-delay:3s;">{{float_icon_2}}</div>
+    <div class="niche-marquee">{{marquee_text}}</div>
+    <div class="float-icon-big fi-0" style="left:2%;top:17%;animation-delay:0s;">{{float_icon_0}}</div>
+    <div class="float-icon-big fi-1" style="right:0%;top:19%;animation-delay:1.5s;">{{float_icon_1}}</div>
+    <div class="float-icon-big fi-2" style="left:30%;top:21%;animation-delay:3s;">{{float_icon_2}}</div>
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
@@ -305,10 +335,10 @@
   <!-- STEP 4b: options_1 REVEALED + TTS + "time starts now" -->
   <div class="screen question-static">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
-    <div class="niche-marquee"><span>{{marquee_text}}</span></div>
-    <div class="float-icon-big fi-0" style="left:4%;top:70%;animation-delay:0s;">{{float_icon_0}}</div>
-    <div class="float-icon-big fi-1" style="right:2%;top:30%;animation-delay:1.5s;">{{float_icon_1}}</div>
-    <div class="float-icon-big fi-2" style="left:12%;top:50%;animation-delay:3s;">{{float_icon_2}}</div>
+    <div class="niche-marquee">{{marquee_text}}</div>
+    <div class="float-icon-big fi-0" style="left:2%;top:17%;animation-delay:0s;">{{float_icon_0}}</div>
+    <div class="float-icon-big fi-1" style="right:0%;top:19%;animation-delay:1.5s;">{{float_icon_1}}</div>
+    <div class="float-icon-big fi-2" style="left:30%;top:21%;animation-delay:3s;">{{float_icon_2}}</div>
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
@@ -338,10 +368,10 @@
   <div class="screen question-phase"
        style="--qtime:{{qtime}}s;--hint-time:{{hint_time}}s;--fiftyfifty-time:{{fiftyfifty_time}}s;">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
-    <div class="niche-marquee"><span>{{marquee_text}}</span></div>
-    <div class="float-icon-big fi-0" style="left:4%;top:70%;animation-delay:0s;">{{float_icon_0}}</div>
-    <div class="float-icon-big fi-1" style="right:2%;top:30%;animation-delay:1.5s;">{{float_icon_1}}</div>
-    <div class="float-icon-big fi-2" style="left:12%;top:50%;animation-delay:3s;">{{float_icon_2}}</div>
+    <div class="niche-marquee">{{marquee_text}}</div>
+    <div class="float-icon-big fi-0" style="left:2%;top:17%;animation-delay:0s;">{{float_icon_0}}</div>
+    <div class="float-icon-big fi-1" style="right:0%;top:19%;animation-delay:1.5s;">{{float_icon_1}}</div>
+    <div class="float-icon-big fi-2" style="left:30%;top:21%;animation-delay:3s;">{{float_icon_2}}</div>
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
@@ -376,10 +406,10 @@
   <!-- STEP 9: PRE-REVEAL — audio only, no text changes -->
   <div class="screen pre-reveal-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
-    <div class="niche-marquee"><span>{{marquee_text}}</span></div>
-    <div class="float-icon-big fi-0" style="left:4%;top:70%;animation-delay:0s;">{{float_icon_0}}</div>
-    <div class="float-icon-big fi-1" style="right:2%;top:30%;animation-delay:1.5s;">{{float_icon_1}}</div>
-    <div class="float-icon-big fi-2" style="left:12%;top:50%;animation-delay:3s;">{{float_icon_2}}</div>
+    <div class="niche-marquee">{{marquee_text}}</div>
+    <div class="float-icon-big fi-0" style="left:2%;top:17%;animation-delay:0s;">{{float_icon_0}}</div>
+    <div class="float-icon-big fi-1" style="right:0%;top:19%;animation-delay:1.5s;">{{float_icon_1}}</div>
+    <div class="float-icon-big fi-2" style="left:30%;top:21%;animation-delay:3s;">{{float_icon_2}}</div>
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
@@ -399,21 +429,21 @@
   <!-- STEP 10: ANSWER REVEAL -->
   <div class="screen answer-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
-    <div class="niche-marquee"><span>{{marquee_text}}</span></div>
-    <div class="float-icon-big fi-0" style="left:4%;top:70%;animation-delay:0s;">{{float_icon_0}}</div>
-    <div class="float-icon-big fi-1" style="right:2%;top:30%;animation-delay:1.5s;">{{float_icon_1}}</div>
-    <div class="float-icon-big fi-2" style="left:12%;top:50%;animation-delay:3s;">{{float_icon_2}}</div>
+    <div class="niche-marquee">{{marquee_text}}</div>
+    <div class="float-icon-big fi-0" style="left:2%;top:17%;animation-delay:0s;">{{float_icon_0}}</div>
+    <div class="float-icon-big fi-1" style="right:0%;top:19%;animation-delay:1.5s;">{{float_icon_1}}</div>
+    <div class="float-icon-big fi-2" style="left:30%;top:21%;animation-delay:3s;">{{float_icon_2}}</div>
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
-    <div class="confetti-piece" style="left:5%;font-size:34px;animation-duration:2.4s;animation-delay:0s;">{{confetti_0}}</div>
-    <div class="confetti-piece" style="left:16%;font-size:28px;animation-duration:2.0s;animation-delay:0.2s;">{{confetti_1}}</div>
-    <div class="confetti-piece" style="left:29%;font-size:36px;animation-duration:2.6s;animation-delay:0.05s;">{{confetti_2}}</div>
-    <div class="confetti-piece" style="left:42%;font-size:30px;animation-duration:2.2s;animation-delay:0.3s;">{{confetti_3}}</div>
-    <div class="confetti-piece" style="left:55%;font-size:32px;animation-duration:2.5s;animation-delay:0.1s;">{{confetti_4}}</div>
-    <div class="confetti-piece" style="left:68%;font-size:28px;animation-duration:2.1s;animation-delay:0.25s;">{{confetti_5}}</div>
-    <div class="confetti-piece" style="left:80%;font-size:34px;animation-duration:2.7s;animation-delay:0.15s;">{{confetti_6}}</div>
-    <div class="confetti-piece" style="left:91%;font-size:30px;animation-duration:2.3s;animation-delay:0.4s;">{{confetti_7}}</div>
+    <div class="confetti-piece" style="left:5%;font-size:136px;animation-duration:2.4s;animation-delay:0s;">{{confetti_0}}</div>
+    <div class="confetti-piece" style="left:16%;font-size:112px;animation-duration:2.0s;animation-delay:0.2s;">{{confetti_1}}</div>
+    <div class="confetti-piece" style="left:29%;font-size:144px;animation-duration:2.6s;animation-delay:0.05s;">{{confetti_2}}</div>
+    <div class="confetti-piece" style="left:42%;font-size:120px;animation-duration:2.2s;animation-delay:0.3s;">{{confetti_3}}</div>
+    <div class="confetti-piece" style="left:55%;font-size:128px;animation-duration:2.5s;animation-delay:0.1s;">{{confetti_4}}</div>
+    <div class="confetti-piece" style="left:68%;font-size:112px;animation-duration:2.1s;animation-delay:0.25s;">{{confetti_5}}</div>
+    <div class="confetti-piece" style="left:80%;font-size:136px;animation-duration:2.7s;animation-delay:0.15s;">{{confetti_6}}</div>
+    <div class="confetti-piece" style="left:91%;font-size:120px;animation-duration:2.3s;animation-delay:0.4s;">{{confetti_7}}</div>
     <div class="content">
       <div class="answer-badge">✅ {{correct_answer}}</div>
       <div class="qp-options" style="opacity:1;">
@@ -428,10 +458,10 @@
   <!-- CTA1: affiliate (checklist item 17) -->
   <div class="screen cta1-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
-    <div class="niche-marquee"><span>{{marquee_text}}</span></div>
-    <div class="float-icon-big fi-0" style="left:4%;top:70%;animation-delay:0s;">{{float_icon_0}}</div>
-    <div class="float-icon-big fi-1" style="right:2%;top:30%;animation-delay:1.5s;">{{float_icon_1}}</div>
-    <div class="float-icon-big fi-2" style="left:12%;top:50%;animation-delay:3s;">{{float_icon_2}}</div>
+    <div class="niche-marquee">{{marquee_text}}</div>
+    <div class="float-icon-big fi-0" style="left:2%;top:17%;animation-delay:0s;">{{float_icon_0}}</div>
+    <div class="float-icon-big fi-1" style="right:0%;top:19%;animation-delay:1.5s;">{{float_icon_1}}</div>
+    <div class="float-icon-big fi-2" style="left:30%;top:21%;animation-delay:3s;">{{float_icon_2}}</div>
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
@@ -445,10 +475,10 @@
   <!-- CTA2: SINGLE SCREEN combining items 25-27 — cta2_description_text + finger + URL -->
   <div class="screen cta2-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
-    <div class="niche-marquee"><span>{{marquee_text}}</span></div>
-    <div class="float-icon-big fi-0" style="left:4%;top:70%;animation-delay:0s;">{{float_icon_0}}</div>
-    <div class="float-icon-big fi-1" style="right:2%;top:30%;animation-delay:1.5s;">{{float_icon_1}}</div>
-    <div class="float-icon-big fi-2" style="left:12%;top:50%;animation-delay:3s;">{{float_icon_2}}</div>
+    <div class="niche-marquee">{{marquee_text}}</div>
+    <div class="float-icon-big fi-0" style="left:2%;top:17%;animation-delay:0s;">{{float_icon_0}}</div>
+    <div class="float-icon-big fi-1" style="right:0%;top:19%;animation-delay:1.5s;">{{float_icon_1}}</div>
+    <div class="float-icon-big fi-2" style="left:30%;top:21%;animation-delay:3s;">{{float_icon_2}}</div>
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
@@ -464,10 +494,10 @@
        After 2.5s, cta3 fades in (class toggle). NO hint/50-50/reveal/TTS on Q+options. -->
   <div class="screen mission-final-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
-    <div class="niche-marquee"><span>{{marquee_text}}</span></div>
-    <div class="float-icon-big fi-0" style="left:4%;top:70%;animation-delay:0s;">{{float_icon_0}}</div>
-    <div class="float-icon-big fi-1" style="right:2%;top:30%;animation-delay:1.5s;">{{float_icon_1}}</div>
-    <div class="float-icon-big fi-2" style="left:12%;top:50%;animation-delay:3s;">{{float_icon_2}}</div>
+    <div class="niche-marquee">{{marquee_text}}</div>
+    <div class="float-icon-big fi-0" style="left:2%;top:17%;animation-delay:0s;">{{float_icon_0}}</div>
+    <div class="float-icon-big fi-1" style="right:0%;top:19%;animation-delay:1.5s;">{{float_icon_1}}</div>
+    <div class="float-icon-big fi-2" style="left:30%;top:21%;animation-delay:3s;">{{float_icon_2}}</div>
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
@@ -495,20 +525,71 @@
     {{theme_deco_html}}
     <div class="thumb-bg-overlay"></div>
     <div class="thumb-content">
-      <div class="thumb-top">
-        <div class="thumb-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
-        <div class="thumb-hook">{{hook_phrase}}</div>
-        <div class="thumb-badge">⚡ {{niche}} Quiz</div>
+
+      <!-- VARIANT A: hook + 4-option mini list -->
+      <div class="thumb-variant thumb-variant-a">
+        <div class="thumb-top">
+          <div class="thumb-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+          <div class="thumb-hook">{{hook_phrase}}</div>
+          <div class="thumb-badge">⚡ {{thumb_badge_text}}</div>
+        </div>
+        <div class="thumb-opt-list">
+          <div class="thumb-opt-row"><div class="thumb-opt-badge">A</div><div class="thumb-opt-text">{{options[0]}}</div></div>
+          <div class="thumb-opt-row"><div class="thumb-opt-badge">B</div><div class="thumb-opt-text">{{options[1]}}</div></div>
+          <div class="thumb-opt-row"><div class="thumb-opt-badge">C</div><div class="thumb-opt-text">{{options[2]}}</div></div>
+          <div class="thumb-opt-row"><div class="thumb-opt-badge">D</div><div class="thumb-opt-text">{{options[3]}}</div></div>
+        </div>
       </div>
-      <div class="thumb-center">
-        <div class="thumb-qmark">?</div>
-        <div class="thumb-center-icon">{{thumb_icon}}</div>
-        <div class="thumb-challenge-banner">Challenge</div>
+
+      <!-- VARIANT B: hook + question + centerpiece (original design) -->
+      <div class="thumb-variant thumb-variant-b">
+        <div class="thumb-top">
+          <div class="thumb-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+          <div class="thumb-hook">{{hook_phrase}}</div>
+          <div class="thumb-badge">⚡ {{thumb_badge_text}}</div>
+        </div>
+        <div class="thumb-center">
+          <div class="thumb-qmark">?</div>
+          <div class="thumb-center-icon">{{thumb_icon}}</div>
+          <div class="thumb-challenge-banner">Challenge</div>
+        </div>
+        <div class="thumb-question-card">
+          <div class="thumb-question-label">Can You Answer?</div>
+          <div class="thumb-question-text">{{question}}</div>
+        </div>
       </div>
-      <div class="thumb-question-card">
-        <div class="thumb-question-label">Can You Answer?</div>
-        <div class="thumb-question-text">{{question}}</div>
+
+      <!-- VARIANT C: Mission Impossible feature -->
+      <div class="thumb-variant thumb-variant-c">
+        <div class="thumb-top">
+          <div class="thumb-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+          <div class="thumb-hook">Mission Impossible</div>
+          <div class="thumb-badge">⚡ {{thumb_badge_text}}</div>
+        </div>
+        <div class="thumb-center">
+          <div class="thumb-qmark">?</div>
+          <div class="thumb-center-icon">🎯</div>
+          <div class="thumb-challenge-banner">Impossible</div>
+        </div>
+        <div class="thumb-question-card">
+          <div class="thumb-question-label">Bonus Question</div>
+          <div class="thumb-question-text">{{thumb_mission_text}}</div>
+        </div>
       </div>
+
+      <!-- VARIANT D: hook + question + bottom CTA bar -->
+      <div class="thumb-variant thumb-variant-d">
+        <div class="thumb-top">
+          <div class="thumb-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+          <div class="thumb-hook">{{hook_phrase}}</div>
+        </div>
+        <div class="thumb-question-card">
+          <div class="thumb-question-label">Can You Answer?</div>
+          <div class="thumb-question-text">{{question}}</div>
+        </div>
+        <div class="thumb-cta-bar">👉 {{thumb_badge_text}}</div>
+      </div>
+
     </div>
   </div>
 
