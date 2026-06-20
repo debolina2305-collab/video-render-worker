@@ -93,8 +93,8 @@ function pickConfettiSet(niche) {
 const MARQUEE_POOL = {
   finance:       ['$AAPL +2.3%   $BTC +5.8%   $GOLD +1.2%   $NIFTY +0.7%   $TSLA -1.1%   $ETH +4.2%   $SENSEX +1.5%',
                    'MARKETS OPEN   •   DOW +312   •   NASDAQ +1.4%   •   OIL $82.40   •   USD/EUR 1.09'],
-  tech:          ['{ } => const let var function return async await import export class new this ▸▸▸',
-                   '01001010 11001010 00110101 10101010 01101101 11010110 00101101 10110010 ▸▸▸'],
+  tech:          ['SYSTEM ONLINE   •   AI POWERED   •   NEXT-GEN TECH   •   INNOVATION LOADING   •   FUTURE IS NOW',
+                   'BREAKING TECH NEWS   •   UPGRADE AVAILABLE   •   SMART SYSTEMS ACTIVE   •   DATA PROCESSED'],
   health:        ['HEART RATE 72 BPM   •   O2 SAT 98%   •   STEPS 8,432   •   SLEEP 7h 12m   •   CALORIES 1,840'],
   science:       ['H2O   •   E=mc²   •   9.8 m/s²   •   299,792 km/s   •   6.022×10²³   •   pH 7.0   •   ΔG'],
   history:       ['BC ◆ AD ◆ EMPIRE ◆ DYNASTY ◆ REVOLUTION ◆ TREATY ◆ CONQUEST ◆ RENAISSANCE ◆ ARTIFACT'],
