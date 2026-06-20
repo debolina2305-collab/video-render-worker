@@ -131,6 +131,23 @@ const THUMB_BADGE_TEXTS = ['CHALLENGE', 'QUIZ', 'PLAY REAL CHALLENGE', 'PLAY AND
 function pickThumbBadgeText() {
   return THUMB_BADGE_TEXTS[Math.floor(Math.random() * THUMB_BADGE_TEXTS.length)];
 }
+// Big, bold catchphrase banner shown on the thumbnail centerpiece — the main
+// eye-catching element. Pool of punchy phrases, one randomly picked per render.
+const THUMB_CATCHPHRASES = [
+  'CHALLENGE', 'LEVEL UP QUIZ', 'EARN REAL TOKENS', 'BEAT YOUR FRIENDS',
+  'CHALLENGE FRIENDS', 'ARE YOU SMART?', 'PROVE IT', 'TEST YOURSELF'
+];
+function pickThumbCatchphrase() {
+  const phrase = THUMB_CATCHPHRASES[Math.floor(Math.random() * THUMB_CATCHPHRASES.length)];
+  // Auto-shrink font size for longer phrases so nothing overflows the 1080px frame
+  // at any rotation. Short words (≤10 chars) get the full punchy size.
+  let fontSize;
+  if (phrase.length <= 10)      fontSize = 92;
+  else if (phrase.length <= 14) fontSize = 74;
+  else if (phrase.length <= 18) fontSize = 60;
+  else                          fontSize = 50;
+  return { phrase, fontSize };
+}
 function pickThumbVariant(hasMI) {
   // Variant C only makes sense if this quiz actually has a Mission Impossible question
   const pool = hasMI ? ['a','b','c','d'] : ['a','b','d'];
@@ -571,6 +588,7 @@ async function buildVideo(quiz, workDir) {
 
   const { themeCss, decoHtml } = await resolveTheme(quiz);
   const confettiSet = pickConfettiSet(niche);
+  const thumbCatch = pickThumbCatchphrase();
   const marqueeHtml = buildMarqueeHtml(quiz.topic);
   const floatIcons  = pickFloatIcons(niche);
   console.log(`[CONFETTI] niche=${niche} set=${confettiSet.join(' ')}`);
@@ -594,6 +612,8 @@ async function buildVideo(quiz, workDir) {
     '{{niche}}':niche,
     '{{thumb_icon}}':thumbIconFor(niche),
     '{{thumb_badge_text}}':pickThumbBadgeText(),
+    '{{thumb_catchphrase}}':thumbCatch.phrase,
+    '{{thumb_catchphrase_size}}':thumbCatch.fontSize,
     '{{thumb_mission_text}}':miQuestion||question,
     '{{confetti_0}}':confettiSet[0], '{{confetti_1}}':confettiSet[1],
     '{{confetti_2}}':confettiSet[2], '{{confetti_3}}':confettiSet[3],
