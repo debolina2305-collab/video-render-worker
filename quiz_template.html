@@ -150,7 +150,7 @@
 .thumb-screen { padding:0; }
 .thumb-bg-overlay {
   position:absolute; inset:0; z-index:2;
-  background: linear-gradient(180deg, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.45) 45%, rgba(0,0,0,0.85) 100%);
+  background: linear-gradient(180deg, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.22) 45%, rgba(0,0,0,0.55) 100%);
 }
 .thumb-content {
   position:relative; z-index:5; width:100%; height:100%;
@@ -200,14 +200,27 @@
 }
 .thumb-challenge-banner {
   position:absolute; bottom:-10px; transform:rotate(-7deg);
-  font-size:88px; font-weight:900; letter-spacing:3px; text-transform:uppercase;
-  color:#fff; padding:14px 56px;
+  font-size:96px; font-weight:900; letter-spacing:2px; text-transform:uppercase;
+  color:#fff; padding:16px 60px; white-space:nowrap;
   background:linear-gradient(135deg, #ff2d2d, #ff7a00);
-  border:5px solid #fff;
-  box-shadow:0 0 60px rgba(255,60,0,0.8), 0 10px 30px rgba(0,0,0,0.6);
-  -webkit-text-stroke:1px rgba(0,0,0,0.3);
+  border:6px solid #fff;
+  box-shadow:0 0 70px rgba(255,60,0,0.85), 0 12px 36px rgba(0,0,0,0.6);
+  -webkit-text-stroke:1.5px rgba(0,0,0,0.35);
 }
 @keyframes thumbFloat { from{transform:scale(0.8);opacity:0;} to{transform:scale(1);opacity:1;} }
+
+/* Standalone big banner — same punch as thumb-challenge-banner, used in
+   variants that don't have the icon+qmark centerpiece (A, D). */
+.thumb-big-banner {
+  position:relative; align-self:center; transform:rotate(-5deg);
+  font-size:84px; font-weight:900; letter-spacing:2px; text-transform:uppercase;
+  color:#fff; padding:20px 56px; white-space:nowrap; text-align:center;
+  background:linear-gradient(135deg, #ff2d2d, #ff7a00);
+  border:6px solid #fff; border-radius:16px;
+  box-shadow:0 0 70px rgba(255,60,0,0.85), 0 12px 36px rgba(0,0,0,0.6);
+  -webkit-text-stroke:1.5px rgba(0,0,0,0.35);
+  margin:24px 0;
+}
 
 .thumb-question-card {
   width:100%; background:rgba(8,4,20,0.78);
@@ -539,6 +552,7 @@
           <div class="thumb-opt-row"><div class="thumb-opt-badge">C</div><div class="thumb-opt-text">{{options[2]}}</div></div>
           <div class="thumb-opt-row"><div class="thumb-opt-badge">D</div><div class="thumb-opt-text">{{options[3]}}</div></div>
         </div>
+        <div class="thumb-big-banner" style="font-size:{{thumb_catchphrase_size}}px;">{{thumb_catchphrase}}</div>
       </div>
 
       <!-- VARIANT B: hook + question + centerpiece (original design) -->
@@ -551,7 +565,7 @@
         <div class="thumb-center">
           <div class="thumb-qmark">?</div>
           <div class="thumb-center-icon">{{thumb_icon}}</div>
-          <div class="thumb-challenge-banner">Challenge</div>
+          <div class="thumb-challenge-banner" style="font-size:{{thumb_catchphrase_size}}px;">{{thumb_catchphrase}}</div>
         </div>
         <div class="thumb-question-card">
           <div class="thumb-question-label">Can You Answer?</div>
@@ -582,6 +596,11 @@
         <div class="thumb-top">
           <div class="thumb-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
           <div class="thumb-hook">{{hook_phrase}}</div>
+        </div>
+        <div class="thumb-center">
+          <div class="thumb-qmark">?</div>
+          <div class="thumb-center-icon">{{thumb_icon}}</div>
+          <div class="thumb-big-banner" style="font-size:{{thumb_catchphrase_size}}px;">{{thumb_catchphrase}}</div>
         </div>
         <div class="thumb-question-card">
           <div class="thumb-question-label">Can You Answer?</div>
