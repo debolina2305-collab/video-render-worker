@@ -23,30 +23,50 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 /* ═══ NICHE MARQUEE — scrolling ticker strip near top of every screen.
    Single biggest lever for "this looks niche-specific at a glance". ═══ */
 .niche-marquee {
-  position:relative; z-index:3; width:100%; height:64px; margin-top:148px;
-  background:rgba(0,0,0,0.38);
-  border-top:1.5px solid color-mix(in srgb, var(--accent-1) 55%, transparent);
-  border-bottom:1.5px solid color-mix(in srgb, var(--accent-1) 55%, transparent);
+  position:relative; z-index:3; width:100%; height:72px; margin-top:148px;
+  background:rgba(0,0,0,0.55);
+  border-top:2px solid #ffd24a; border-bottom:2px solid #ffd24a;
   display:flex; align-items:center; overflow:hidden; white-space:nowrap;
   flex-shrink:0;
+  box-shadow:0 0 24px rgba(255,210,74,0.35);
 }
 .niche-marquee span {
   display:inline-block; padding-left:100%;
   animation: marqueeScroll 16s linear infinite;
-  font-family:'Courier New',monospace; font-size:26px; font-weight:700; letter-spacing:2px;
-  color: var(--accent-1); text-shadow:0 0 12px color-mix(in srgb, var(--accent-1) 70%, transparent);
+  font-family:'Arial Black','Segoe UI',sans-serif; font-size:34px; font-weight:900; letter-spacing:2px;
+  color:#fff5cc;
+  text-shadow:0 0 2px #000, 0 0 4px #000, 2px 2px 6px #000, 0 0 16px #ffd24a;
 }
 @keyframes marqueeScroll { from{transform:translateX(0);} to{transform:translateX(-100%);} }
 
-/* ═══ Big floating niche icons — replace tiny sparkle emoji, real parallax drift ═══ */
+/* ═══ Big floating niche icons — large, bold, with real directional travel ═══ */
 .float-icon-big {
-  position:absolute; z-index:2; font-size:80px; opacity:0.32;
-  filter: drop-shadow(0 0 24px color-mix(in srgb, var(--accent-1) 60%, transparent));
-  animation: floatDrift 8s ease-in-out infinite;
+  position:absolute; z-index:2; font-size:150px; opacity:0.5;
+  filter: drop-shadow(0 0 28px color-mix(in srgb, var(--accent-1) 70%, transparent));
+  will-change: transform;
 }
-@keyframes floatDrift {
-  0%,100% { transform:translateY(0) rotate(-6deg) scale(1); }
-  50%     { transform:translateY(-50px) rotate(6deg) scale(1.08); }
+/* Icon 0: travels diagonally bottom-left → top-right (a "rising" sweep, great for finance) */
+.float-icon-big.fi-0 { animation: floatRise 9s ease-in-out infinite; }
+/* Icon 1: travels right → left across the upper area */
+.float-icon-big.fi-1 { animation: floatCross 11s linear infinite; }
+/* Icon 2: bobs and rotates in place, lower area */
+.float-icon-big.fi-2 { animation: floatBob 7s ease-in-out infinite; }
+
+@keyframes floatRise {
+  0%   { transform: translate(0, 0) rotate(-8deg) scale(0.9); opacity:0.15; }
+  20%  { opacity:0.55; }
+  80%  { opacity:0.55; }
+  100% { transform: translate(620px, -780px) rotate(12deg) scale(1.15); opacity:0.1; }
+}
+@keyframes floatCross {
+  0%   { transform: translate(0, 0) rotate(6deg); opacity:0.12; }
+  15%  { opacity:0.5; }
+  85%  { opacity:0.5; }
+  100% { transform: translate(-760px, 120px) rotate(-10deg); opacity:0.1; }
+}
+@keyframes floatBob {
+  0%,100% { transform: translateY(0) rotate(-10deg) scale(1); }
+  50%     { transform: translateY(-90px) rotate(10deg) scale(1.12); }
 }
 
 /* ═══ Brand pill under logo ═══ */
