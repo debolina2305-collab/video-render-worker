@@ -14,11 +14,49 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 
 .screen{
   width:1080px; height:1920px; display:none; flex-direction:column;
-  align-items:center; justify-content:center; position:relative;
-  color:#fff; text-align:center; padding:60px; overflow:hidden;
+  align-items:center; justify-content:flex-start; position:relative;
+  color:#fff; text-align:center; padding:0 60px 60px; overflow:hidden;
 }
 .screen.active{ display:flex; }
-.content{ position:relative; z-index:5; width:100%; display:flex; flex-direction:column; align-items:center; }
+.content{ position:relative; z-index:5; width:100%; flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding-top:20px; }
+
+/* ═══ NICHE MARQUEE — scrolling ticker strip near top of every screen.
+   Single biggest lever for "this looks niche-specific at a glance". ═══ */
+.niche-marquee {
+  position:relative; z-index:3; width:100%; height:64px; margin-top:148px;
+  background:rgba(0,0,0,0.38);
+  border-top:1.5px solid color-mix(in srgb, var(--accent-1) 55%, transparent);
+  border-bottom:1.5px solid color-mix(in srgb, var(--accent-1) 55%, transparent);
+  display:flex; align-items:center; overflow:hidden; white-space:nowrap;
+  flex-shrink:0;
+}
+.niche-marquee span {
+  display:inline-block; padding-left:100%;
+  animation: marqueeScroll 16s linear infinite;
+  font-family:'Courier New',monospace; font-size:26px; font-weight:700; letter-spacing:2px;
+  color: var(--accent-1); text-shadow:0 0 12px color-mix(in srgb, var(--accent-1) 70%, transparent);
+}
+@keyframes marqueeScroll { from{transform:translateX(0);} to{transform:translateX(-100%);} }
+
+/* ═══ Big floating niche icons — replace tiny sparkle emoji, real parallax drift ═══ */
+.float-icon-big {
+  position:absolute; z-index:2; font-size:80px; opacity:0.32;
+  filter: drop-shadow(0 0 24px color-mix(in srgb, var(--accent-1) 60%, transparent));
+  animation: floatDrift 8s ease-in-out infinite;
+}
+@keyframes floatDrift {
+  0%,100% { transform:translateY(0) rotate(-6deg) scale(1); }
+  50%     { transform:translateY(-50px) rotate(6deg) scale(1.08); }
+}
+
+/* ═══ Brand pill under logo ═══ */
+.brand-pill {
+  display:inline-block; margin-top:10px;
+  background:linear-gradient(135deg, var(--accent-1), var(--accent-3));
+  color:#04140d; font-weight:900; font-size:20px; letter-spacing:3px;
+  padding:6px 22px; border-radius:20px;
+  box-shadow:0 0 24px color-mix(in srgb, var(--accent-1) 55%, transparent);
+}
 
 /* ═══════════════════════════════════════════════════════════
    TEXT ANIMATION LIBRARY
@@ -163,12 +201,13 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 }
 .answer-slide .qp-options{ opacity:1; animation:none; }
 .confetti-piece{
-  position:absolute; top:-40px; border-radius:3px; opacity:0.9;
+  position:absolute; top:-60px; opacity:0.95;
   animation-name:confettiFall; animation-timing-function:linear; animation-iteration-count:infinite;
+  line-height:1;
 }
 @keyframes confettiFall{
-  0%{transform:translateY(-40px) rotate(0deg);opacity:1}
-  100%{transform:translateY(2000px) rotate(720deg);opacity:0.9}
+  0%{transform:translateY(-60px) rotate(0deg) scale(1);opacity:1}
+  100%{transform:translateY(2050px) rotate(720deg) scale(1);opacity:0.9}
 }
 
 /* ═══════════════════════════════════════════════════════════
