@@ -60,6 +60,78 @@ function thumbIconFor(niche) {
   return NICHE_ICON[(niche||'general').toLowerCase()] || '❓';
 }
 
+// Confetti pieces for the answer-reveal celebration — niche-flavored pool plus
+// universal celebratory objects, randomly sampled per render so every quiz's
+// "falling objects" look different (money, notes, flowers, coins, stars, etc).
+const CONFETTI_POOL = {
+  finance:       ['💰','💵','🪙','💎','📈','💸','🤑','💳'],
+  tech:          ['⚡','💡','🔧','🤖','💻','✨','🔌','🛰️'],
+  health:        ['🧠','💊','❤️','🩺','🌿','✨','🧬','💪'],
+  science:       ['🔬','🧪','⚛️','🌌','✨','🪐','🧬','💡'],
+  history:       ['🏛️','📜','⚔️','👑','🗿','✨','🏺','🔱'],
+  sports:        ['🏆','⚽','🥇','🏅','🔥','✨','🎯','💪'],
+  geography:     ['🌍','🗺️','🏔️','🌋','✨','🧭','🏝️','🌊'],
+  entertainment: ['🎬','🎭','🎤','🌟','✨','🎉','🎵','📽️'],
+  food:          ['🍔','🍕','🍰','🍓','✨','🍩','🌮','🍎'],
+  nature:        ['🌿','🌸','🍃','🌺','✨','🦋','🌻','🌳'],
+  space:         ['🚀','🪐','⭐','🌌','✨','☄️','🛸','🌙'],
+  general:       ['🎉','⭐','✨','🎊','💫','🏆','🌟','🎈']
+};
+const UNIVERSAL_CONFETTI = ['🎉','✨','⭐','💫','🎊'];
+
+function pickConfettiSet(niche) {
+  const pool = CONFETTI_POOL[(niche||'general').toLowerCase()] || CONFETTI_POOL.general;
+  // Mix niche-specific pieces with a couple of universal celebratory ones for variety
+  const combined = [...pool, ...UNIVERSAL_CONFETTI];
+  const picked = [];
+  for (let i = 0; i < 8; i++) picked.push(combined[Math.floor(Math.random() * combined.length)]);
+  return picked;
+}
+
+// Marquee ticker text — single biggest lever for "this looks niche-specific
+// at a glance" even on a paused frame. One random pick per render.
+const MARQUEE_POOL = {
+  finance:       ['$AAPL +2.3%   $BTC +5.8%   $GOLD +1.2%   $NIFTY +0.7%   $TSLA -1.1%   $ETH +4.2%   $SENSEX +1.5%',
+                   'MARKETS OPEN   •   DOW +312   •   NASDAQ +1.4%   •   OIL $82.40   •   USD/EUR 1.09'],
+  tech:          ['{ } => const let var function return async await import export class new this ▸▸▸',
+                   '01001010 11001010 00110101 10101010 01101101 11010110 00101101 10110010 ▸▸▸'],
+  health:        ['HEART RATE 72 BPM   •   O2 SAT 98%   •   STEPS 8,432   •   SLEEP 7h 12m   •   CALORIES 1,840'],
+  science:       ['H2O   •   E=mc²   •   9.8 m/s²   •   299,792 km/s   •   6.022×10²³   •   pH 7.0   •   ΔG'],
+  history:       ['BC ◆ AD ◆ EMPIRE ◆ DYNASTY ◆ REVOLUTION ◆ TREATY ◆ CONQUEST ◆ RENAISSANCE ◆ ARTIFACT'],
+  sports:        ['SCORE 2-1   •   FT   •   MATCH DAY   •   RECORD BROKEN   •   FINAL WHISTLE   •   MVP'],
+  geography:     ['LAT 28.6°N   •   LONG 77.2°E   •   POP 1.4B   •   ALT 8,849m   •   AREA 148M km²'],
+  entertainment: ['NOW STREAMING ◆ BOX OFFICE #1 ◆ TOP CHARTS ◆ AWARD WINNER ◆ TRENDING ◆ SOLD OUT'],
+  food:          ['350 CAL   •   PREP 15min   •   SERVES 4   •   5★ RATED   •   CHEF\'S CHOICE   •   SPICY 🌶'],
+  nature:        ['25°C   •   HUMIDITY 64%   •   WIND 12km/h   •   UV INDEX 6   •   SUNSET 6:42PM'],
+  space:         ['ALT 408km   •   VELOCITY 7.66km/s   •   ORBIT 92min   •   TEMP -270°C   •   T-MINUS 10'],
+  general:       ['DID YOU KNOW?   •   FACT CHECK   •   TRIVIA TIME   •   CAN YOU GUESS?   •   TEST YOURSELF']
+};
+function pickMarqueeText(niche) {
+  const pool = MARQUEE_POOL[(niche||'general').toLowerCase()] || MARQUEE_POOL.general;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+// Large floating background icons — niche-specific, 3 per render, randomized
+const FLOAT_ICON_POOL = {
+  finance:       ['💰','📈','💎','🪙','💵','📊'],
+  tech:          ['🤖','💻','⚡','🔧','🛰️','💡'],
+  health:        ['🧠','❤️','🩺','💊','🧬','🌿'],
+  science:       ['🔬','🧪','⚛️','🪐','🧬','✨'],
+  history:       ['🏛️','📜','⚔️','👑','🗿','🏺'],
+  sports:        ['🏆','⚽','🥇','🎯','🔥','💪'],
+  geography:     ['🌍','🗺️','🏔️','🌋','🧭','🏝️'],
+  entertainment: ['🎬','🎭','🎤','🌟','🎵','📽️'],
+  food:          ['🍔','🍕','🍰','🌮','🍓','🍩'],
+  nature:        ['🌿','🌸','🦋','🌻','🌳','🍃'],
+  space:         ['🚀','🪐','⭐','🌌','☄️','🛸'],
+  general:       ['❓','💡','⭐','🎯','🧩','✨']
+};
+function pickFloatIcons(niche) {
+  const pool = FLOAT_ICON_POOL[(niche||'general').toLowerCase()] || FLOAT_ICON_POOL.general;
+  const shuffled = [...pool].sort(()=>Math.random()-0.5);
+  return shuffled.slice(0, 3);
+}
+
 const BG_VOL_BASE = 0.10;
 const BG_VOL_DUCK = 0.035;
 const DUCK_RAMP   = 0.12;
@@ -235,7 +307,7 @@ async function imgClip(img, audioP, dur, workDir, name) {
   const out = path.join(workDir, `${name}.mp4`);
   const safeDur = Math.max(0.3, dur);
   await ffmpeg(
-    `-y -loop 1 -i "${img}" -i "${audioP}" -c:v libx264 -t ${safeDur} -pix_fmt yuv420p -r 30 ` +
+    `-y -loop 1 -i "${img}" -i "${audioP}" -c:v libx264 -crf 18 -preset medium -t ${safeDur} -pix_fmt yuv420p -r 30 ` +
     `-vf "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2" ` +
     `-c:a aac -b:a 128k -ar 44100 -shortest "${out}"`, `imgClip ${name}`
   );
@@ -284,13 +356,13 @@ async function recordedClip(page, audioP, dur, workDir, name) {
   }
 
   const h264 = path.join(workDir, `${name}_h264.mp4`);
-  await ffmpeg(`-y -i "${rawVideo}" -c:v libx264 -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264}"`, `${name} reencode`);
+  await ffmpeg(`-y -i "${rawVideo}" -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264}"`, `${name} reencode`);
 
   const out = path.join(workDir, `${name}.mp4`);
   // -stream_loop -1 on the (already-correct-length) recording is harmless padding
   // safety net in case the recording came in a hair short; -t hard-clamps either way.
   await ffmpeg(
-    `-y -stream_loop -1 -i "${h264}" -i "${audioP}" -c:v libx264 -t ${safeDur} -pix_fmt yuv420p -r 30 ` +
+    `-y -stream_loop -1 -i "${h264}" -i "${audioP}" -c:v libx264 -crf 18 -preset medium -t ${safeDur} -pix_fmt yuv420p -r 30 ` +
     `-c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 "${out}"`, `${name} mux`
   );
   const actualDur = await videoDur(out);
@@ -493,6 +565,11 @@ async function buildVideo(quiz, workDir) {
   console.log(`[CTA] cta2AudioFile=${cta2AudioFile ? 'OK' : 'NULL (will use TTS fallback)'} cta1AudioFile=${cta1AudioFile ? 'OK' : 'NULL'}`);
 
   const { themeCss, decoHtml } = await resolveTheme(quiz);
+  const confettiSet = pickConfettiSet(niche);
+  const marqueeText = pickMarqueeText(niche);
+  const floatIcons  = pickFloatIcons(niche);
+  console.log(`[CONFETTI] niche=${niche} set=${confettiSet.join(' ')}`);
+  console.log(`[MARQUEE] niche=${niche} text="${marqueeText.slice(0,50)}..." floatIcons=${floatIcons.join(' ')}`);
 
   let html = await fs.readFile(path.join(__dirname,'quiz_template.html'),'utf8');
   const R = {
@@ -511,6 +588,12 @@ async function buildVideo(quiz, workDir) {
     '{{cta3_text}}':quiz.cta3_text||'Like, Share & Challenge a friend! Subscribe!',
     '{{niche}}':niche,
     '{{thumb_icon}}':thumbIconFor(niche),
+    '{{confetti_0}}':confettiSet[0], '{{confetti_1}}':confettiSet[1],
+    '{{confetti_2}}':confettiSet[2], '{{confetti_3}}':confettiSet[3],
+    '{{confetti_4}}':confettiSet[4], '{{confetti_5}}':confettiSet[5],
+    '{{confetti_6}}':confettiSet[6], '{{confetti_7}}':confettiSet[7],
+    '{{marquee_text}}':marqueeText,
+    '{{float_icon_0}}':floatIcons[0], '{{float_icon_1}}':floatIcons[1], '{{float_icon_2}}':floatIcons[2],
     '{{platform_url}}': `${PLATFORM_URL_BASE}/${niche}`,
     '{{mission_intro_text}}':quiz.mission_intro_text||'Are you smart enough?',
     '{{mission_question}}':miQuestion||'',
@@ -609,7 +692,7 @@ async function buildVideo(quiz, workDir) {
   await new Promise(r=>setTimeout(r,100));
   const s4bp=[];
   if(sfxFile){ const sg=path.join(workDir,'sfxgap2.mp3'); await silence(0.1,sg); s4bp.push(sfxFile,sg); }
-  const optionsSilence=path.join(workDir,'options_silence.mp3'); await silence(4.0,optionsSilence); s4bp.push(optionsSilence);
+  const optionsSilence=path.join(workDir,'options_silence.mp3'); await silence(2.0,optionsSilence); s4bp.push(optionsSilence);
   const snt=path.join(workDir,'start_now.mp3');
   await tts(`You have only ${QTIME} seconds to crack the challenge — and your time starts now!`,voice,snt,3);
   s4bp.push(snt);
@@ -719,7 +802,7 @@ async function buildVideo(quiz, workDir) {
   const concatTxt=path.join(workDir,'concat.txt');
   await fs.writeFile(concatTxt,clips.map(c=>`file '${c.path.replace(/'/g,"'\\''")}' `).join('\n'));
   const concatenated=path.join(workDir,'concatenated.mp4');
-  await ffmpeg(`-y -f concat -safe 0 -i "${concatTxt}" -c:v libx264 -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k -ar 44100 -movflags +faststart "${concatenated}"`, 'finalConcat');
+  await ffmpeg(`-y -f concat -safe 0 -i "${concatTxt}" -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k -ar 44100 -movflags +faststart "${concatenated}"`, 'finalConcat');
   const total=await videoDur(concatenated);
   console.log(`[VIDEO] Concatenated: ${total.toFixed(1)}s (sum of clip durations was ${runningTotal.toFixed(1)}s)`);
   const finalVideoPath = await applyBgMusic(concatenated,total,voiceRanges,bgFile,workDir);
