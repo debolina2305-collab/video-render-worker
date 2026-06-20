@@ -88,27 +88,19 @@ function pickConfettiSet(niche) {
   return picked;
 }
 
-// Marquee ticker text — single biggest lever for "this looks niche-specific
-// at a glance" even on a paused frame. One random pick per render.
-const MARQUEE_POOL = {
-  finance:       ['$AAPL +2.3%   $BTC +5.8%   $GOLD +1.2%   $NIFTY +0.7%   $TSLA -1.1%   $ETH +4.2%   $SENSEX +1.5%',
-                   'MARKETS OPEN   •   DOW +312   •   NASDAQ +1.4%   •   OIL $82.40   •   USD/EUR 1.09'],
-  tech:          ['SYSTEM ONLINE   •   AI POWERED   •   NEXT-GEN TECH   •   INNOVATION LOADING   •   FUTURE IS NOW',
-                   'BREAKING TECH NEWS   •   UPGRADE AVAILABLE   •   SMART SYSTEMS ACTIVE   •   DATA PROCESSED'],
-  health:        ['HEART RATE 72 BPM   •   O2 SAT 98%   •   STEPS 8,432   •   SLEEP 7h 12m   •   CALORIES 1,840'],
-  science:       ['H2O   •   E=mc²   •   9.8 m/s²   •   299,792 km/s   •   6.022×10²³   •   pH 7.0   •   ΔG'],
-  history:       ['BC ◆ AD ◆ EMPIRE ◆ DYNASTY ◆ REVOLUTION ◆ TREATY ◆ CONQUEST ◆ RENAISSANCE ◆ ARTIFACT'],
-  sports:        ['SCORE 2-1   •   FT   •   MATCH DAY   •   RECORD BROKEN   •   FINAL WHISTLE   •   MVP'],
-  geography:     ['LAT 28.6°N   •   LONG 77.2°E   •   POP 1.4B   •   ALT 8,849m   •   AREA 148M km²'],
-  entertainment: ['NOW STREAMING ◆ BOX OFFICE #1 ◆ TOP CHARTS ◆ AWARD WINNER ◆ TRENDING ◆ SOLD OUT'],
-  food:          ['350 CAL   •   PREP 15min   •   SERVES 4   •   5★ RATED   •   CHEF\'S CHOICE   •   SPICY 🌶'],
-  nature:        ['25°C   •   HUMIDITY 64%   •   WIND 12km/h   •   UV INDEX 6   •   SUNSET 6:42PM'],
-  space:         ['ALT 408km   •   VELOCITY 7.66km/s   •   ORBIT 92min   •   TEMP -270°C   •   T-MINUS 10'],
-  general:       ['DID YOU KNOW?   •   FACT CHECK   •   TRIVIA TIME   •   CAN YOU GUESS?   •   TEST YOURSELF']
-};
-function pickMarqueeText(niche) {
-  const pool = MARQUEE_POOL[(niche||'general').toLowerCase()] || MARQUEE_POOL.general;
-  return pool[Math.floor(Math.random() * pool.length)];
+// Marquee strip now shows the quiz TOPIC as static text with a per-word color
+// shimmer (NOT scrolling) — a scroll animation always restarts from position 0
+// at the start of every fresh screen-recording, which looked broken/reset on
+// every segment. A looping color-shimmer per word has no "start position" to
+// reset, so it looks continuous and intentional across every segment.
+function buildMarqueeHtml(topic) {
+  const t = (topic || '').trim() || 'TODAY\'S CHALLENGE';
+  const words = t.split(/\s+/).filter(Boolean);
+  return words.map((w, i) => {
+    const delay = (i * 0.18).toFixed(2);
+    const esc = w.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return `<span class="topic-word" style="animation-delay:${delay}s;">${esc}</span>`;
+  }).join('');
 }
 
 // Large floating background icons — niche-specific, 3 per render, randomized
@@ -130,6 +122,19 @@ function pickFloatIcons(niche) {
   const pool = FLOAT_ICON_POOL[(niche||'general').toLowerCase()] || FLOAT_ICON_POOL.general;
   const shuffled = [...pool].sort(()=>Math.random()-0.5);
   return shuffled.slice(0, 3);
+}
+
+// Thumbnail layout variety — checklist: 4 distinct layouts (A/B/C/D) randomly
+// chosen per render, plus randomized badge/CTA text, so thumbnails stop
+// looking identical across videos.
+const THUMB_BADGE_TEXTS = ['CHALLENGE', 'QUIZ', 'PLAY REAL CHALLENGE', 'PLAY AND EARN ONS TOKEN'];
+function pickThumbBadgeText() {
+  return THUMB_BADGE_TEXTS[Math.floor(Math.random() * THUMB_BADGE_TEXTS.length)];
+}
+function pickThumbVariant(hasMI) {
+  // Variant C only makes sense if this quiz actually has a Mission Impossible question
+  const pool = hasMI ? ['a','b','c','d'] : ['a','b','d'];
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 const BG_VOL_BASE = 0.10;
@@ -566,10 +571,10 @@ async function buildVideo(quiz, workDir) {
 
   const { themeCss, decoHtml } = await resolveTheme(quiz);
   const confettiSet = pickConfettiSet(niche);
-  const marqueeText = pickMarqueeText(niche);
+  const marqueeHtml = buildMarqueeHtml(quiz.topic);
   const floatIcons  = pickFloatIcons(niche);
   console.log(`[CONFETTI] niche=${niche} set=${confettiSet.join(' ')}`);
-  console.log(`[MARQUEE] niche=${niche} text="${marqueeText.slice(0,50)}..." floatIcons=${floatIcons.join(' ')}`);
+  console.log(`[MARQUEE] topic="${(quiz.topic||'').slice(0,50)}" floatIcons=${floatIcons.join(' ')}`);
 
   let html = await fs.readFile(path.join(__dirname,'quiz_template.html'),'utf8');
   const R = {
@@ -588,11 +593,13 @@ async function buildVideo(quiz, workDir) {
     '{{cta3_text}}':quiz.cta3_text||'Like, Share & Challenge a friend! Subscribe!',
     '{{niche}}':niche,
     '{{thumb_icon}}':thumbIconFor(niche),
+    '{{thumb_badge_text}}':pickThumbBadgeText(),
+    '{{thumb_mission_text}}':miQuestion||question,
     '{{confetti_0}}':confettiSet[0], '{{confetti_1}}':confettiSet[1],
     '{{confetti_2}}':confettiSet[2], '{{confetti_3}}':confettiSet[3],
     '{{confetti_4}}':confettiSet[4], '{{confetti_5}}':confettiSet[5],
     '{{confetti_6}}':confettiSet[6], '{{confetti_7}}':confettiSet[7],
-    '{{marquee_text}}':marqueeText,
+    '{{marquee_text}}':marqueeHtml,
     '{{float_icon_0}}':floatIcons[0], '{{float_icon_1}}':floatIcons[1], '{{float_icon_2}}':floatIcons[2],
     '{{platform_url}}': `${PLATFORM_URL_BASE}/${niche}`,
     '{{mission_intro_text}}':quiz.mission_intro_text||'Are you smart enough?',
@@ -633,6 +640,13 @@ async function buildVideo(quiz, workDir) {
 
   // ══ DEDICATED THUMBNAIL — captured first (static is fine, it's a still image by design) ══
   await showOnly('.thumb-screen');
+  const thumbVariant = pickThumbVariant(hasMI);
+  await page.evaluate((variant)=>{
+    document.querySelectorAll('.thumb-variant').forEach(el=>el.classList.remove('active'));
+    const el = document.querySelector(`.thumb-variant-${variant}`);
+    if (el) el.classList.add('active');
+  }, thumbVariant);
+  console.log(`[THUMBNAIL] variant=${thumbVariant}`);
   await new Promise(r=>setTimeout(r,500));
   const thumbImg = await shot('thumbnail_master');
   let thumbnailUrl = null;
