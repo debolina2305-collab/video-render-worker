@@ -48,7 +48,7 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 
 /* ═══ Big floating niche icons — large, bold, with real directional travel ═══ */
 .float-icon-big {
-  position:absolute; z-index:2; font-size:272px; opacity:0.55;
+  position:absolute; z-index:2; font-size:177px; opacity:0.55;
   filter: drop-shadow(0 0 36px color-mix(in srgb, var(--accent-1) 75%, transparent));
   will-change: transform;
 }
