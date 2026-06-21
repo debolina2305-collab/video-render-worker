@@ -16,12 +16,17 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
   width:1080px; height:1920px; display:none; flex-direction:column;
   align-items:center; justify-content:flex-start; position:relative;
   color:#fff; text-align:center; padding:0 60px 60px; overflow:hidden;
+  /* Vibrant base gradient behind ALL layers (incl. bg-anim at z-index:0)
+     so no screen ever reads as flat black — even when a niche background
+     animation uses a near-black base, this colourful gradient shows through
+     transparent areas and at the edges. Blue → indigo → violet. */
+  background:linear-gradient(160deg, #0a2a6b 0%, #1a1b6e 38%, #3a1a6e 70%, #2a0a55 100%);
 }
 .screen.active{ display:flex; }
 .content{
   position:relative; z-index:5; width:100%; flex:1; display:flex;
-  flex-direction:column; align-items:center; justify-content:center;
-  padding-top:20px;
+  flex-direction:column; align-items:center; justify-content:flex-start;
+  padding-top:30px;
   /* YouTube Shorts / Reels / TikTok safe-zone: the platform's own UI
      (channel name, caption text — which can wrap to 2+ lines, like/comment/
      share icons, progress bar) overlays roughly the bottom 380-420px of a
