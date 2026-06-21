@@ -288,6 +288,22 @@ async function tts(text, voice, out, fallbackSec = 1.5, rate = null) {
       if (d > MAX_TTS_FALLBACK_SEC + 10) {
         console.warn(`[TTS WARN] unexpectedly long TTS (${d.toFixed(1)}s) for text: "${t.slice(0,60)}..."`);
       }
+      // Volume sanity check: a file can have nonzero duration but be silent or
+      // near-silent (corrupt/truncated TTS render) — duration alone wouldn't
+      // catch that. mean_volume below -50dB is effectively inaudible.
+      try {
+        const { stderr } = await withTimeout(
+          execPromise(`ffmpeg -i "${out}" -af volumedetect -f null -`), 10_000, 'volumeCheck'
+        ).catch(e => ({ stderr: e.stderr || e.message || '' }));
+        const m = String(stderr).match(/mean_volume:\s*(-?[\d.]+)\s*dB/);
+        const meanDb = m ? parseFloat(m[1]) : null;
+        if (meanDb !== null && meanDb < -50) {
+          console.warn(`[TTS WARN] near-silent output detected (mean_volume=${meanDb}dB) for: "${t.slice(0,60)}..." — boosting`);
+          const boosted = out + '.boosted.mp3';
+          await ffmpeg(`-y -i "${out}" -af "volume=10dB" -ar 44100 -acodec libmp3lame "${boosted}"`, 'ttsBoost');
+          await fs.rename(boosted, out).catch(()=>{});
+        }
+      } catch (volErr) { console.warn(`[TTS WARN] volume check failed (non-fatal): ${volErr.message}`); }
     }
   } catch (e) { console.warn(`[TTS WARN] ${e.message}`); await silence(fallbackSec, out); }
   await fs.unlink(tmp).catch(()=>{});
