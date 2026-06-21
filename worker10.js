@@ -822,10 +822,12 @@ async function buildVideo(quiz, workDir) {
       if(c) c.classList.add('show-cta3');
     });
     await new Promise(r=>setTimeout(r,150));
+    console.log(`[CTA3-DIAG] cta3AudioFile=${cta3AudioFile||'NULL'} cta3_text="${(quiz.cta3_text||'').slice(0,50)}"`);
     const cta3Audio = await buildAudio({
       prerecorded:cta3AudioFile, fallbackText:quiz.cta3_text||'Like, share and challenge a friend! Subscribe!',
       fallbackSec:4, voice, leadGap:0.15, workDir, name:'cta3'
     });
+    console.log(`[CTA3-DIAG] built audio path=${cta3Audio.path} dur=${cta3Audio.dur.toFixed(2)}s`);
     pushClip(await recordedClip(page, cta3Audio.path, cta3Audio.dur, workDir, 'clip_cta3'));
   }
 
