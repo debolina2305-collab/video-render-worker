@@ -79,9 +79,14 @@ const CONFETTI_POOL = {
 };
 const UNIVERSAL_CONFETTI = ['🎉','✨','⭐','💫','🎊'];
 
-function pickConfettiSet(niche) {
-  const pool = CONFETTI_POOL[(niche||'general').toLowerCase()] || CONFETTI_POOL.general;
-  // Mix niche-specific pieces with a couple of universal celebratory ones for variety
+function pickConfettiSet(niche, topic) {
+  const t = (topic || '').toLowerCase();
+  let basePool = null;
+  for (const entry of TOPIC_KEYWORD_ICONS) {
+    if (entry.kw.some(k => t.includes(k))) { basePool = entry.icons; break; }
+  }
+  const pool = basePool || CONFETTI_POOL[(niche||'general').toLowerCase()] || CONFETTI_POOL.general;
+  // Mix topic/niche-specific pieces with a couple of universal celebratory ones for variety
   const combined = [...pool, ...UNIVERSAL_CONFETTI];
   const picked = [];
   for (let i = 0; i < 8; i++) picked.push(combined[Math.floor(Math.random() * combined.length)]);
@@ -118,7 +123,37 @@ const FLOAT_ICON_POOL = {
   space:         ['🚀','🪐','⭐','🌌','☄️','🛸'],
   general:       ['❓','💡','⭐','🎯','🧩','✨']
 };
-function pickFloatIcons(niche) {
+// Topic-keyword overrides — when the quiz topic mentions a specific
+// recognizable sub-theme, use a MORE SPECIFIC icon set than the broad niche
+// pool (e.g. a "cryptocurrency" finance quiz gets crypto icons, not generic
+// money icons; a "space" science quiz gets rockets, not generic science).
+// Checked in order; first match wins. Falls back to FLOAT_ICON_POOL[niche]
+// if nothing matches.
+const TOPIC_KEYWORD_ICONS = [
+  { kw: ['crypto','bitcoin','ethereum','blockchain','nft','token'],          icons: ['₿','🪙','💎','⛓️','📊','🔐'] },
+  { kw: ['stock market','stocks','shares','nasdaq','wall street','ipo'],     icons: ['📈','📊','💹','🏦','💼','📉'] },
+  { kw: ['real estate','housing','mortgage','property'],                    icons: ['🏠','🏘️','🔑','📐','💰','🏗️'] },
+  { kw: ['inflation','interest rate','federal reserve','economy'],          icons: ['💵','📉','🏦','⚖️','📊','💸'] },
+  { kw: ['ai','artificial intelligence','machine learning','chatgpt','llm'],icons: ['🤖','🧠','⚡','💡','🔮','🛰️'] },
+  { kw: ['space','nasa','rocket','astronaut','planet','mars'],              icons: ['🚀','🪐','🛸','⭐','🌌','👨‍🚀'] },
+  { kw: ['cybersecurity','hacking','data breach','privacy'],                icons: ['🔒','🛡️','💻','🔓','⚠️','🕵️'] },
+  { kw: ['heart','cardiac','cardiovascular'],                               icons: ['❤️','🫀','💓','🩺','💊','📈'] },
+  { kw: ['brain','mental health','neuroscience','memory'],                  icons: ['🧠','💭','✨','🔬','💡','🧬'] },
+  { kw: ['vaccine','disease','virus','pandemic','outbreak'],                icons: ['💉','🦠','🩺','🧪','😷','⚕️'] },
+  { kw: ['olympics','world cup','championship','tournament'],               icons: ['🏆','🥇','⚽','🏅','🎯','🔥'] },
+  { kw: ['movie','film','box office','hollywood','oscar'],                  icons: ['🎬','🍿','🎭','⭐','📽️','🏆'] },
+  { kw: ['music','album','concert','grammy','song'],                        icons: ['🎵','🎤','🎸','🎧','⭐','🔥'] },
+  { kw: ['climate','global warming','carbon','emissions'],                  icons: ['🌍','🌡️','♻️','🌊','🔥','🌳'] },
+];
+
+function pickFloatIcons(niche, topic) {
+  const t = (topic || '').toLowerCase();
+  for (const entry of TOPIC_KEYWORD_ICONS) {
+    if (entry.kw.some(k => t.includes(k))) {
+      const shuffled = [...entry.icons].sort(()=>Math.random()-0.5);
+      return shuffled.slice(0, 3);
+    }
+  }
   const pool = FLOAT_ICON_POOL[(niche||'general').toLowerCase()] || FLOAT_ICON_POOL.general;
   const shuffled = [...pool].sort(()=>Math.random()-0.5);
   return shuffled.slice(0, 3);
@@ -248,7 +283,11 @@ async function downloadAudio(url, cacheKey, preferKey) {
     if (st.size === 0) { console.warn(`[DOWNLOAD] ${safe}: downloaded file is empty`); await fs.unlink(rawFile).catch(()=>{}); return null; }
     await withTimeout(execPromise(`ffmpeg -y -i "${rawFile}" -ar 44100 -ac 2 -acodec libmp3lame -q:a 4 "${local}"`), TIMEOUT_FFMPEG, `convert ${safe}`);
     await fs.unlink(rawFile).catch(()=>{});
-    if (await fileExists(local)) { console.log(`[DOWNLOAD] ${safe}: OK (${(await audioDur(local)).toFixed(2)}s)`); return local; }
+    if (await fileExists(local)) {
+      console.log(`[DOWNLOAD] ${safe}: OK (${(await audioDur(local)).toFixed(2)}s)`);
+      await checkAndBoostVolume(local, `download:${safe}`);
+      return local;
+    }
   } catch (e) {
     console.warn(`[DOWNLOAD FAIL] ${safe}: ${e.message}`);
     await fs.unlink(rawFile).catch(()=>{});
@@ -272,6 +311,30 @@ async function silence(sec, out) {
   await withTimeout(execPromise(`ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=stereo -t ${s} -q:a 9 -acodec libmp3lame "${out}"`), 15_000, `silence ${s}s`);
 }
 
+// Volume sanity check + auto-boost: a file can have nonzero duration but be
+// silent or near-silent (corrupt/truncated render, quiet source recording,
+// odd encoding) — duration alone wouldn't catch that. mean_volume below
+// -50dB is effectively inaudible. Used for BOTH TTS-generated audio AND
+// downloaded prerecorded audio (cta2/cta3 audio reports were traced to
+// this exact class of bug — files that exist and have correct duration but
+// play near-silently).
+async function checkAndBoostVolume(filePath, label) {
+  try {
+    const { stderr } = await withTimeout(
+      execPromise(`ffmpeg -i "${filePath}" -af volumedetect -f null -`), 10_000, 'volumeCheck'
+    ).catch(e => ({ stderr: e.stderr || e.message || '' }));
+    const m = String(stderr).match(/mean_volume:\s*(-?[\d.]+)\s*dB/);
+    const meanDb = m ? parseFloat(m[1]) : null;
+    console.log(`[VOLUME] ${label}: mean_volume=${meanDb !== null ? meanDb+'dB' : 'unknown'}`);
+    if (meanDb !== null && meanDb < -50) {
+      console.warn(`[VOLUME WARN] ${label}: near-silent output detected (mean_volume=${meanDb}dB) — boosting`);
+      const boosted = filePath + '.boosted.mp3';
+      await ffmpeg(`-y -i "${filePath}" -af "volume=10dB" -ar 44100 -acodec libmp3lame "${boosted}"`, 'volumeBoost');
+      await fs.rename(boosted, filePath).catch(()=>{});
+    }
+  } catch (volErr) { console.warn(`[VOLUME WARN] ${label}: volume check failed (non-fatal): ${volErr.message}`); }
+}
+
 // TTS with a hard duration cap — prevents one missing audio file from
 // silently ballooning a clip (root cause candidate for checklist item 27b)
 async function tts(text, voice, out, fallbackSec = 1.5, rate = null) {
@@ -288,22 +351,7 @@ async function tts(text, voice, out, fallbackSec = 1.5, rate = null) {
       if (d > MAX_TTS_FALLBACK_SEC + 10) {
         console.warn(`[TTS WARN] unexpectedly long TTS (${d.toFixed(1)}s) for text: "${t.slice(0,60)}..."`);
       }
-      // Volume sanity check: a file can have nonzero duration but be silent or
-      // near-silent (corrupt/truncated TTS render) — duration alone wouldn't
-      // catch that. mean_volume below -50dB is effectively inaudible.
-      try {
-        const { stderr } = await withTimeout(
-          execPromise(`ffmpeg -i "${out}" -af volumedetect -f null -`), 10_000, 'volumeCheck'
-        ).catch(e => ({ stderr: e.stderr || e.message || '' }));
-        const m = String(stderr).match(/mean_volume:\s*(-?[\d.]+)\s*dB/);
-        const meanDb = m ? parseFloat(m[1]) : null;
-        if (meanDb !== null && meanDb < -50) {
-          console.warn(`[TTS WARN] near-silent output detected (mean_volume=${meanDb}dB) for: "${t.slice(0,60)}..." — boosting`);
-          const boosted = out + '.boosted.mp3';
-          await ffmpeg(`-y -i "${out}" -af "volume=10dB" -ar 44100 -acodec libmp3lame "${boosted}"`, 'ttsBoost');
-          await fs.rename(boosted, out).catch(()=>{});
-        }
-      } catch (volErr) { console.warn(`[TTS WARN] volume check failed (non-fatal): ${volErr.message}`); }
+      await checkAndBoostVolume(out, `tts:"${t.slice(0,40)}"`);
     }
   } catch (e) { console.warn(`[TTS WARN] ${e.message}`); await silence(fallbackSec, out); }
   await fs.unlink(tmp).catch(()=>{});
@@ -603,10 +651,10 @@ async function buildVideo(quiz, workDir) {
   console.log(`[CTA] cta2AudioFile=${cta2AudioFile ? 'OK' : 'NULL (will use TTS fallback)'} cta1AudioFile=${cta1AudioFile ? 'OK' : 'NULL'}`);
 
   const { themeCss, decoHtml } = await resolveTheme(quiz);
-  const confettiSet = pickConfettiSet(niche);
+  const confettiSet = pickConfettiSet(niche, quiz.topic);
   const thumbCatch = pickThumbCatchphrase();
   const marqueeHtml = buildMarqueeHtml(quiz.topic);
-  const floatIcons  = pickFloatIcons(niche);
+  const floatIcons  = pickFloatIcons(niche, quiz.topic);
   console.log(`[CONFETTI] niche=${niche} set=${confettiSet.join(' ')}`);
   console.log(`[MARQUEE] topic="${(quiz.topic||'').slice(0,50)}" floatIcons=${floatIcons.join(' ')}`);
 
