@@ -18,7 +18,18 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
   color:#fff; text-align:center; padding:0 60px 60px; overflow:hidden;
 }
 .screen.active{ display:flex; }
-.content{ position:relative; z-index:5; width:100%; flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding-top:20px; }
+.content{
+  position:relative; z-index:5; width:100%; flex:1; display:flex;
+  flex-direction:column; align-items:center; justify-content:center;
+  padding-top:20px;
+  /* YouTube Shorts / Reels / TikTok safe-zone: the platform's own UI
+     (channel name, caption text, like/comment/share icons, progress bar)
+     overlays roughly the bottom 300px of a 1920px-tall video, regardless
+     of what we render there. Anything we place lower than this gets
+     visually covered by the platform's own overlay once published. */
+  padding-bottom:300px;
+  box-sizing:border-box;
+}
 
 /* ═══ NICHE MARQUEE — scrolling ticker strip near top of every screen.
    Single biggest lever for "this looks niche-specific at a glance". ═══ */
@@ -48,7 +59,7 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 
 /* ═══ Big floating niche icons — large, bold, with real directional travel ═══ */
 .float-icon-big {
-  position:absolute; z-index:2; font-size:177px; opacity:0.55;
+  position:absolute; z-index:2; font-size:89px; opacity:0.27;
   filter: drop-shadow(0 0 36px color-mix(in srgb, var(--accent-1) 75%, transparent));
   will-change: transform;
 }
