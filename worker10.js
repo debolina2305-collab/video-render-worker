@@ -835,6 +835,7 @@ async function buildVideo(quiz, workDir) {
   // cta1_description_text exists, else CTA2. ══
   await showOnly(hasCta1?'.cta1-slide':'.cta2-slide');
   await new Promise(r=>setTimeout(r,150));
+  console.log(`[FINALCTA-DIAG] hasCta1=${hasCta1} cta1AudioFile=${cta1AudioFile||'NULL'} cta2AudioFile=${cta2AudioFile||'NULL'} cta2_text="${(quiz.cta2_text||'').slice(0,50)}"`);
   const ctaAudio = await buildAudio({
     prerecorded:hasCta1?cta1AudioFile:cta2AudioFile,
     fallbackText:hasCta1
@@ -842,6 +843,7 @@ async function buildVideo(quiz, workDir) {
       :(quiz.cta2_text||'Play the real quiz and earn O.N.S tokens! Tap the link now!'),
     fallbackSec:3, voice, leadGap:GAP_DEFAULT, workDir, name:hasCta1?'cta1':'cta2'
   });
+  console.log(`[FINALCTA-DIAG] built audio path=${ctaAudio.path} dur=${ctaAudio.dur.toFixed(2)}s`);
   pushClip(await recordedClip(page, ctaAudio.path, ctaAudio.dur, workDir, 'clip_cta'));
 
   await browser.close();
@@ -855,8 +857,18 @@ async function buildVideo(quiz, workDir) {
   await fs.writeFile(concatTxt,clips.map(c=>`file '${c.path.replace(/'/g,"'\\''")}' `).join('\n'));
   const concatenated=path.join(workDir,'concatenated.mp4');
   await ffmpeg(`-y -f concat -safe 0 -i "${concatTxt}" -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k -ar 44100 -movflags +faststart "${concatenated}"`, 'finalConcat');
-  const total=await videoDur(concatenated);
-  console.log(`[VIDEO] Concatenated: ${total.toFixed(1)}s (sum of clip durations was ${runningTotal.toFixed(1)}s)`);
+  const measuredTotal=await videoDur(concatenated);
+  console.log(`[VIDEO] Concatenated: measured=${measuredTotal.toFixed(2)}s vs sum-of-clips=${runningTotal.toFixed(2)}s`);
+  if (measuredTotal < runningTotal - 0.1) {
+    console.warn(`[VIDEO] WARNING: measured duration is ${(runningTotal-measuredTotal).toFixed(2)}s SHORTER than the sum of clip durations — using runningTotal to avoid truncating the tail (this is what was cutting off CTA2/CTA3 audio).`);
+  }
+  // Use the authoritative sum of actual clip durations (runningTotal), not the
+  // re-measured concatenated duration, which can under-report slightly due to
+  // ffmpeg concat/keyframe rounding. Using a too-short duration here silently
+  // truncated the LAST 1-2 clips in the video (CTA2/CTA3) in the final remux
+  // clamp below — this was the real cause of "CTA2/CTA3 audio not playing"
+  // even though the source audio files were confirmed valid.
+  const total = Math.max(measuredTotal, runningTotal) + 0.4; // small safety margin
   const finalVideoPath = await applyBgMusic(concatenated,total,voiceRanges,bgFile,workDir);
   return { videoPath: finalVideoPath, thumbnailUrl };
 }
