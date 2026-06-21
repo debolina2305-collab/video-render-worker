@@ -151,12 +151,12 @@ function pickFloatIcons(niche, topic) {
   for (const entry of TOPIC_KEYWORD_ICONS) {
     if (entry.kw.some(k => t.includes(k))) {
       const shuffled = [...entry.icons].sort(()=>Math.random()-0.5);
-      return shuffled.slice(0, 3);
+      return shuffled.slice(0, 5);
     }
   }
   const pool = FLOAT_ICON_POOL[(niche||'general').toLowerCase()] || FLOAT_ICON_POOL.general;
   const shuffled = [...pool].sort(()=>Math.random()-0.5);
-  return shuffled.slice(0, 3);
+  return shuffled.slice(0, 5);
 }
 
 // Thumbnail layout variety — checklist: 4 distinct layouts (A/B/C/D) randomly
@@ -685,6 +685,7 @@ async function buildVideo(quiz, workDir) {
     '{{confetti_6}}':confettiSet[6], '{{confetti_7}}':confettiSet[7],
     '{{marquee_text}}':marqueeHtml,
     '{{float_icon_0}}':floatIcons[0], '{{float_icon_1}}':floatIcons[1], '{{float_icon_2}}':floatIcons[2],
+    '{{float_icon_3}}':floatIcons[3]||floatIcons[0], '{{float_icon_4}}':floatIcons[4]||floatIcons[1],
     '{{platform_url}}': `${PLATFORM_URL_BASE}/${niche}`,
     '{{mission_intro_text}}':quiz.mission_intro_text||'Are you smart enough?',
     '{{mission_question}}':miQuestion||'',
