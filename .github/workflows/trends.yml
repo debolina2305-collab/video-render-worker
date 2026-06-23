@@ -32,7 +32,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install
-        run: pip install trendspyg feedparser requests
+        run: pip install trendspyg feedparser requests tavily-python
 
       - name: Run
         env:
@@ -58,7 +58,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install
-        run: pip install feedparser requests
+        run: pip install feedparser requests tavily-python
 
       - name: Run RSS
         env:
