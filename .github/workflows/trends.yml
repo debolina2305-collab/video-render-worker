@@ -1,0 +1,75 @@
+name: Fetch Trending Topics
+
+on:
+  schedule:
+    - cron: '0 */3 * * *'   # trendspyg — every 3 hours
+    - cron: '0 6 * * *'     # RSS + fallback — once daily at 6am UTC
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Mode: trends | rss | fallback | all'
+        required: true
+        default: 'all'
+        type: choice
+        options: [trends, rss, fallback, all]
+
+jobs:
+
+  # ── trendspyg: every 3 hours ─────────────────────────────────────────────
+  fetch-trends:
+    name: trendspyg (viral topics)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.schedule == '0 */3 * * *'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install
+        run: pip install trendspyg feedparser requests
+
+      - name: Run
+        env:
+          SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TAVILY_API_KEY:       ${{ secrets.TAVILY_API_KEY }}
+        run: python fetch_trends.py --mode trends
+
+  # ── RSS + fallback: once daily ───────────────────────────────────────────
+  fetch-rss-fallback:
+    name: RSS + fallback (daily volume)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.schedule == '0 6 * * *'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install
+        run: pip install feedparser requests
+
+      - name: Run RSS
+        env:
+          SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TAVILY_API_KEY:       ${{ secrets.TAVILY_API_KEY }}
+        run: python fetch_trends.py --mode rss
+
+      - name: Run fallback (if needed)
+        env:
+          SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TAVILY_API_KEY:       ${{ secrets.TAVILY_API_KEY }}
+        run: python fetch_trends.py --mode fallback
