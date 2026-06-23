@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import requests
 import feedparser
-from tavily import TavilyClient   # official SDK — fixes the 400 error
+from tavily import TavilyClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,23 +24,34 @@ log = logging.getLogger('fetch_trends')
 SUPABASE_URL         = os.environ['SUPABASE_URL'].rstrip('/')
 SUPABASE_SERVICE_KEY = os.environ['SUPABASE_SERVICE_KEY']
 TAVILY_API_KEY       = os.environ['TAVILY_API_KEY']
+tavily               = TavilyClient(api_key=TAVILY_API_KEY)
 
-# FIX 1: trendspyg volume threshold lowered to 0
-# trendspyg RSS returns relative/scaled values (200-5000 is normal).
-# Volume filter was incorrectly set to 20000 — everything was skipped.
-# Let the Tavily quality filter decide topic quality instead.
-TRENDSPYG_MIN_VOLUME = 0
-
+TRENDSPYG_MIN_VOLUME = 0      # accept all — Tavily quality filter decides
 TAVILY_MIN_RESULTS   = 2
 TAVILY_MIN_WORDS     = 150
 TAVILY_DELAY_SEC     = 1.5
 TRENDSPYG_DELAY_SEC  = 2.0
 RSS_MAX_PER_FEED     = 15
 
-# FIX 2: Use official Tavily Python SDK
-# Raw HTTP calls with Authorization header were failing with 400 Bad Request.
-# The official SDK handles auth correctly.
-tavily = TavilyClient(api_key=TAVILY_API_KEY)
+# ── Trendspyg keyword blocklist ───────────────────────────────────────────────
+# Filter out generic/unquizable trending keywords before calling Tavily.
+# These waste Tavily credits and produce useless quiz topics.
+TRENDSPYG_REJECT_KEYWORDS = [
+    'breaking news', 'news today', 'live update', 'latest news',
+    'weather today', 'weather forecast', 'horoscope', 'wordle',
+    'nyt connections', 'nfl scores', 'nba scores', 'mlb scores',
+]
+TRENDSPYG_REJECT_MIN_WORDS = 1   # single word keywords are usually too vague
+
+def is_quizable_trend(keyword):
+    """Pre-filter trendspyg keywords before calling Tavily."""
+    k = keyword.lower().strip()
+    if len(k.split()) <= TRENDSPYG_REJECT_MIN_WORDS:
+        return False, f'too_short({len(k.split())}w)'
+    for bad in TRENDSPYG_REJECT_KEYWORDS:
+        if bad in k:
+            return False, f'blocklisted("{bad}")'
+    return True, 'ok'
 
 # ── Niche classifier ──────────────────────────────────────────────────────────
 NICHE_KEYWORDS = {
@@ -81,24 +92,28 @@ def classify_niche(topic):
     return 'general'
 
 # ── Google News RSS feeds ─────────────────────────────────────────────────────
+# FIX: Using stable named topic paths that 302-redirect to current hash URLs.
+# feedparser follows 302 redirects automatically.
+# Previous hash-encoded URLs for finance/tech/sports/politics/entertainment
+# were stale and returned 0 entries. Named paths are stable long-term.
 GOOGLE_NEWS_RSS = {
     'US': {
         'general':       'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en',
-        'finance':       'https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlBQQ?hl=en-US&gl=US&ceid=US:en',
-        'tech':          'https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlBQQ?hl=en-US&gl=US&ceid=US:en',
-        'health':        'https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNR3QwTlRFU0FtVnVLQUFQAQ?hl=en-US&gl=US&ceid=US:en',
-        'sports':        'https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdvU0FtVnVHZ0pWVXlBQQ?hl=en-US&gl=US&ceid=US:en',
-        'politics':      'https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNR3d3TWpFU0FtVnVLQUFQAQ?hl=en-US&gl=US&ceid=US:en',
-        'entertainment': 'https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNREpxYW5RU0FtVnVHZ0pWVXlBQQ?hl=en-US&gl=US&ceid=US:en',
+        'finance':       'https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en',
+        'tech':          'https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en',
+        'health':        'https://news.google.com/rss/headlines/section/topic/HEALTH?hl=en-US&gl=US&ceid=US:en',
+        'sports':        'https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-US&gl=US&ceid=US:en',
+        'politics':      'https://news.google.com/rss/headlines/section/topic/POLITICS?hl=en-US&gl=US&ceid=US:en',
+        'entertainment': 'https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-US&gl=US&ceid=US:en',
     },
     'IN': {
         'general':       'https://news.google.com/rss?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'finance':       'https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtaHBHZ0pKVGlBQQ?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'tech':          'https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtaHBHZ0pKVGlBQQ?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'health':        'https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNR3QwTlRFU0FtaHBLQUFQAQ?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'sports':        'https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdvU0FtaHBHZ0pKVGlBQQ?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'politics':      'https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNR3d3TWpFU0FtaHBLQUFQAQ?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'entertainment': 'https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNREpxYW5RU0FtaHBHZ0pKVGlBQQ?hl=hi-IN&gl=IN&ceid=IN:hi',
+        'finance':       'https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=hi-IN&gl=IN&ceid=IN:hi',
+        'tech':          'https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=hi-IN&gl=IN&ceid=IN:hi',
+        'health':        'https://news.google.com/rss/headlines/section/topic/HEALTH?hl=hi-IN&gl=IN&ceid=IN:hi',
+        'sports':        'https://news.google.com/rss/headlines/section/topic/SPORTS?hl=hi-IN&gl=IN&ceid=IN:hi',
+        'politics':      'https://news.google.com/rss/headlines/section/topic/POLITICS?hl=hi-IN&gl=IN&ceid=IN:hi',
+        'entertainment': 'https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=hi-IN&gl=IN&ceid=IN:hi',
         'cricket':       'https://news.google.com/rss/search?q=cricket+india&hl=hi-IN&gl=IN&ceid=IN:hi',
     },
 }
@@ -121,49 +136,56 @@ def db_insert(table, data):
     r.raise_for_status()
     return True
 
-# FIX 3: Dedup query simplified
-# The previous query filtered on country_code which doesn't exist in quiz_queue
-# until channel_setup.sql is run. Use only trnding_topic + status (always exist).
-# After running channel_setup.sql, the query remains correct — these columns exist.
+def count_todays_topics(country_code):
+    """Count topics already inserted today for this channel.
+    FIX: tries country_code filter first, falls back to no filter
+    to handle case where channel_setup.sql hasn't added the column yet."""
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    try:
+        rows = db_get(
+            f'quiz_queue?country_code=eq.{country_code}'
+            f'&created_at=gte.{today}T00:00:00+00:00'
+            f'&status=neq.completed&select=id'
+        )
+        return len(rows)
+    except Exception:
+        try:
+            # Fallback without country_code (works before migration)
+            rows = db_get(
+                f'quiz_queue'
+                f'?created_at=gte.{today}T00:00:00+00:00'
+                f'&status=neq.completed&select=id'
+            )
+            return len(rows)
+        except Exception:
+            return 0
+
 def already_queued(topic, country_code):
     today = datetime.now(timezone.utc).strftime('%Y-%m-%dT00:00:00+00:00')
     safe  = quote(topic[:80].replace("'", "''"))
     try:
-        # Try full query with country_code first (works after channel_setup.sql)
         rows = db_get(
-            f'quiz_queue'
-            f'?trnding_topic=ilike.%25{safe}%25'
+            f'quiz_queue?trnding_topic=ilike.%25{safe}%25'
             f'&country_code=eq.{country_code}'
             f'&status=neq.completed'
-            f'&created_at=gte.{today}'
-            f'&limit=1&select=id'
+            f'&created_at=gte.{today}&limit=1&select=id'
         )
         return len(rows) > 0
     except Exception:
         try:
-            # Fallback: simpler query without country_code (works before migration)
             rows = db_get(
-                f'quiz_queue'
-                f'?trnding_topic=ilike.%25{safe}%25'
+                f'quiz_queue?trnding_topic=ilike.%25{safe}%25'
                 f'&status=neq.completed'
-                f'&created_at=gte.{today}'
-                f'&limit=1&select=id'
+                f'&created_at=gte.{today}&limit=1&select=id'
             )
             return len(rows) > 0
         except Exception as e:
             log.debug(f'Dedup check failed (non-fatal): {e}')
-            return False  # safe to proceed — worst case we get a harmless duplicate
+            return False
 
-# ── Tavily quality filter (using official SDK) ────────────────────────────────
+# ── Tavily quality filter ─────────────────────────────────────────────────────
 def tavily_search(topic, country_code):
-    """
-    Uses official tavily-python SDK (pip install tavily-python).
-    This fixes the 400 Bad Request errors caused by incorrect raw HTTP auth.
-    search_depth='basic' uses 1 credit vs 2 for 'advanced' — same results.
-    """
     try:
-        # Include country in the query text as a fallback for geo-targeting
-        # (country param requires specific Tavily plan tier)
         country_name = {'US': 'United States', 'IN': 'India'}.get(country_code, country_code)
         result = tavily.search(
             query        = f'{topic} {country_name}',
@@ -176,10 +198,9 @@ def tavily_search(topic, country_code):
         return None
 
 def quality_check(topic, tavily_data):
-    """Returns (passes, reason, grounding_text)."""
     if not tavily_data or not tavily_data.get('results'):
         return False, 'no_results', ''
-    results = tavily_data['results']
+    results    = tavily_data['results']
     if len(results) < TAVILY_MIN_RESULTS:
         return False, f'too_few_results({len(results)})', ''
     combined   = ' '.join((r.get('content') or r.get('snippet') or '') for r in results).strip()
@@ -192,7 +213,6 @@ def quality_check(topic, tavily_data):
         if m: domains.add(m.group(1))
     if len(domains) <= 1:
         return False, 'single_domain', ''
-    # Unknown personal name filter
     words = topic.strip().split()
     if len(words) <= 2:
         is_name = all(w[0].isupper() for w in words if w) and not any(c.isdigit() for c in topic)
@@ -219,26 +239,26 @@ def insert_topic(topic, niche, grounding, channel, source, priority):
             'channel_name':      channel.get('channel_name', 'USA Trending Challenge'),
             'topic_source':      source,
             'thinking_time_sec': 10,
-            'payload':           json.dumps({
-                'source':      source,
-                'channel':     channel.get('channel_name'),
-                'fetched_at':  datetime.now(timezone.utc).isoformat(),
-                'priority':    priority,
+            'payload': json.dumps({
+                'source':     source,
+                'channel':    channel.get('channel_name'),
+                'fetched_at': datetime.now(timezone.utc).isoformat(),
+                'priority':   priority,
             }),
             'created_at': datetime.now(timezone.utc).isoformat(),
         })
         return True
     except Exception as e:
-        # If column doesn't exist (migration not run), try minimal insert
+        # Graceful fallback if new columns don't exist yet
         log.warning(f'Full insert failed, trying minimal: {e}')
         try:
             db_insert('quiz_queue', {
-                'job_type':    'quiz_generation',
-                'status':      'pending',
+                'job_type':      'quiz_generation',
+                'status':        'pending',
                 'trnding_topic': topic[:255],
-                'niche':       niche,
+                'niche':         niche,
                 'searched_text': grounding,
-                'created_at':  datetime.now(timezone.utc).isoformat(),
+                'created_at':    datetime.now(timezone.utc).isoformat(),
             })
             log.warning('Minimal insert succeeded — run channel_setup.sql for full functionality')
             return True
@@ -281,7 +301,6 @@ def run_trendspyg(channels):
         try:
             time.sleep(TRENDSPYG_DELAY_SEC)
             env    = download_google_trends_rss(geo=country, normalize=True)
-            # Sort by volume descending so highest-volume topics processed first
             trends = sorted(env.get('trends', []),
                             key=lambda t: t.get('volume_min', 0), reverse=True)
             log.info(f'  trendspyg returned {len(trends)} trends')
@@ -295,10 +314,12 @@ def run_trendspyg(channels):
             kw  = t.get('keyword', '').strip()
             vol = t.get('volume_min', 0)
             if not kw: continue
-            # TRENDSPYG_MIN_VOLUME = 0 means ALL topics pass volume check
-            # (threshold lowered from 20000 which was incorrectly blocking everything)
             if vol < TRENDSPYG_MIN_VOLUME:
                 log.info(f'  SKIP low-vol ({vol:,}): {kw}'); continue
+            # Pre-filter obviously unquizable trends
+            ok_kw, reason = is_quizable_trend(kw)
+            if not ok_kw:
+                log.info(f'  SKIP [{reason}]: {kw}'); continue
             log.info(f'  Processing (vol={vol:,}): {kw}')
             if process_topic(kw, channel, 'trendspyg', 10):
                 inserted += 1
@@ -320,7 +341,11 @@ def run_rss(channels):
             try:
                 feed    = feedparser.parse(url)
                 entries = feed.entries[:RSS_MAX_PER_FEED]
-                log.info(f'  [{niche}] {len(entries)} entries')
+                status  = feed.get('status', 'N/A')
+                log.info(f'  [{niche}] {len(entries)} entries (HTTP {status})')
+                if feed.bozo and len(entries) == 0:
+                    log.warning(f'  [{niche}] Feed error: {feed.bozo_exception}')
+                    continue
             except Exception as e:
                 log.warning(f'  RSS failed {niche}: {e}'); continue
             for entry in entries:
@@ -334,31 +359,24 @@ def run_rss(channels):
 # ── Mode 3: Tavily fallback ───────────────────────────────────────────────────
 def run_fallback(channels, target=50):
     log.info('══ MODE: TAVILY FALLBACK (gap filler, priority=1) ══')
-    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     for channel in channels:
         country      = channel.get('country_code', 'US')
         niches       = channel.get('niches') or ['general']
         country_name = {'US': 'United States', 'IN': 'India'}.get(country, country)
-        try:
-            existing = db_get(
-                f'quiz_queue?country_code=eq.{country}'
-                f'&created_at=gte.{today}T00:00:00+00:00'
-                f'&status=neq.completed&select=id'
-            )
-            have = len(existing)
-        except Exception:
-            have = 0
+        # FIX: use count_todays_topics() which handles missing country_code column
+        have = count_todays_topics(country)
         if have >= target:
             log.info(f'[{channel["channel_name"]}] Already at target ({have}), skip fallback')
             continue
         needed = target - have
-        log.info(f'[{channel["channel_name"]}] Need {needed} more topics')
+        log.info(f'[{channel["channel_name"]}] Have {have} today, need {needed} more')
         inserted = 0
+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         for niche in niches:
             if inserted >= needed: break
             try:
                 time.sleep(TAVILY_DELAY_SEC)
-                result = tavily.search(
+                result  = tavily.search(
                     query        = f'Top trending news in {niche} in {country_name} today {today}',
                     search_depth = 'basic',
                     max_results  = 5,
@@ -393,7 +411,7 @@ def main():
         sys.exit(1)
 
     if not channels:
-        log.warning('No active channels in channel_config.'); sys.exit(0)
+        log.warning('No active channels found in channel_config.'); sys.exit(0)
 
     log.info(f'Active channels: {[c["channel_name"] for c in channels]}')
 
