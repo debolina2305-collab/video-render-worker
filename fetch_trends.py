@@ -598,40 +598,6 @@ def run_fallback(channels, target=50):
                     log.info(f'  ✓ FALLBACK [{niche}]: {title[:70]}')
         log.info(f'[{channel["channel_name"]}] Fallback: {inserted} inserted')
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', required=True,
-                        choices=['trends','rss','fallback','all'])
-    args = parser.parse_args()
-    log.info(f'fetch_trends.py | mode={args.mode} | {datetime.now(timezone.utc).isoformat()}')
-
-    try:
-        channels = db_get('channel_config?active=eq.true&order=created_at.asc')
-    except Exception as e:
-        log.error(f'Cannot load channel_config: {e}')
-        log.error('Have you run channel_setup.sql in Supabase yet?')
-        sys.exit(1)
-
-    if not channels:
-        log.warning('No active channels found in channel_config.'); sys.exit(0)
-
-    log.info(f'Active channels: {[c["channel_name"] for c in channels]}')
-
-    if args.mode == 'trends':
-        run_trendspyg(channels)
-    elif args.mode == 'rss':
-        run_rss(channels)
-    elif args.mode == 'fallback':
-        run_fallback(channels)
-    elif args.mode == 'all':
-        run_waterfall(channels)   # trendspyg → RSS gap → fallback gap
-
-    log.info('Done.')
-
-if __name__ == '__main__':
-    main()
-
 # ── Waterfall orchestrator ────────────────────────────────────────────────────
 def run_waterfall(channels):
     """
@@ -672,3 +638,37 @@ def run_waterfall(channels):
         run_fallback([channel], target=target)
 
     log.info('Waterfall complete.')
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', required=True,
+                        choices=['trends','rss','fallback','all'])
+    args = parser.parse_args()
+    log.info(f'fetch_trends.py | mode={args.mode} | {datetime.now(timezone.utc).isoformat()}')
+
+    try:
+        channels = db_get('channel_config?active=eq.true&order=created_at.asc')
+    except Exception as e:
+        log.error(f'Cannot load channel_config: {e}')
+        log.error('Have you run channel_setup.sql in Supabase yet?')
+        sys.exit(1)
+
+    if not channels:
+        log.warning('No active channels found in channel_config.'); sys.exit(0)
+
+    log.info(f'Active channels: {[c["channel_name"] for c in channels]}')
+
+    if args.mode == 'trends':
+        run_trendspyg(channels)
+    elif args.mode == 'rss':
+        run_rss(channels)
+    elif args.mode == 'fallback':
+        run_fallback(channels)
+    elif args.mode == 'all':
+        run_waterfall(channels)   # trendspyg → RSS gap → fallback gap
+
+    log.info('Done.')
+
+if __name__ == '__main__':
+    main()
