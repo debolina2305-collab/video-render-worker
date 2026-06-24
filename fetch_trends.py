@@ -404,6 +404,8 @@ def _fetch_trends_rss_enrichment(country):
     except Exception as e:
         log.warning(f'  RSS enrichment failed (non-fatal): {e}')
         return {}
+
+def _fetch_trends_csv(country, hours):
     """
     CSV path — returns 480+ trends with REAL volume buckets (incl 200K+, 1M+).
     Uses Python's built-in csv module — NO pandas needed.
