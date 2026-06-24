@@ -239,12 +239,12 @@ def insert_topic(topic, niche, grounding, channel, source, priority):
             'channel_name':      channel.get('channel_name', 'USA Trending Challenge'),
             'topic_source':      source,
             'thinking_time_sec': 10,
-            'payload': json.dumps({
+            'payload': {
                 'source':     source,
                 'channel':    channel.get('channel_name'),
                 'fetched_at': datetime.now(timezone.utc).isoformat(),
                 'priority':   priority,
-            }),
+            },
             'created_at': datetime.now(timezone.utc).isoformat(),
         })
         return True
