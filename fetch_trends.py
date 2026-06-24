@@ -234,8 +234,37 @@ def trim(text, max_words=200):
     w = text.split()
     return ' '.join(w[:max_words]) if len(w) > max_words else text
 
+def volume_to_priority(volume):
+    """
+    Map real search volume to a quiz_queue priority score.
+    Higher volume = higher priority = Worker 8 processes it first = video
+    published while the trend is still hot.
+
+    Buckets (after ×1000 normalisation from CSV):
+      ≥ 1,000,000  → 100  (mega-viral, publish immediately)
+      ≥   500,000  →  80
+      ≥   200,000  →  60
+      ≥   100,000  →  40
+      ≥    50,000  →  30
+      ≥    20,000  →  20  (our min_volume threshold)
+      anything lower → 10  (still above RSS=5 and fallback=1)
+
+    RSS topics keep priority=5, fallback=1 — always below trendspyg topics.
+    """
+    if   volume >= 1_000_000: return 100
+    elif volume >=   500_000: return 80
+    elif volume >=   200_000: return 60
+    elif volume >=   100_000: return 40
+    elif volume >=    50_000: return 30
+    elif volume >=    20_000: return 20
+    else:                     return 10
+
 # ── Insert into quiz_queue ────────────────────────────────────────────────────
-def insert_topic(topic, niche, grounding, channel, source, priority):
+def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, breakdown=''):
+    # Parse breakdown into a clean list of keywords
+    # CSV format is typically comma-separated: "lilo and stitch, daveigh chase death, ..."
+    breakdown_list = [k.strip() for k in breakdown.split(',') if k.strip()] if breakdown else []
+
     try:
         db_insert('quiz_queue', {
             'job_type':          'quiz_generation',
@@ -249,16 +278,20 @@ def insert_topic(topic, niche, grounding, channel, source, priority):
             'channel_name':      channel.get('channel_name', 'USA Trending Challenge'),
             'topic_source':      source,
             'payload': {
-                'source':     source,
-                'channel':    channel.get('channel_name'),
-                'fetched_at': datetime.now(timezone.utc).isoformat(),
-                'priority':   priority,
+                'source':           source,
+                'channel':          channel.get('channel_name'),
+                'fetched_at':       datetime.now(timezone.utc).isoformat(),
+                'priority':         priority,
+                'search_volume':    volume,
+                # Trend breakdown keywords — use for YouTube tags, blog SEO,
+                # video description, quiz prompt context in Worker 8
+                'trend_breakdown':  breakdown_list,
+                'trend_breakdown_raw': breakdown,
             },
             'created_at': datetime.now(timezone.utc).isoformat(),
         })
         return True
     except Exception as e:
-        # Graceful fallback if new columns don't exist yet
         log.warning(f'Full insert failed, trying minimal: {e}')
         try:
             db_insert('quiz_queue', {
@@ -276,7 +309,8 @@ def insert_topic(topic, niche, grounding, channel, source, priority):
             return False
 
 # ── Process one topic ─────────────────────────────────────────────────────────
-def process_topic(topic, channel, source, priority, niche_hint=None, min_words=TAVILY_MIN_WORDS):
+def process_topic(topic, channel, source, priority, niche_hint=None,
+                  min_words=TAVILY_MIN_WORDS, volume=0, breakdown=''):
     topic = topic.strip()
     if not topic or len(topic) < 5:
         return False
@@ -291,9 +325,11 @@ def process_topic(topic, channel, source, priority, niche_hint=None, min_words=T
         log.info(f'  REJECT [{reason}]: {topic[:70]}')
         return False
     niche = niche_hint or classify_niche(topic)
-    ok = insert_topic(topic, niche, trim(grounding, max_words=max(min_words+50, 250)), channel, source, priority)
+    ok = insert_topic(topic, niche, trim(grounding, max_words=max(min_words+50, 250)),
+                      channel, source, priority, volume=volume, breakdown=breakdown)
     if ok:
-        log.info(f'  ✓ INSERTED [src={source} p={priority} niche={niche}]: {topic[:70]}')
+        bd_note = f' bd={len(breakdown.split(","))}kw' if breakdown else ''
+        log.info(f'  ✓ INSERTED [src={source} p={priority} vol={volume:,} niche={niche}{bd_note}]: {topic[:70]}')
     return ok
 
 # ── Mode 1: trendspyg ─────────────────────────────────────────────────────────
@@ -355,24 +391,29 @@ def _fetch_trends_csv(country, hours):
     with open(csv_path, newline='', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         col_names = reader.fieldnames or []
-        col_lower  = {c.lower(): c for c in col_names}
+        col_lower  = {c.lower().strip(): c for c in col_names}
 
-        # Find keyword and volume columns flexibly — trendspyg column names vary
+        # Find keyword and volume columns flexibly
         kw_col  = next((col_lower[c] for c in col_lower
                         if any(x in c for x in ('trend','keyword','query','title','topic'))),
                        col_names[0] if col_names else None)
         vol_col = next((col_lower[c] for c in col_lower
                         if any(x in c for x in ('volume','traffic','search','approx'))),
                        None)
+        # Trend breakdown column — related search queries (gold for SEO/tags)
+        breakdown_col = next((col_lower[c] for c in col_lower
+                              if any(x in c for x in ('breakdown','related','queries'))),
+                             None)
 
         log.info(f'  CSV columns: {col_names}')
-        log.info(f'  Using keyword col="{kw_col}", volume col="{vol_col}"')
+        log.info(f'  Using keyword col="{kw_col}", volume col="{vol_col}", breakdown col="{breakdown_col}"')
 
         for row in reader:
-            kw  = row.get(kw_col, '').strip() if kw_col else ''
-            vol = _parse_volume(row.get(vol_col, 0)) if vol_col else 0
+            kw        = row.get(kw_col, '').strip() if kw_col else ''
+            vol       = _parse_volume(row.get(vol_col, 0)) if vol_col else 0
+            breakdown = row.get(breakdown_col, '').strip() if breakdown_col else ''
             if kw:
-                rows.append({'keyword': kw, 'volume': vol})
+                rows.append({'keyword': kw, 'volume': vol, 'breakdown': breakdown})
 
     rows.sort(key=lambda r: r['volume'], reverse=True)
 
@@ -411,7 +452,7 @@ def load_trend_config(country_code):
         log.warning(f'Could not load trend_config for {country_code}, using defaults: {e}')
     return defaults
 
-def run_trendspyg(channels):
+def run_trendspyg(channels, override_target=None):
     log.info('══ MODE: TRENDSPYG (real Google Trends, priority=10) ══')
 
     for channel in channels:
@@ -447,7 +488,8 @@ def run_trendspyg(channels):
         # max_process_per_run raw trends (Tavily-credit safety cap).
         inserted  = 0
         processed = 0
-        target    = cfg['max_topics_per_run']
+        target    = override_target if override_target is not None else cfg['max_topics_per_run']
+        log.info(f'  Target for this run: {target} quiz-ready topics')
         for t in trends:
             if inserted >= target:
                 log.info(f'  Reached target of {target} quiz-ready topics — stopping')
@@ -466,24 +508,27 @@ def run_trendspyg(channels):
             ok_kw, reason = is_quizable_trend(kw)
             if not ok_kw:
                 log.info(f'  SKIP [{reason}]: {kw}'); continue
-            log.info(f'  Processing ({inserted+1}/{target}, vol={vol:,}): {kw}')
+            priority  = volume_to_priority(vol)
+            breakdown = t.get('breakdown', '')
+            log.info(f'  Processing ({inserted+1}/{target}, vol={vol:,} p={priority}): {kw}')
             processed += 1
-            if process_topic(kw, channel, 'trendspyg', 10,
-                             min_words=cfg['min_grounding_words']):
+            if process_topic(kw, channel, 'trendspyg', priority,
+                             min_words=cfg['min_grounding_words'],
+                             volume=vol, breakdown=breakdown):
                 inserted += 1
 
         log.info(f'[{channel["channel_name"]}] trendspyg: {inserted}/{target} quiz-ready topics inserted '
                  f'(processed {processed} raw trends)')
 
 # ── Mode 2: Google News RSS ───────────────────────────────────────────────────
-def run_rss(channels):
+def run_rss(channels, override_target=None):
     log.info('══ MODE: GOOGLE NEWS RSS (daily volume, priority=5) ══')
     for channel in channels:
         country = channel.get('country_code', 'US')
         niches  = channel.get('niches') or ['general']
         feeds   = GOOGLE_NEWS_RSS.get(country, GOOGLE_NEWS_RSS['US'])
         cfg     = load_trend_config(country)
-        target  = cfg['max_topics_per_run']
+        target  = override_target if override_target is not None else cfg['max_topics_per_run']
         min_w   = cfg['min_grounding_words']
         log.info(f'[{channel["channel_name"]}] RSS: want {target} quiz-ready topics, '
                  f'min_words={min_w}, across {len(niches)} niches')
@@ -573,11 +618,57 @@ def main():
 
     log.info(f'Active channels: {[c["channel_name"] for c in channels]}')
 
-    if args.mode in ('trends',   'all'): run_trendspyg(channels)
-    if args.mode in ('rss',      'all'): run_rss(channels)
-    if args.mode in ('fallback', 'all'): run_fallback(channels)
+    if args.mode == 'trends':
+        run_trendspyg(channels)
+    elif args.mode == 'rss':
+        run_rss(channels)
+    elif args.mode == 'fallback':
+        run_fallback(channels)
+    elif args.mode == 'all':
+        run_waterfall(channels)   # trendspyg → RSS gap → fallback gap
 
     log.info('Done.')
 
 if __name__ == '__main__':
     main()
+
+# ── Waterfall orchestrator ────────────────────────────────────────────────────
+def run_waterfall(channels):
+    """
+    WATERFALL — the correct daily flow:
+      Stage 1: trendspyg → tries to reach full target (highest-volume viral topics)
+      Stage 2: RSS        → fills ONLY THE GAP (target minus what trendspyg inserted)
+      Stage 3: fallback   → fills any remaining gap
+
+    Each stage only runs if the previous left a shortfall.
+    RSS never runs if trendspyg already hit the target.
+    Fallback never runs if trendspyg + RSS together hit the target.
+    """
+    log.info('══ WATERFALL: trendspyg → RSS (gap) → fallback (gap) ══')
+    for channel in channels:
+        country = channel.get('country_code', 'US')
+        cfg     = load_trend_config(country)
+        target  = cfg['max_topics_per_run']
+        log.info(f'[{channel["channel_name"]}] Daily target: {target} quiz-ready topics')
+
+        # Stage 1: trendspyg
+        run_trendspyg([channel])
+        have = count_todays_topics(country)
+        log.info(f'[{channel["channel_name"]}] After trendspyg: {have}/{target}')
+        if have >= target:
+            log.info(f'  Target reached by trendspyg — skipping RSS + fallback'); continue
+
+        # Stage 2: RSS fills the gap
+        gap = target - have
+        log.info(f'  Gap = {gap} → running RSS')
+        run_rss([channel], override_target=gap)
+        have = count_todays_topics(country)
+        log.info(f'[{channel["channel_name"]}] After RSS: {have}/{target}')
+        if have >= target:
+            log.info(f'  Target reached by RSS — skipping fallback'); continue
+
+        # Stage 3: Tavily fallback
+        log.info(f'  Gap = {target - have} → running fallback')
+        run_fallback([channel], target=target)
+
+    log.info('Waterfall complete.')
