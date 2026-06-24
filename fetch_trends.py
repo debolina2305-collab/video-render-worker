@@ -29,7 +29,7 @@ tavily               = TavilyClient(api_key=TAVILY_API_KEY)
 # NOTE: These trendspyg values are now FALLBACK DEFAULTS only. The live
 # settings come from the trend_config table (per-channel) via load_trend_config().
 # Edit settings in Supabase trend_config, not here.
-TRENDSPYG_MIN_VOLUME = 20000  # fallback min search volume if trend_config missing
+TRENDSPYG_MIN_VOLUME = 1000   # fallback min volume — correct scale: 50K+ is top 4h trend
 TRENDSPYG_DELAY_SEC  = 2.0    # pause between trendspyg network calls
 TRENDSPYG_HOURS      = 4      # fallback time window if trend_config missing
 TRENDSPYG_MAX_PROCESS = 25    # fallback process cap if trend_config missing
@@ -239,28 +239,20 @@ def trim(text, max_words=200):
 
 def volume_to_priority(volume):
     """
-    Map real search volume to a quiz_queue priority score.
-    Higher volume = higher priority = Worker 8 processes it first = video
-    published while the trend is still hot.
+    priority = volume directly (no bucketing, no capping).
+    Higher search volume = higher priority = Worker 8 processes it first.
 
-    Buckets (after ×1000 normalisation from CSV):
-      ≥ 1,000,000  → 100  (mega-viral, publish immediately)
-      ≥   500,000  →  80
-      ≥   200,000  →  60
-      ≥   100,000  →  40
-      ≥    50,000  →  30
-      ≥    20,000  →  20  (our min_volume threshold)
-      anything lower → 10  (still above RSS=5 and fallback=1)
+    quiz_queue.priority is now INTEGER (max 2,147,483,647) — safe for any
+    Google Trends volume including 7-day windows with 10M+ searches.
 
-    RSS topics keep priority=5, fallback=1 — always below trendspyg topics.
+    Examples:
+      50K  window (4h)  →  50,000   priority
+      2M   window (7d)  →  2,000,000 priority
+      10M  window (7d)  → 10,000,000 priority
+      RSS topics        →          5 priority (always below trendspyg)
+      fallback topics   →          1 priority
     """
-    if   volume >= 1_000_000: return 100
-    elif volume >=   500_000: return 80
-    elif volume >=   200_000: return 60
-    elif volume >=   100_000: return 40
-    elif volume >=    50_000: return 30
-    elif volume >=    20_000: return 20
-    else:                     return 10
+    return max(int(volume), 0)
 
 # ── Insert into quiz_queue ────────────────────────────────────────────────────
 def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, breakdown=''):
@@ -475,12 +467,9 @@ def _fetch_trends_csv(country, hours):
 
     rows.sort(key=lambda r: r['volume'], reverse=True)
 
-    # trendspyg CSV "Search volume" values are in THOUSANDS (200 = 200,000 searches,
-    # 2000 = 2,000,000 searches). Multiply by 1000 so they match the actual search
-    # counts shown on the Google Trends web UI AND so trend_config.min_volume
-    # (e.g. 20000 = "only accept topics with 20K+ real searches") works correctly.
-    for r in rows:
-        r['volume'] = r['volume'] * 1000
+    # NOTE: _parse_volume already handles K/M suffixes correctly:
+    # "50K+" → 50,000, "2M+" → 2,000,000, "200K+" → 200,000
+    # No further multiplication needed.
 
     log.info(f'  CSV parsed: {len(rows)} trends')
     return rows
@@ -491,7 +480,7 @@ def load_trend_config(country_code):
     defaults = {
         'max_topics_per_run':  20,
         'time_window_hours':   4,
-        'min_volume':          20000,
+        'min_volume':          1000,
         'min_grounding_words': 200,
         'max_process_per_run': 80,
     }
