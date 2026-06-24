@@ -31,8 +31,11 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install Chrome (for trendspyg CSV path)
+        uses: browser-actions/setup-chrome@v1
+
       - name: Install
-        run: pip install trendspyg feedparser requests tavily-python
+        run: pip install trendspyg feedparser requests tavily-python selenium
 
       - name: Run
         env:
