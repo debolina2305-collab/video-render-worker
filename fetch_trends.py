@@ -375,11 +375,13 @@ def _parse_breakdown(raw):
     # Remove any trailing "+ N more" artifact from Google's UI
     best = [p for p in best if not p.startswith('+') and not p.startswith('…')]
     return best
+
+def _fetch_trends_csv(country, hours):
     """
     CSV path — returns 480+ trends with REAL volume buckets (incl 200K+, 1M+).
     Uses Python's built-in csv module — NO pandas needed.
     trendspyg downloads the file; we read it ourselves.
-    Returns list of dicts: [{'keyword':..., 'volume':int}, ...] sorted desc.
+    Returns list of dicts: [{'keyword':..., 'volume':int, 'breakdown':str}, ...] sorted desc.
     """
     import csv, glob, os, tempfile
     from trendspyg import download_google_trends_csv
@@ -546,6 +548,9 @@ def run_trendspyg(channels, override_target=None):
 
         log.info(f'[{channel["channel_name"]}] trendspyg: {inserted}/{target} quiz-ready topics inserted '
                  f'(processed {processed} raw trends)')
+        return inserted  # waterfall uses this to decide if RSS is needed
+
+    return 0
 
 # ── Mode 2: Google News RSS ───────────────────────────────────────────────────
 def run_rss(channels, override_target=None):
@@ -585,6 +590,9 @@ def run_rss(channels, override_target=None):
                 if process_topic(title, channel, 'rss', 5, niche, min_words=min_w):
                     inserted += 1
         log.info(f'[{channel["channel_name"]}] RSS: {inserted}/{target} quiz-ready topics inserted')
+        return inserted
+
+    return 0
 
 # ── Mode 3: Tavily fallback ───────────────────────────────────────────────────
 def run_fallback(channels, target=50):
@@ -633,36 +641,39 @@ def run_waterfall(channels):
       Stage 2: RSS        → fills ONLY THE GAP (target minus what trendspyg inserted)
       Stage 3: fallback   → fills any remaining gap
 
-    Each stage only runs if the previous left a shortfall.
-    RSS never runs if trendspyg already hit the target.
-    Fallback never runs if trendspyg + RSS together hit the target.
+    Uses INSERTION COUNTS returned by each stage (not DB re-queries which
+    would include rows from previous runs and trigger false "target reached").
     """
     log.info('══ WATERFALL: trendspyg → RSS (gap) → fallback (gap) ══')
     for channel in channels:
         country = channel.get('country_code', 'US')
         cfg     = load_trend_config(country)
         target  = cfg['max_topics_per_run']
-        log.info(f'[{channel["channel_name"]}] Daily target: {target} quiz-ready topics')
+        log.info(f'[{channel["channel_name"]}] Target this run: {target} new quiz-ready topics')
 
         # Stage 1: trendspyg
-        run_trendspyg([channel])
-        have = count_todays_topics(country)
-        log.info(f'[{channel["channel_name"]}] After trendspyg: {have}/{target}')
-        if have >= target:
-            log.info(f'  Target reached by trendspyg — skipping RSS + fallback'); continue
+        inserted_trends = run_trendspyg([channel], override_target=target)
+        log.info(f'[{channel["channel_name"]}] Stage 1 result: {inserted_trends}/{target}')
+
+        if inserted_trends >= target:
+            log.info(f'  Target reached by trendspyg — skipping RSS + fallback')
+            continue
 
         # Stage 2: RSS fills the gap
-        gap = target - have
-        log.info(f'  Gap = {gap} → running RSS')
-        run_rss([channel], override_target=gap)
-        have = count_todays_topics(country)
-        log.info(f'[{channel["channel_name"]}] After RSS: {have}/{target}')
-        if have >= target:
-            log.info(f'  Target reached by RSS — skipping fallback'); continue
+        gap = target - inserted_trends
+        log.info(f'  Gap = {gap} → running RSS to fill')
+        inserted_rss = run_rss([channel], override_target=gap)
+        total = inserted_trends + inserted_rss
+        log.info(f'[{channel["channel_name"]}] Stage 2 result: {total}/{target} (trendspyg={inserted_trends} + rss={inserted_rss})')
 
-        # Stage 3: Tavily fallback
-        log.info(f'  Gap = {target - have} → running fallback')
-        run_fallback([channel], target=target)
+        if total >= target:
+            log.info(f'  Target reached by trendspyg + RSS — skipping fallback')
+            continue
+
+        # Stage 3: Tavily fallback fills remaining gap
+        remaining = target - total
+        log.info(f'  Still need {remaining} more → running fallback')
+        run_fallback([channel], target=remaining)
 
     log.info('Waterfall complete.')
 
