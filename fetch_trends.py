@@ -142,28 +142,33 @@ def db_insert(table, data):
     return True
 
 def count_todays_topics(country_code):
-    """Count topics already inserted today for this channel.
-    FIX: tries country_code filter first, falls back to no filter
-    to handle case where channel_setup.sql hasn't added the column yet."""
+    """Count topics already inserted today for this channel using
+    Supabase's count=exact header — returns integer directly, no row fetch."""
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    count_headers = {**sb_headers(), 'Prefer': 'count=exact', 'Range-Unit': 'items', 'Range': '0-0'}
     try:
-        rows = db_get(
-            f'quiz_queue?country_code=eq.{country_code}'
-            f'&created_at=gte.{today}T00:00:00+00:00'
-            f'&status=neq.completed&select=id'
+        # With country_code filter (works after channel_setup.sql)
+        r = requests.get(
+            f'{SUPABASE_URL}/rest/v1/quiz_queue'
+            f'?country_code=eq.{country_code}'
+            f'&created_at=gte.{today}T00:00:00%2B00:00'
+            f'&status=neq.completed'
+            f'&select=id',
+            headers=count_headers, timeout=15
         )
+        if r.status_code in (200, 206):
+            content_range = r.headers.get('Content-Range', '')
+            # Content-Range: 0-0/42  — the number after / is the total count
+            if '/' in content_range:
+                total = int(content_range.split('/')[-1])
+                log.info(f'  count_todays_topics({country_code}): {total} via Content-Range')
+                return total
+        # Fallback: count the returned rows
+        rows = r.json() or []
         return len(rows)
-    except Exception:
-        try:
-            # Fallback without country_code (works before migration)
-            rows = db_get(
-                f'quiz_queue'
-                f'?created_at=gte.{today}T00:00:00+00:00'
-                f'&status=neq.completed&select=id'
-            )
-            return len(rows)
-        except Exception:
-            return 0
+    except Exception as e:
+        log.debug(f'count_todays_topics fallback: {e}')
+        return 0
 
 def already_queued(topic, country_code):
     today = datetime.now(timezone.utc).strftime('%Y-%m-%dT00:00:00+00:00')
@@ -370,6 +375,14 @@ def _fetch_trends_csv(country, hours):
                 rows.append({'keyword': kw, 'volume': vol})
 
     rows.sort(key=lambda r: r['volume'], reverse=True)
+
+    # trendspyg CSV "Search volume" values are in THOUSANDS (200 = 200,000 searches,
+    # 2000 = 2,000,000 searches). Multiply by 1000 so they match the actual search
+    # counts shown on the Google Trends web UI AND so trend_config.min_volume
+    # (e.g. 20000 = "only accept topics with 20K+ real searches") works correctly.
+    for r in rows:
+        r['volume'] = r['volume'] * 1000
+
     log.info(f'  CSV parsed: {len(rows)} trends')
     return rows
 
