@@ -209,26 +209,29 @@ def tavily_search(topic, country_code):
 
 def quality_check(topic, tavily_data, min_words=TAVILY_MIN_WORDS):
     if not tavily_data or not tavily_data.get('results'):
-        return False, 'no_results', ''
+        return False, 'no_results', '', []
     results    = tavily_data['results']
     if len(results) < TAVILY_MIN_RESULTS:
-        return False, f'too_few_results({len(results)})', ''
+        return False, f'too_few_results({len(results)})', '', []
     combined   = ' '.join((r.get('content') or r.get('snippet') or '') for r in results).strip()
     word_count = len(combined.split())
     if word_count < min_words:
-        return False, f'thin({word_count}w<{min_words}w)', ''
+        return False, f'thin({word_count}w<{min_words}w)', '', []
     domains = set()
     for r in results:
         m = re.search(r'https?://(?:www\.)?([^/]+)', r.get('url',''))
         if m: domains.add(m.group(1))
     if len(domains) <= 1:
-        return False, 'single_domain', ''
+        return False, 'single_domain', '', []
     words = topic.strip().split()
     if len(words) <= 2:
         is_name = all(w[0].isupper() for w in words if w) and not any(c.isdigit() for c in topic)
         if is_name and results[0].get('score', 1.0) < 0.4:
-            return False, 'unknown_entity', ''
-    return True, 'ok', combined
+            return False, 'unknown_entity', '', []
+    # Extract article titles from Tavily results as supplementary keywords
+    # These are used as fallback breakdown when Google Trends provides none
+    tavily_titles = [r.get('title','').strip() for r in results if r.get('title','').strip()]
+    return True, 'ok', combined, tavily_titles
 
 def trim(text, max_words=200):
     w = text.split()
@@ -324,16 +327,19 @@ def process_topic(topic, channel, source, priority, niche_hint=None,
         return False
     time.sleep(TAVILY_DELAY_SEC)
     data = tavily_search(topic, country)
-    passes, reason, grounding = quality_check(topic, data, min_words)
+    passes, reason, grounding, tavily_titles = quality_check(topic, data, min_words)
     if not passes:
         log.info(f'  REJECT [{reason}]: {topic[:70]}')
         return False
     niche = niche_hint or classify_niche(topic)
+    # Use Google breakdown if available, otherwise fall back to Tavily article titles
+    effective_breakdown = breakdown if breakdown and breakdown.lower() != topic.lower() else ', '.join(tavily_titles[:8])
     ok = insert_topic(topic, niche, trim(grounding, max_words=max(min_words+50, 250)),
-                      channel, source, priority, volume=volume, breakdown=breakdown)
+                      channel, source, priority, volume=volume, breakdown=effective_breakdown)
     if ok:
-        bd_note = f' bd={len(breakdown.split(","))}kw' if breakdown else ''
-        log.info(f'  ✓ INSERTED [src={source} p={priority} vol={volume:,} niche={niche}{bd_note}]: {topic[:70]}')
+        bd_count = len(_parse_breakdown(effective_breakdown))
+        bd_src   = 'google' if (breakdown and breakdown.lower() != topic.lower()) else 'tavily'
+        log.info(f'  ✓ INSERTED [src={source} p={priority} vol={volume:,} niche={niche} bd={bd_count}kw/{bd_src}]: {topic[:70]}')
     return ok
 
 # ── Mode 1: trendspyg ─────────────────────────────────────────────────────────
@@ -376,7 +382,28 @@ def _parse_breakdown(raw):
     best = [p for p in best if not p.startswith('+') and not p.startswith('…')]
     return best
 
-def _fetch_trends_csv(country, hours):
+def _fetch_trends_rss_enrichment(country):
+    """
+    Fetch trendspyg RSS to get related_queries for each trend.
+    RSS has coarse volumes but DOES include related_queries (the breakdown
+    keywords visible in Google Trends web UI).
+    Returns dict: {keyword_lower: [related_query, ...]}
+    No Chrome needed — pure HTTP.
+    """
+    from trendspyg import download_google_trends_rss
+    try:
+        env = download_google_trends_rss(geo=country, normalize=True)
+        enrichment = {}
+        for t in env.get('trends', []):
+            kw = (t.get('keyword') or '').strip().lower()
+            rq = t.get('related_queries') or []
+            if kw and rq:
+                enrichment[kw] = [q.strip() for q in rq if q.strip()]
+        log.info(f'  RSS enrichment: got related_queries for {len(enrichment)} trends')
+        return enrichment
+    except Exception as e:
+        log.warning(f'  RSS enrichment failed (non-fatal): {e}')
+        return {}
     """
     CSV path — returns 480+ trends with REAL volume buckets (incl 200K+, 1M+).
     Uses Python's built-in csv module — NO pandas needed.
@@ -507,6 +534,19 @@ def run_trendspyg(channels, override_target=None):
             log.warning(f'  Skipping trendspyg for {channel["channel_name"]} this run.')
             log.warning(f'  Run --mode fallback separately if needed, or check Chrome installation.')
             continue
+
+        # Enrich with related_queries from RSS (no Chrome, fast).
+        # RSS has the breakdown keywords the web UI shows — CSV doesn't.
+        # We cross-reference by lowercased keyword to merge them.
+        enrichment = _fetch_trends_rss_enrichment(country)
+        enriched_count = 0
+        for t in trends:
+            kw_lower = t['keyword'].lower()
+            if kw_lower in enrichment and enrichment[kw_lower]:
+                t['breakdown'] = ', '.join(enrichment[kw_lower])
+                enriched_count += 1
+        if enriched_count:
+            log.info(f'  Enriched {enriched_count}/{len(trends)} trends with related_queries from RSS')
 
         log.info(f'  Got {len(trends)} trends via {source_used} (sorted by volume, highest first)')
         if trends:
