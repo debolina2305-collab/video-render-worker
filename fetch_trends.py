@@ -209,29 +209,30 @@ def tavily_search(topic, country_code):
 
 def quality_check(topic, tavily_data, min_words=TAVILY_MIN_WORDS):
     if not tavily_data or not tavily_data.get('results'):
-        return False, 'no_results', '', []
+        return False, 'no_results', '', [], 0.0
     results    = tavily_data['results']
     if len(results) < TAVILY_MIN_RESULTS:
-        return False, f'too_few_results({len(results)})', '', []
+        return False, f'too_few_results({len(results)})', '', [], 0.0
     combined   = ' '.join((r.get('content') or r.get('snippet') or '') for r in results).strip()
     word_count = len(combined.split())
     if word_count < min_words:
-        return False, f'thin({word_count}w<{min_words}w)', '', []
+        return False, f'thin({word_count}w<{min_words}w)', '', [], 0.0
     domains = set()
     for r in results:
         m = re.search(r'https?://(?:www\.)?([^/]+)', r.get('url',''))
         if m: domains.add(m.group(1))
     if len(domains) <= 1:
-        return False, 'single_domain', '', []
+        return False, 'single_domain', '', [], 0.0
     words = topic.strip().split()
     if len(words) <= 2:
         is_name = all(w[0].isupper() for w in words if w) and not any(c.isdigit() for c in topic)
         if is_name and results[0].get('score', 1.0) < 0.4:
-            return False, 'unknown_entity', '', []
-    # Extract article titles from Tavily results as supplementary keywords
-    # These are used as fallback breakdown when Google Trends provides none
+            return False, 'unknown_entity', '', [], 0.0
     tavily_titles = [r.get('title','').strip() for r in results if r.get('title','').strip()]
-    return True, 'ok', combined, tavily_titles
+    # Average Tavily relevance score (0.0–1.0) — used as RSS priority proxy
+    scores = [r.get('score', 0.0) for r in results if r.get('score') is not None]
+    avg_score = sum(scores) / len(scores) if scores else 0.0
+    return True, 'ok', combined, tavily_titles, avg_score
 
 def trim(text, max_words=200):
     w = text.split()
@@ -255,7 +256,7 @@ def volume_to_priority(volume):
     return max(int(volume), 0)
 
 # ── Insert into quiz_queue ────────────────────────────────────────────────────
-def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, breakdown=''):
+def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, breakdown='', tavily_score=0.0):
     # Parse breakdown into clean keyword list using flexible separator detection
     breakdown_list = _parse_breakdown(breakdown)
     # Canonical string: comma-separated, clean, ready for YouTube tags / blog meta
@@ -282,6 +283,7 @@ def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, b
                 'fetched_at':           datetime.now(timezone.utc).isoformat(),
                 'priority':             priority,
                 'search_volume':        volume,
+                'tavily_score':         round(avg_score, 3) if (avg_score := tavily_score) else 0,
                 'trend_breakdown':      breakdown_list,   # parsed list
                 'trend_breakdown_raw':  breakdown,        # original CSV string
             },
@@ -319,19 +321,27 @@ def process_topic(topic, channel, source, priority, niche_hint=None,
         return False
     time.sleep(TAVILY_DELAY_SEC)
     data = tavily_search(topic, country)
-    passes, reason, grounding, tavily_titles = quality_check(topic, data, min_words)
+    passes, reason, grounding, tavily_titles, avg_score = quality_check(topic, data, min_words)
     if not passes:
         log.info(f'  REJECT [{reason}]: {topic[:70]}')
         return False
     niche = niche_hint or classify_niche(topic)
-    # Use Google breakdown if available, otherwise fall back to Tavily article titles
+    # For RSS/fallback sources that have no real volume, use Tavily avg_score
+    # as a priority signal. score × 100 gives a range of ~5–100, always far
+    # below trendspyg topics (which are in the thousands). This lets Worker 8
+    # rank within RSS by how much coverage a topic currently has on the web.
+    effective_priority = priority
+    if volume == 0 and avg_score > 0:
+        effective_priority = max(priority, round(avg_score * 100))
     effective_breakdown = breakdown if breakdown and breakdown.lower() != topic.lower() else ', '.join(tavily_titles[:8])
     ok = insert_topic(topic, niche, trim(grounding, max_words=max(min_words+50, 250)),
-                      channel, source, priority, volume=volume, breakdown=effective_breakdown)
+                      channel, source, effective_priority, volume=volume,
+                      breakdown=effective_breakdown, tavily_score=avg_score)
     if ok:
         bd_count = len(_parse_breakdown(effective_breakdown))
         bd_src   = 'google' if (breakdown and breakdown.lower() != topic.lower()) else 'tavily'
-        log.info(f'  ✓ INSERTED [src={source} p={priority} vol={volume:,} niche={niche} bd={bd_count}kw/{bd_src}]: {topic[:70]}')
+        log.info(f'  ✓ INSERTED [src={source} p={effective_priority} vol={volume:,} '
+                 f'score={avg_score:.2f} niche={niche} bd={bd_count}kw/{bd_src}]: {topic[:70]}')
     return ok
 
 # ── Mode 1: trendspyg ─────────────────────────────────────────────────────────
