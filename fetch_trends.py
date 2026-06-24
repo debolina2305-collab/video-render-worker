@@ -26,11 +26,16 @@ SUPABASE_SERVICE_KEY = os.environ['SUPABASE_SERVICE_KEY']
 TAVILY_API_KEY       = os.environ['TAVILY_API_KEY']
 tavily               = TavilyClient(api_key=TAVILY_API_KEY)
 
-TRENDSPYG_MIN_VOLUME = 0      # accept all — Tavily quality filter decides
+# NOTE: These trendspyg values are now FALLBACK DEFAULTS only. The live
+# settings come from the trend_config table (per-channel) via load_trend_config().
+# Edit settings in Supabase trend_config, not here.
+TRENDSPYG_MIN_VOLUME = 20000  # fallback min search volume if trend_config missing
+TRENDSPYG_DELAY_SEC  = 2.0    # pause between trendspyg network calls
+TRENDSPYG_HOURS      = 4      # fallback time window if trend_config missing
+TRENDSPYG_MAX_PROCESS = 25    # fallback process cap if trend_config missing
 TAVILY_MIN_RESULTS   = 2
-TAVILY_MIN_WORDS     = 150
+TAVILY_MIN_WORDS     = 200    # default; overridden per-channel by trend_config.min_grounding_words
 TAVILY_DELAY_SEC     = 1.5
-TRENDSPYG_DELAY_SEC  = 2.0
 RSS_MAX_PER_FEED     = 15
 
 # ── Trendspyg keyword blocklist ───────────────────────────────────────────────
@@ -197,7 +202,7 @@ def tavily_search(topic, country_code):
         log.warning(f'Tavily search failed for "{topic[:60]}": {e}')
         return None
 
-def quality_check(topic, tavily_data):
+def quality_check(topic, tavily_data, min_words=TAVILY_MIN_WORDS):
     if not tavily_data or not tavily_data.get('results'):
         return False, 'no_results', ''
     results    = tavily_data['results']
@@ -205,8 +210,8 @@ def quality_check(topic, tavily_data):
         return False, f'too_few_results({len(results)})', ''
     combined   = ' '.join((r.get('content') or r.get('snippet') or '') for r in results).strip()
     word_count = len(combined.split())
-    if word_count < TAVILY_MIN_WORDS:
-        return False, f'thin({word_count}w)', ''
+    if word_count < min_words:
+        return False, f'thin({word_count}w<{min_words}w)', ''
     domains = set()
     for r in results:
         m = re.search(r'https?://(?:www\.)?([^/]+)', r.get('url',''))
@@ -267,7 +272,7 @@ def insert_topic(topic, niche, grounding, channel, source, priority):
             return False
 
 # ── Process one topic ─────────────────────────────────────────────────────────
-def process_topic(topic, channel, source, priority, niche_hint=None):
+def process_topic(topic, channel, source, priority, niche_hint=None, min_words=TAVILY_MIN_WORDS):
     topic = topic.strip()
     if not topic or len(topic) < 5:
         return False
@@ -277,54 +282,162 @@ def process_topic(topic, channel, source, priority, niche_hint=None):
         return False
     time.sleep(TAVILY_DELAY_SEC)
     data = tavily_search(topic, country)
-    passes, reason, grounding = quality_check(topic, data)
+    passes, reason, grounding = quality_check(topic, data, min_words)
     if not passes:
         log.info(f'  REJECT [{reason}]: {topic[:70]}')
         return False
     niche = niche_hint or classify_niche(topic)
-    ok = insert_topic(topic, niche, trim(grounding), channel, source, priority)
+    ok = insert_topic(topic, niche, trim(grounding, max_words=max(min_words+50, 250)), channel, source, priority)
     if ok:
         log.info(f'  ✓ INSERTED [src={source} p={priority} niche={niche}]: {topic[:70]}')
     return ok
 
 # ── Mode 1: trendspyg ─────────────────────────────────────────────────────────
+def _parse_volume(val):
+    """Normalize a trendspyg volume value to an int.
+    CSV path may return strings like '200K+', '1M+', '5,000+' or ints."""
+    if val is None:
+        return 0
+    if isinstance(val, (int, float)):
+        return int(val)
+    s = str(val).strip().upper().replace('+', '').replace(',', '').replace('"', '')
+    try:
+        if s.endswith('M'):
+            return int(float(s[:-1]) * 1_000_000)
+        if s.endswith('K'):
+            return int(float(s[:-1]) * 1_000)
+        return int(float(s))
+    except (ValueError, TypeError):
+        return 0
+
+def _fetch_trends_csv(country, hours):
+    """
+    CSV path — returns 480+ trends with REAL volume buckets (incl 200K+, 1M+)
+    and a selectable time window. Requires Chrome (Selenium-based).
+    Returns list of dicts: [{'keyword':..., 'volume':int}, ...] sorted desc.
+    """
+    from trendspyg import download_google_trends_csv
+    df = download_google_trends_csv(
+        geo=country,
+        hours=hours,              # 4 = catch spikes early (best for our pipeline)
+        category='all',
+        output_format='dataframe'
+    )
+    rows = []
+    # Column names vary; find the keyword + volume columns flexibly
+    cols = {c.lower(): c for c in df.columns}
+    kw_col  = next((cols[c] for c in cols if 'trend' in c or 'keyword' in c or 'query' in c or 'title' in c), df.columns[0])
+    vol_col = next((cols[c] for c in cols if 'volume' in c or 'traffic' in c or 'search' in c), None)
+    for _, row in df.iterrows():
+        kw  = str(row.get(kw_col, '')).strip()
+        vol = _parse_volume(row.get(vol_col)) if vol_col else 0
+        if kw:
+            rows.append({'keyword': kw, 'volume': vol})
+    rows.sort(key=lambda r: r['volume'], reverse=True)
+    return rows
+
+def _fetch_trends_rss(country):
+    """
+    RSS fallback — fast, no Chrome, but only ~10-20 trends with coarse
+    bucket minimums. Used only if the CSV path is unavailable.
+    """
+    from trendspyg import download_google_trends_rss
+    env    = download_google_trends_rss(geo=country, normalize=True)
+    trends = env.get('trends', [])
+    rows   = [{'keyword': t.get('keyword','').strip(),
+               'volume':  t.get('volume_min', 0)} for t in trends if t.get('keyword')]
+    rows.sort(key=lambda r: r['volume'], reverse=True)
+    return rows
+
+def load_trend_config(country_code):
+    """Load per-channel trend settings from trend_config table.
+    Returns a dict with safe defaults if no row exists or table is missing."""
+    defaults = {
+        'max_topics_per_run':  20,
+        'time_window_hours':   4,
+        'min_volume':          20000,
+        'min_grounding_words': 200,
+        'max_process_per_run': 80,
+    }
+    try:
+        rows = db_get(f'trend_config?country_code=eq.{country_code}&is_active=eq.true&limit=1')
+        if rows:
+            cfg = rows[0]
+            return {
+                'max_topics_per_run':  cfg.get('max_topics_per_run')  or defaults['max_topics_per_run'],
+                'time_window_hours':   cfg.get('time_window_hours')   or defaults['time_window_hours'],
+                'min_volume':          cfg.get('min_volume')          or defaults['min_volume'],
+                'min_grounding_words': cfg.get('min_grounding_words') or defaults['min_grounding_words'],
+                'max_process_per_run': cfg.get('max_process_per_run') or defaults['max_process_per_run'],
+            }
+    except Exception as e:
+        log.warning(f'Could not load trend_config for {country_code}, using defaults: {e}')
+    return defaults
+
 def run_trendspyg(channels):
     log.info('══ MODE: TRENDSPYG (real Google Trends, priority=10) ══')
-    try:
-        from trendspyg import download_google_trends_rss
-    except ImportError:
-        log.error('trendspyg not installed: pip install trendspyg'); return
 
     for channel in channels:
         country = channel.get('country_code', 'US')
-        log.info(f'[{channel["channel_name"]}] Fetching Google Trends geo={country}')
+        cfg     = load_trend_config(country)
+        log.info(f'[{channel["channel_name"]}] Settings: want {cfg["max_topics_per_run"]} quiz-ready topics, '
+                 f'window={cfg["time_window_hours"]}h, min_vol={cfg["min_volume"]:,}, '
+                 f'min_words={cfg["min_grounding_words"]}, max_process={cfg["max_process_per_run"]}')
+
+        trends = []
+        source_used = None
+
+        # Try CSV path first (480+ trends, real volume buckets incl 200K+/1M+).
+        # Time window comes from trend_config.time_window_hours.
         try:
             time.sleep(TRENDSPYG_DELAY_SEC)
-            env    = download_google_trends_rss(geo=country, normalize=True)
-            trends = sorted(env.get('trends', []),
-                            key=lambda t: t.get('volume_min', 0), reverse=True)
-            log.info(f'  trendspyg returned {len(trends)} trends')
-            if trends:
-                log.info(f'  Volume range: {trends[-1].get("volume_min",0):,} – {trends[0].get("volume_min",0):,}')
+            trends = _fetch_trends_csv(country, hours=cfg['time_window_hours'])
+            source_used = f'CSV (hours={cfg["time_window_hours"]})'
         except Exception as e:
-            log.warning(f'  trendspyg failed: {e}'); continue
+            log.warning(f'  CSV path unavailable ({e}); falling back to RSS')
+            try:
+                time.sleep(TRENDSPYG_DELAY_SEC)
+                trends = _fetch_trends_rss(country)
+                source_used = 'RSS (fallback)'
+            except Exception as e2:
+                log.warning(f'  RSS also failed: {e2}'); continue
 
-        inserted = 0
+        log.info(f'  Got {len(trends)} trends via {source_used} (sorted by volume, highest first)')
+        if trends:
+            log.info(f'  Volume range: {trends[-1]["volume"]:,} – {trends[0]["volume"]:,}')
+
+        # Walk the volume-sorted list from the TOP. Insert quiz-ready topics
+        # until we reach max_topics_per_run, or until we've processed
+        # max_process_per_run raw trends (Tavily-credit safety cap).
+        inserted  = 0
+        processed = 0
+        target    = cfg['max_topics_per_run']
         for t in trends:
-            kw  = t.get('keyword', '').strip()
-            vol = t.get('volume_min', 0)
-            if not kw: continue
-            if vol < TRENDSPYG_MIN_VOLUME:
-                log.info(f'  SKIP low-vol ({vol:,}): {kw}'); continue
-            # Pre-filter obviously unquizable trends
+            if inserted >= target:
+                log.info(f'  Reached target of {target} quiz-ready topics — stopping')
+                break
+            if processed >= cfg['max_process_per_run']:
+                log.info(f'  Hit process cap ({cfg["max_process_per_run"]}) before target — stopping')
+                break
+            kw  = t['keyword']
+            vol = t['volume']
+            if not kw:
+                continue
+            if vol < cfg['min_volume']:
+                # list is volume-sorted desc — once below threshold, all rest are too
+                log.info(f'  Volume dropped below {cfg["min_volume"]:,} (at {vol:,}) — stopping')
+                break
             ok_kw, reason = is_quizable_trend(kw)
             if not ok_kw:
                 log.info(f'  SKIP [{reason}]: {kw}'); continue
-            log.info(f'  Processing (vol={vol:,}): {kw}')
-            if process_topic(kw, channel, 'trendspyg', 10):
+            log.info(f'  Processing ({inserted+1}/{target}, vol={vol:,}): {kw}')
+            processed += 1
+            if process_topic(kw, channel, 'trendspyg', 10,
+                             min_words=cfg['min_grounding_words']):
                 inserted += 1
 
-        log.info(f'[{channel["channel_name"]}] trendspyg: {inserted} inserted')
+        log.info(f'[{channel["channel_name"]}] trendspyg: {inserted}/{target} quiz-ready topics inserted '
+                 f'(processed {processed} raw trends)')
 
 # ── Mode 2: Google News RSS ───────────────────────────────────────────────────
 def run_rss(channels):
