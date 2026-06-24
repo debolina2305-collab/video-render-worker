@@ -261,9 +261,10 @@ def volume_to_priority(volume):
 
 # ── Insert into quiz_queue ────────────────────────────────────────────────────
 def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, breakdown=''):
-    # Parse breakdown into a clean list of keywords
-    # CSV format is typically comma-separated: "lilo and stitch, daveigh chase death, ..."
-    breakdown_list = [k.strip() for k in breakdown.split(',') if k.strip()] if breakdown else []
+    # Parse breakdown into clean keyword list using flexible separator detection
+    breakdown_list = _parse_breakdown(breakdown)
+    # Canonical string: comma-separated, clean, ready for YouTube tags / blog meta
+    keywords_str = ', '.join(breakdown_list) if breakdown_list else ''
 
     try:
         db_insert('quiz_queue', {
@@ -277,19 +278,22 @@ def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, b
             'country_code':      channel.get('country_code', 'US'),
             'channel_name':      channel.get('channel_name', 'USA Trending Challenge'),
             'topic_source':      source,
+            # Dedicated column — visible in Supabase UI, queryable, flows to
+            # Worker 8 → quiz table → YouTube tags, blog SEO, video description
+            'trend_keywords':    keywords_str,
             'payload': {
-                'source':           source,
-                'channel':          channel.get('channel_name'),
-                'fetched_at':       datetime.now(timezone.utc).isoformat(),
-                'priority':         priority,
-                'search_volume':    volume,
-                # Trend breakdown keywords — use for YouTube tags, blog SEO,
-                # video description, quiz prompt context in Worker 8
-                'trend_breakdown':  breakdown_list,
-                'trend_breakdown_raw': breakdown,
+                'source':               source,
+                'channel':              channel.get('channel_name'),
+                'fetched_at':           datetime.now(timezone.utc).isoformat(),
+                'priority':             priority,
+                'search_volume':        volume,
+                'trend_breakdown':      breakdown_list,   # parsed list
+                'trend_breakdown_raw':  breakdown,        # original CSV string
             },
             'created_at': datetime.now(timezone.utc).isoformat(),
         })
+        if keywords_str:
+            log.info(f'    trend_keywords ({len(breakdown_list)}): {keywords_str[:100]}')
         return True
     except Exception as e:
         log.warning(f'Full insert failed, trying minimal: {e}')
@@ -302,7 +306,7 @@ def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, b
                 'searched_text': grounding,
                 'created_at':    datetime.now(timezone.utc).isoformat(),
             })
-            log.warning('Minimal insert succeeded — run channel_setup.sql for full functionality')
+            log.warning('Minimal insert succeeded — run trend_keywords_migration.sql')
             return True
         except Exception as e2:
             log.error(f'Insert failed: {e2}')
@@ -350,7 +354,27 @@ def _parse_volume(val):
     except (ValueError, TypeError):
         return 0
 
-def _fetch_trends_csv(country, hours):
+def _parse_breakdown(raw):
+    """
+    Parse trend breakdown string into a clean list of keywords.
+    Google Trends CSV uses different separators depending on locale/version:
+      comma:       "lilo and stitch, daveigh chase death, meningitis"
+      semicolon:   "lilo and stitch; daveigh chase death; meningitis"
+      pipe:        "lilo and stitch | daveigh chase death | meningitis"
+      double-space:"lilo and stitch  daveigh chase death  meningitis"
+    Try each in order and pick the one that gives the most splits.
+    """
+    if not raw or not raw.strip():
+        return []
+    raw = raw.strip()
+    best = [raw]  # fallback: whole string as one keyword
+    for sep in [', ', ',', '; ', ';', ' | ', '|', '  ']:
+        parts = [p.strip() for p in raw.split(sep) if p.strip()]
+        if len(parts) > len(best):
+            best = parts
+    # Remove any trailing "+ N more" artifact from Google's UI
+    best = [p for p in best if not p.startswith('+') and not p.startswith('…')]
+    return best
     """
     CSV path — returns 480+ trends with REAL volume buckets (incl 200K+, 1M+).
     Uses Python's built-in csv module — NO pandas needed.
@@ -413,6 +437,9 @@ def _fetch_trends_csv(country, hours):
             vol       = _parse_volume(row.get(vol_col, 0)) if vol_col else 0
             breakdown = row.get(breakdown_col, '').strip() if breakdown_col else ''
             if kw:
+                # Log first row's breakdown so we can see raw format
+                if not rows:
+                    log.info(f'  Sample breakdown raw value: "{breakdown[:120]}"')
                 rows.append({'keyword': kw, 'volume': vol, 'breakdown': breakdown})
 
     rows.sort(key=lambda r: r['volume'], reverse=True)
