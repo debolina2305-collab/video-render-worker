@@ -243,7 +243,6 @@ def insert_topic(topic, niche, grounding, channel, source, priority):
             'country_code':      channel.get('country_code', 'US'),
             'channel_name':      channel.get('channel_name', 'USA Trending Challenge'),
             'topic_source':      source,
-            'thinking_time_sec': 10,
             'payload': {
                 'source':     source,
                 'channel':    channel.get('channel_name'),
@@ -312,41 +311,66 @@ def _parse_volume(val):
 
 def _fetch_trends_csv(country, hours):
     """
-    CSV path — returns 480+ trends with REAL volume buckets (incl 200K+, 1M+)
-    and a selectable time window. Requires Chrome (Selenium-based).
+    CSV path — returns 480+ trends with REAL volume buckets (incl 200K+, 1M+).
+    Uses Python's built-in csv module — NO pandas needed.
+    trendspyg downloads the file; we read it ourselves.
     Returns list of dicts: [{'keyword':..., 'volume':int}, ...] sorted desc.
     """
+    import csv, glob, os, tempfile
     from trendspyg import download_google_trends_csv
-    df = download_google_trends_csv(
-        geo=country,
-        hours=hours,              # 4 = catch spikes early (best for our pipeline)
-        category='all',
-        output_format='dataframe'
-    )
-    rows = []
-    # Column names vary; find the keyword + volume columns flexibly
-    cols = {c.lower(): c for c in df.columns}
-    kw_col  = next((cols[c] for c in cols if 'trend' in c or 'keyword' in c or 'query' in c or 'title' in c), df.columns[0])
-    vol_col = next((cols[c] for c in cols if 'volume' in c or 'traffic' in c or 'search' in c), None)
-    for _, row in df.iterrows():
-        kw  = str(row.get(kw_col, '')).strip()
-        vol = _parse_volume(row.get(vol_col)) if vol_col else 0
-        if kw:
-            rows.append({'keyword': kw, 'volume': vol})
-    rows.sort(key=lambda r: r['volume'], reverse=True)
-    return rows
 
-def _fetch_trends_rss(country):
-    """
-    RSS fallback — fast, no Chrome, but only ~10-20 trends with coarse
-    bucket minimums. Used only if the CSV path is unavailable.
-    """
-    from trendspyg import download_google_trends_rss
-    env    = download_google_trends_rss(geo=country, normalize=True)
-    trends = env.get('trends', [])
-    rows   = [{'keyword': t.get('keyword','').strip(),
-               'volume':  t.get('volume_min', 0)} for t in trends if t.get('keyword')]
+    # Ask trendspyg to download the CSV. We use output_format='csv' (not
+    # 'dataframe') to avoid the pandas dependency entirely. The function
+    # returns the file path where it saved the CSV.
+    result = download_google_trends_csv(
+        geo=country,
+        hours=hours,
+        category='all',
+        output_format='csv'     # returns file path string, no pandas needed
+    )
+
+    # result may be a file path string or a dict with 'path' key
+    if isinstance(result, str):
+        csv_path = result
+    elif isinstance(result, dict):
+        csv_path = result.get('path') or result.get('file') or result.get('filename')
+    else:
+        raise ValueError(f'Unexpected return type from download_google_trends_csv: {type(result)}')
+
+    if not csv_path or not os.path.exists(csv_path):
+        # Try to find the most recently downloaded CSV in downloads/
+        candidates = sorted(glob.glob('downloads/trends_*.csv'), key=os.path.getmtime, reverse=True)
+        if candidates:
+            csv_path = candidates[0]
+            log.info(f'  Using most recently downloaded CSV: {csv_path}')
+        else:
+            raise FileNotFoundError(f'CSV file not found; result was: {result}')
+
+    rows = []
+    with open(csv_path, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        col_names = reader.fieldnames or []
+        col_lower  = {c.lower(): c for c in col_names}
+
+        # Find keyword and volume columns flexibly — trendspyg column names vary
+        kw_col  = next((col_lower[c] for c in col_lower
+                        if any(x in c for x in ('trend','keyword','query','title','topic'))),
+                       col_names[0] if col_names else None)
+        vol_col = next((col_lower[c] for c in col_lower
+                        if any(x in c for x in ('volume','traffic','search','approx'))),
+                       None)
+
+        log.info(f'  CSV columns: {col_names}')
+        log.info(f'  Using keyword col="{kw_col}", volume col="{vol_col}"')
+
+        for row in reader:
+            kw  = row.get(kw_col, '').strip() if kw_col else ''
+            vol = _parse_volume(row.get(vol_col, 0)) if vol_col else 0
+            if kw:
+                rows.append({'keyword': kw, 'volume': vol})
+
     rows.sort(key=lambda r: r['volume'], reverse=True)
+    log.info(f'  CSV parsed: {len(rows)} trends')
     return rows
 
 def load_trend_config(country_code):
@@ -387,20 +411,19 @@ def run_trendspyg(channels):
         trends = []
         source_used = None
 
-        # Try CSV path first (480+ trends, real volume buckets incl 200K+/1M+).
-        # Time window comes from trend_config.time_window_hours.
+        # CSV path: 480+ real trends with genuine volume buckets (200K+, 1M+).
+        # Requires Chrome. If it fails for any reason, we do NOT fall back to
+        # RSS (which only has ~10 coarse-bucket trends and wastes Tavily credits).
+        # Instead we skip and let the --mode fallback job fill any gap.
         try:
             time.sleep(TRENDSPYG_DELAY_SEC)
             trends = _fetch_trends_csv(country, hours=cfg['time_window_hours'])
             source_used = f'CSV (hours={cfg["time_window_hours"]})'
         except Exception as e:
-            log.warning(f'  CSV path unavailable ({e}); falling back to RSS')
-            try:
-                time.sleep(TRENDSPYG_DELAY_SEC)
-                trends = _fetch_trends_rss(country)
-                source_used = 'RSS (fallback)'
-            except Exception as e2:
-                log.warning(f'  RSS also failed: {e2}'); continue
+            log.warning(f'  CSV path failed: {e}')
+            log.warning(f'  Skipping trendspyg for {channel["channel_name"]} this run.')
+            log.warning(f'  Run --mode fallback separately if needed, or check Chrome installation.')
+            continue
 
         log.info(f'  Got {len(trends)} trends via {source_used} (sorted by volume, highest first)')
         if trends:
@@ -446,9 +469,16 @@ def run_rss(channels):
         country = channel.get('country_code', 'US')
         niches  = channel.get('niches') or ['general']
         feeds   = GOOGLE_NEWS_RSS.get(country, GOOGLE_NEWS_RSS['US'])
-        log.info(f'[{channel["channel_name"]}] {len(niches)} niches')
+        cfg     = load_trend_config(country)
+        target  = cfg['max_topics_per_run']
+        min_w   = cfg['min_grounding_words']
+        log.info(f'[{channel["channel_name"]}] RSS: want {target} quiz-ready topics, '
+                 f'min_words={min_w}, across {len(niches)} niches')
         inserted = 0
         for niche in niches:
+            if inserted >= target:
+                log.info(f'  Reached target of {target} — stopping RSS')
+                break
             url = feeds.get(niche) or feeds.get('general')
             if not url: continue
             try:
@@ -462,12 +492,14 @@ def run_rss(channels):
             except Exception as e:
                 log.warning(f'  RSS failed {niche}: {e}'); continue
             for entry in entries:
+                if inserted >= target:
+                    break
                 title = re.sub(r'\s*[-–]\s*[^-–]+$', '',
                                entry.get('title','').strip()).strip()
                 if len(title) < 10: continue
-                if process_topic(title, channel, 'rss', 5, niche):
+                if process_topic(title, channel, 'rss', 5, niche, min_words=min_w):
                     inserted += 1
-        log.info(f'[{channel["channel_name"]}] RSS: {inserted} inserted')
+        log.info(f'[{channel["channel_name"]}] RSS: {inserted}/{target} quiz-ready topics inserted')
 
 # ── Mode 3: Tavily fallback ───────────────────────────────────────────────────
 def run_fallback(channels, target=50):
