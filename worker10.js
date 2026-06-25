@@ -168,14 +168,24 @@ function pickThumbBadgeText() {
 }
 // Big, bold catchphrase banner shown on the thumbnail centerpiece — the main
 // eye-catching element. Pool of punchy phrases, one randomly picked per render.
+// youtube_title replaces generic catchphrases as the thumbnail headline.
+// Font auto-scales so longer titles fit the 1080px thumbnail frame.
+function thumbTitleStyle(title) {
+  const t = (title || '').trim();
+  let fontSize;
+  if (t.length <= 30)      fontSize = 52;
+  else if (t.length <= 45) fontSize = 42;
+  else if (t.length <= 60) fontSize = 34;
+  else                     fontSize = 28;
+  return { phrase: t, fontSize };
+}
+// Fallback for legacy rows without youtube_title
 const THUMB_CATCHPHRASES = [
-  'CHALLENGE', 'LEVEL UP QUIZ', 'EARN REAL TOKENS', 'BEAT YOUR FRIENDS',
-  'CHALLENGE FRIENDS', 'ARE YOU SMART?', 'PROVE IT', 'TEST YOURSELF'
+  'CAN YOU ANSWER?', 'LEVEL UP QUIZ', 'CHALLENGE YOURSELF',
+  'ARE YOU SMART?', 'PROVE IT', 'TEST YOURSELF'
 ];
 function pickThumbCatchphrase() {
   const phrase = THUMB_CATCHPHRASES[Math.floor(Math.random() * THUMB_CATCHPHRASES.length)];
-  // Auto-shrink font size for longer phrases so nothing overflows the 1080px frame
-  // at any rotation. Short words (≤10 chars) get the full punchy size.
   let fontSize;
   if (phrase.length <= 10)      fontSize = 92;
   else if (phrase.length <= 14) fontSize = 74;
@@ -652,10 +662,15 @@ async function buildVideo(quiz, workDir) {
 
   const { themeCss, decoHtml } = await resolveTheme(quiz);
   const confettiSet = pickConfettiSet(niche, quiz.topic);
-  const thumbCatch = pickThumbCatchphrase();
+  // Use youtube_title as thumbnail headline — unique per quiz row, SEO-optimised,
+  // click-triggering. Falls back to generic catchphrase for legacy rows without it.
+  const thumbTitle  = (quiz.youtube_title && quiz.youtube_title.trim())
+                      ? thumbTitleStyle(quiz.youtube_title.trim())
+                      : pickThumbCatchphrase();
   const marqueeHtml = buildMarqueeHtml(quiz.topic);
   const floatIcons  = pickFloatIcons(niche, quiz.topic);
   console.log(`[CONFETTI] niche=${niche} set=${confettiSet.join(' ')}`);
+  console.log(`[THUMBNAIL TITLE] "${thumbTitle.phrase.slice(0,70)}" fontSize=${thumbTitle.fontSize}px`);
   console.log(`[MARQUEE] topic="${(quiz.topic||'').slice(0,50)}" floatIcons=${floatIcons.join(' ')}`);
 
   let html = await fs.readFile(path.join(__dirname,'quiz_template.html'),'utf8');
@@ -676,8 +691,8 @@ async function buildVideo(quiz, workDir) {
     '{{niche}}':niche,
     '{{thumb_icon}}':thumbIconFor(niche),
     '{{thumb_badge_text}}':pickThumbBadgeText(),
-    '{{thumb_catchphrase}}':thumbCatch.phrase,
-    '{{thumb_catchphrase_size}}':thumbCatch.fontSize,
+    '{{thumb_catchphrase}}':thumbTitle.phrase,
+    '{{thumb_catchphrase_size}}':thumbTitle.fontSize,
     '{{thumb_mission_text}}':miQuestion||question,
     '{{confetti_0}}':confettiSet[0], '{{confetti_1}}':confettiSet[1],
     '{{confetti_2}}':confettiSet[2], '{{confetti_3}}':confettiSet[3],
