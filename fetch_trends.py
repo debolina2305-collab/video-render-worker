@@ -173,16 +173,14 @@ def count_todays_topics(country_code):
 def already_queued(topic, country_code):
     """
     Check if this topic was already inserted into quiz_queue today.
-    Uses the first 50 chars of the topic as the search key — robust against
-    long RSS titles with special characters that break URL encoding.
-    Falls back to no country_code filter if the column doesn't exist.
+    Uses first 40 chars of topic, stripped to only alphanumeric + spaces.
+    This is the most URL-safe approach — avoids all special char issues.
     """
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    # Use first 50 chars — enough to be unique, short enough to be URL-safe
-    # Strip special chars that break ILIKE URL encoding
-    key = re.sub(r"['\";:%&+?#]", '', topic[:50]).strip()
+    # Keep only alphanumeric and spaces — guaranteed URL-safe and substring-matchable
+    key = re.sub(r'[^a-zA-Z0-9 ]', '', topic[:60]).strip()[:40]
     if len(key) < 5:
-        key = re.sub(r'[^a-zA-Z0-9 ]', '', topic[:50]).strip()
+        key = re.sub(r'[^a-zA-Z0-9]', '', topic[:40]).strip()
     safe = quote(key)
     try:
         rows = db_get(
@@ -229,6 +227,9 @@ def tavily_search(topic, country_code):
 WIKI_EXPANSIONS = {
     'gta 6': 'Grand Theft Auto VI',
     'gta vi': 'Grand Theft Auto VI',
+    'star fox': 'Star Fox',
+    'ios 27': 'Apple Inc',
+    'ios 26': 'Apple Inc',
     'mstr': 'Strategy Inc',
     'mstr stock': 'Strategy Inc',
     'mu stock': 'Micron Technology',
@@ -250,7 +251,7 @@ WIKI_KNOWN_ENTITIES = {
     'google': 'Google',
     'meta': 'Meta Platforms',
     'facebook': 'Facebook',
-    'amazon': 'Amazon',
+    'amazon': 'Amazon (company)',
     'microsoft': 'Microsoft',
     'nvidia': 'Nvidia',
     'micron': 'Micron Technology',
@@ -266,6 +267,16 @@ WIKI_KNOWN_ENTITIES = {
     'uber': 'Uber',
     'lyft': 'Lyft',
     'airbnb': 'Airbnb',
+    'star fox': 'Star Fox',
+    'nintendo': 'Nintendo',
+    'homekit': 'Apple Inc',
+    'ios 27': 'Apple Inc',
+    'ios 26': 'Apple Inc',
+    'ios 25': 'Apple Inc',
+    'macos': 'MacOS',
+    'gta vi': 'Grand Theft Auto VI',
+    'gta 6': 'Grand Theft Auto VI',
+    'grand theft auto': 'Grand Theft Auto VI',
     'live nation': 'Live Nation Entertainment',
     'ticketmaster': 'Ticketmaster',
     'federal reserve': 'Federal Reserve',
@@ -275,7 +286,8 @@ WIKI_KNOWN_ENTITIES = {
     'walmart': 'Walmart',
     'darden': 'Darden Restaurants',
     'olive garden': 'Olive Garden',
-    'wendy': 'Wendy\'s',
+    'chevron': 'Chevron Corporation',
+    'opec': 'OPEC',
     'elon musk': 'Elon Musk',
     'mark zuckerberg': 'Mark Zuckerberg',
     'jeff bezos': 'Jeff Bezos',
@@ -290,8 +302,15 @@ WIKI_KNOWN_ENTITIES = {
     'android': 'Android',
     'gold price': 'Gold',
     'oil price': 'Petroleum',
+    'oil slump': 'Petroleum',
+    'oil market': 'Petroleum',
+    'crude oil': 'Petroleum',
     'bitcoin': 'Bitcoin',
     'nasdaq': 'Nasdaq',
+    'passkeys': 'Passkey',
+    'penn station': 'Pennsylvania Station (New York City)',
+    'quantum computing': 'Quantum computing',
+    'seismic': 'Seismic wave',
 }
 
 # Words/phrases stripped from topic to get the core entity
