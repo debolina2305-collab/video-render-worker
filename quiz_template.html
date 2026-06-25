@@ -153,6 +153,17 @@
 
 /* ===== DEDICATED THUMBNAIL DESIGN — packed, no empty gaps, niche-specific ===== */
 .thumb-screen { padding:0; }
+/* Wikipedia topic image: blurred dark photo behind all thumbnail content.
+   Sits above the animated CSS background (z-index:1) but below the gradient
+   overlay (z-index:2) and content (z-index:5). Hidden when no image available. */
+.thumb-photo-bg {
+  position:absolute; inset:0; z-index:1;
+  background-size:cover; background-position:center center; background-repeat:no-repeat;
+  filter:blur(14px) brightness(0.28) saturate(1.4);
+  transform:scale(1.08); /* prevent blur edge artifacts */
+  opacity:0; transition:opacity 0.1s;
+}
+.thumb-photo-bg.loaded { opacity:1; }
 .thumb-bg-overlay {
   position:absolute; inset:0; z-index:2;
   background: linear-gradient(180deg, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.22) 45%, rgba(0,0,0,0.55) 100%);
@@ -561,6 +572,9 @@
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div><div class="bg-orb orb3"></div>
     {{theme_deco_html}}
+    <!-- Wikipedia topic image — blurred dark overlay. Sits above the animated
+         background but below all content. Hidden via CSS when no image provided. -->
+    <div class="thumb-photo-bg" data-src="{{thumb_bg_image}}"></div>
     <div class="thumb-bg-overlay"></div>
     <div class="thumb-content">
 
@@ -637,5 +651,17 @@
     </div>
   </div>
 
+<script>
+// Activate Wikipedia blurred background image on the thumbnail if available.
+// Uses data-src attribute set by Worker 10 via template replacement.
+(function() {
+  const el = document.querySelector('.thumb-photo-bg');
+  if (!el) return;
+  const src = el.getAttribute('data-src');
+  if (!src || src === '{{thumb_bg_image}}') return; // no image or unreplaced placeholder
+  el.style.backgroundImage = 'url("' + src + '")';
+  el.classList.add('loaded');
+})();
+</script>
 </body>
 </html>
