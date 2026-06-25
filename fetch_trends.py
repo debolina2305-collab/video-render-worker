@@ -171,22 +171,36 @@ def count_todays_topics(country_code):
         return 0
 
 def already_queued(topic, country_code):
-    today = datetime.now(timezone.utc).strftime('%Y-%m-%dT00:00:00+00:00')
-    safe  = quote(topic[:80].replace("'", "''"))
+    """
+    Check if this topic was already inserted into quiz_queue today.
+    Uses the first 50 chars of the topic as the search key — robust against
+    long RSS titles with special characters that break URL encoding.
+    Falls back to no country_code filter if the column doesn't exist.
+    """
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    # Use first 50 chars — enough to be unique, short enough to be URL-safe
+    # Strip special chars that break ILIKE URL encoding
+    key = re.sub(r"['\";:%&+?#]", '', topic[:50]).strip()
+    if len(key) < 5:
+        key = re.sub(r'[^a-zA-Z0-9 ]', '', topic[:50]).strip()
+    safe = quote(key)
     try:
         rows = db_get(
             f'quiz_queue?trnding_topic=ilike.%25{safe}%25'
             f'&country_code=eq.{country_code}'
-            f'&status=neq.completed'
-            f'&created_at=gte.{today}&limit=1&select=id'
+            f'&created_at=gte.{today}'
+            f'&limit=1&select=id'
         )
-        return len(rows) > 0
+        if len(rows) > 0:
+            log.debug(f'  Dedup hit: "{topic[:60]}"')
+            return True
+        return False
     except Exception:
         try:
             rows = db_get(
                 f'quiz_queue?trnding_topic=ilike.%25{safe}%25'
-                f'&status=neq.completed'
-                f'&created_at=gte.{today}&limit=1&select=id'
+                f'&created_at=gte.{today}'
+                f'&limit=1&select=id'
             )
             return len(rows) > 0
         except Exception as e:
@@ -227,6 +241,59 @@ WIKI_EXPANSIONS = {
     'nfl draft': 'NFL draft',
 }
 
+# Well-known brands/entities — if found in topic, use them directly as the Wiki term.
+# These are reliably in Wikipedia and always produce good thumbnail images.
+WIKI_KNOWN_ENTITIES = {
+    'tesla': 'Tesla Inc',
+    'spacex': 'SpaceX',
+    'apple': 'Apple Inc',
+    'google': 'Google',
+    'meta': 'Meta Platforms',
+    'facebook': 'Facebook',
+    'amazon': 'Amazon',
+    'microsoft': 'Microsoft',
+    'nvidia': 'Nvidia',
+    'micron': 'Micron Technology',
+    'sk hynix': 'SK Hynix',
+    'samsung': 'Samsung',
+    'anthropic': 'Anthropic',
+    'alibaba': 'Alibaba Group',
+    'openai': 'OpenAI',
+    'netflix': 'Netflix',
+    'disney': 'Walt Disney Company',
+    'twitter': 'Twitter',
+    'tiktok': 'TikTok',
+    'uber': 'Uber',
+    'lyft': 'Lyft',
+    'airbnb': 'Airbnb',
+    'live nation': 'Live Nation Entertainment',
+    'ticketmaster': 'Ticketmaster',
+    'federal reserve': 'Federal Reserve',
+    'air canada': 'Air Canada',
+    'fortnite': 'Fortnite',
+    'rockstar games': 'Rockstar Games',
+    'walmart': 'Walmart',
+    'darden': 'Darden Restaurants',
+    'olive garden': 'Olive Garden',
+    'wendy': 'Wendy\'s',
+    'elon musk': 'Elon Musk',
+    'mark zuckerberg': 'Mark Zuckerberg',
+    'jeff bezos': 'Jeff Bezos',
+    'donald trump': 'Donald Trump',
+    'iran': 'Iran',
+    'israel': 'Israel',
+    'ukraine': 'Ukraine',
+    'russia': 'Russia',
+    'china': 'China',
+    'nato': 'NATO',
+    'iphone': 'iPhone',
+    'android': 'Android',
+    'gold price': 'Gold',
+    'oil price': 'Petroleum',
+    'bitcoin': 'Bitcoin',
+    'nasdaq': 'Nasdaq',
+}
+
 # Words/phrases stripped from topic to get the core entity
 WIKI_STRIP_SUFFIXES = [
     ' arrested', ' dies', ' dead', ' death', ' married', ' divorce',
@@ -265,7 +332,13 @@ def extract_wiki_term(topic):
     if t in WIKI_EXPANSIONS:
         return [WIKI_EXPANSIONS[t]]
 
-    # -- 1. "X vs Y" matchups -> clean and try each entity --------------------
+    # -- 0.5. Known brand/entity scan (catches long RSS headlines) ------------
+    # "Texas family sues Tesla over fatal crash" -> finds "tesla" -> "Tesla Inc"
+    # "Anthropic Accuses Alibaba of Illicitly Accessing AI" -> finds "anthropic"
+    # Sorted longest-first so "elon musk" matches before "elon"
+    for entity_key in sorted(WIKI_KNOWN_ENTITIES.keys(), key=len, reverse=True):
+        if entity_key in t:
+            return [WIKI_KNOWN_ENTITIES[entity_key]]
     if ' vs ' in t or ' vs. ' in t:
         parts = re.split(r'\s+vs\.?\s+', t)
         candidates = []
