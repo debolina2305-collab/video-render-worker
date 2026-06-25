@@ -662,13 +662,33 @@ async function buildVideo(quiz, workDir) {
 
   const { themeCss, decoHtml } = await resolveTheme(quiz);
   const confettiSet = pickConfettiSet(niche, quiz.topic);
-  // Use youtube_title as thumbnail headline — unique per quiz row, SEO-optimised,
-  // click-triggering. Falls back to generic catchphrase for legacy rows without it.
   const thumbTitle  = (quiz.youtube_title && quiz.youtube_title.trim())
                       ? thumbTitleStyle(quiz.youtube_title.trim())
                       : pickThumbCatchphrase();
   const marqueeHtml = buildMarqueeHtml(quiz.topic);
   const floatIcons  = pickFloatIcons(niche, quiz.topic);
+
+  // Wikipedia thumbnail image — blurred dark overlay behind the animated background.
+  // Downloaded and base64-encoded so Puppeteer can render it on a file:// page.
+  // Falls back to empty string → CSS hides the element → animated bg shows instead.
+  let thumbImgDataUri = '';
+  if (quiz.topic_image_url) {
+    try {
+      const imgRes = await fetch(quiz.topic_image_url, {
+        headers: { 'User-Agent': 'AutoQuiz/1.0 thumbnail renderer' }
+      });
+      if (imgRes.ok) {
+        const imgBuf   = await imgRes.arrayBuffer();
+        const imgB64   = Buffer.from(imgBuf).toString('base64');
+        const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
+        thumbImgDataUri = `data:${mimeType};base64,${imgB64}`;
+        console.log(`[THUMB-IMG] Loaded Wikipedia image: ${quiz.topic_image_url.slice(0,70)}`);
+      }
+    } catch (e) {
+      console.log(`[THUMB-IMG] Image fetch failed (non-fatal): ${e.message}`);
+    }
+  }
+
   console.log(`[CONFETTI] niche=${niche} set=${confettiSet.join(' ')}`);
   console.log(`[THUMBNAIL TITLE] "${thumbTitle.phrase.slice(0,70)}" fontSize=${thumbTitle.fontSize}px`);
   console.log(`[MARQUEE] topic="${(quiz.topic||'').slice(0,50)}" floatIcons=${floatIcons.join(' ')}`);
@@ -694,6 +714,7 @@ async function buildVideo(quiz, workDir) {
     '{{thumb_catchphrase}}':thumbTitle.phrase,
     '{{thumb_catchphrase_size}}':thumbTitle.fontSize,
     '{{thumb_mission_text}}':miQuestion||question,
+    '{{thumb_bg_image}}':thumbImgDataUri,
     '{{confetti_0}}':confettiSet[0], '{{confetti_1}}':confettiSet[1],
     '{{confetti_2}}':confettiSet[2], '{{confetti_3}}':confettiSet[3],
     '{{confetti_4}}':confettiSet[4], '{{confetti_5}}':confettiSet[5],
