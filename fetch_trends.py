@@ -207,6 +207,121 @@ def tavily_search(topic, country_code):
         log.warning(f'Tavily search failed for "{topic[:60]}": {e}')
         return None
 
+# ── Wikipedia image lookup ────────────────────────────────────────────────────
+# Free, CC-licensed images. No API key needed. No cost. Zero copyright risk.
+# Used as blurred thumbnail background in Worker 10.
+
+# Known abbreviation expansions → better Wikipedia article titles
+WIKI_EXPANSIONS = {
+    'gta 6': 'Grand Theft Auto VI',
+    'gta vi': 'Grand Theft Auto VI',
+    'mstr': 'Strategy Inc',
+    'mstr stock': 'Strategy Inc',
+    'mu stock': 'Micron Technology',
+    'dram stock': 'DRAM',
+    'uber stock': 'Uber',
+    'aapl': 'Apple Inc',
+    'tsla': 'Tesla Inc',
+    'nba draft': 'NBA draft',
+    'nfl schedule': 'National Football League',
+    'nfl draft': 'NFL draft',
+}
+
+# Words/phrases stripped from topic to get the core entity
+WIKI_STRIP_SUFFIXES = [
+    ' arrested', ' dies', ' dead', ' death', ' married', ' divorce',
+    ' net worth', ' age', ' salary', ' news', ' update', ' updates',
+    ' weather', ' forecast', ' near me', ' today', ' 2026',
+    ' stock', ' price', ' stock price', ' shares', ' etf',
+    ' schedule', ' score', ' scores', ' game', ' match', ' results',
+    ' rumors', ' rumours', ' leaked', ' leak',
+    ' bill', ' act', ' law', ' policy',
+    ' election', ' elections', ' primary',
+]
+WIKI_STRIP_PREFIXES = [
+    'what is ', 'what are ', 'what was ', 'what were ',
+    'who is ', 'who are ', 'who was ',
+    'why is ', 'why did ', 'why does ',
+    'how is ', 'how did ', 'how to ',
+    'when is ', 'when did ', 'when does ',
+    'where is ', 'where did ',
+    'is ', 'are ', 'can ',
+    'latest ', 'new ', 'best ', 'top ',
+]
+
+def extract_wiki_term(topic):
+    """
+    Extract the best Wikipedia search term from a raw trending topic.
+    Returns a list of candidate terms to try in order (best first).
+    """
+    t = topic.strip().lower()
+
+    # Check known expansions first
+    if t in WIKI_EXPANSIONS:
+        return [WIKI_EXPANSIONS[t]]
+
+    # Handle "X vs Y" matchups → try each entity separately
+    if ' vs ' in t or ' vs. ' in t or ' v ' in t:
+        parts = re.split(r'\s+vs\.?\s+|\s+v\s+', t)
+        # Return both sides as candidates — try first, then second
+        return [p.strip().title() for p in parts if len(p.strip()) > 2]
+
+    # Strip question-word prefixes
+    for prefix in WIKI_STRIP_PREFIXES:
+        if t.startswith(prefix):
+            t = t[len(prefix):]
+            break
+
+    # Strip trailing qualifiers
+    for suffix in WIKI_STRIP_SUFFIXES:
+        if t.endswith(suffix):
+            t = t[:-len(suffix)]
+            break
+
+    # Extract first significant entity before prepositions
+    # e.g. "earthquake ca" → "earthquake", "las vegas weather" → "las vegas"
+    for prep in [' in ', ' at ', ' for ', ' from ', ' by ', ' on ', ' of ', ' near ']:
+        if prep in t:
+            t = t[:t.index(prep)]
+            break
+
+    return [t.strip().title()] if t.strip() else [topic.strip().title()]
+
+
+def fetch_wikipedia_image(topic):
+    """
+    Fetch a Wikipedia thumbnail image URL for the given topic.
+    Uses the Wikipedia REST API (free, no key, CC-licensed images).
+    Returns image URL string or None if not found.
+
+    Tries each candidate term from extract_wiki_term() in order.
+    Falls back silently — missing image means the animated CSS background
+    is used on the thumbnail instead.
+    """
+    candidates = extract_wiki_term(topic)
+    for term in candidates:
+        try:
+            # Wikipedia page summary API — returns thumbnail if the article has one
+            encoded = requests.utils.quote(term.replace(' ', '_'))
+            r = requests.get(
+                f'https://en.wikipedia.org/api/rest_v1/page/summary/{encoded}',
+                headers={'User-Agent': 'AutoQuiz/1.0 (quiz thumbnail image fetcher)'},
+                timeout=8
+            )
+            if r.status_code == 200:
+                data = r.json()
+                img = data.get('thumbnail', {}).get('source')
+                if img:
+                    # Upgrade to larger size (Wikipedia thumbnails support ?width= param)
+                    img = re.sub(r'/\d+px-', '/800px-', img)
+                    log.info(f'  Wikipedia image for "{term}": {img[:80]}')
+                    return img
+        except Exception as e:
+            log.debug(f'  Wikipedia API error for "{term}": {e}')
+            continue
+    log.debug(f'  No Wikipedia image found for topic: "{topic}"')
+    return None
+
 def quality_check(topic, tavily_data, min_words=TAVILY_MIN_WORDS):
     if not tavily_data or not tavily_data.get('results'):
         return False, 'no_results', '', [], 0.0
@@ -256,7 +371,7 @@ def volume_to_priority(volume):
     return max(int(volume), 0)
 
 # ── Insert into quiz_queue ────────────────────────────────────────────────────
-def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, breakdown='', tavily_score=0.0):
+def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, breakdown='', tavily_score=0.0, topic_image_url=None):
     # Parse breakdown into clean keyword list using flexible separator detection
     breakdown_list = _parse_breakdown(breakdown)
     # Canonical string: comma-separated, clean, ready for YouTube tags / blog meta
@@ -273,6 +388,8 @@ def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, b
             'lang_code':         channel.get('lang_code', 'en'),
             'country_code':      channel.get('country_code', 'US'),
             'channel_name':      channel.get('channel_name', 'USA Trending Challenge'),
+            # Wikipedia thumbnail image — blurred background for video thumbnail
+            'topic_image_url':   topic_image_url,
             'topic_source':      source,
             # Dedicated column — visible in Supabase UI, queryable, flows to
             # Worker 8 → quiz table → YouTube tags, blog SEO, video description
@@ -326,17 +443,18 @@ def process_topic(topic, channel, source, priority, niche_hint=None,
         log.info(f'  REJECT [{reason}]: {topic[:70]}')
         return False
     niche = niche_hint or classify_niche(topic)
-    # For RSS/fallback sources that have no real volume, use Tavily avg_score
-    # as a priority signal. score × 100 gives a range of ~5–100, always far
-    # below trendspyg topics (which are in the thousands). This lets Worker 8
-    # rank within RSS by how much coverage a topic currently has on the web.
+    # For RSS/fallback: use Tavily avg_score × 100 as priority proxy (5–100 range,
+    # always far below trendspyg thousands). trendspyg topics already have real volume.
     effective_priority = priority
     if volume == 0 and avg_score > 0:
         effective_priority = max(priority, round(avg_score * 100))
+    # Fetch Wikipedia image for the thumbnail background (free, CC-licensed).
+    topic_image_url = fetch_wikipedia_image(topic)
     effective_breakdown = breakdown if breakdown and breakdown.lower() != topic.lower() else ', '.join(tavily_titles[:8])
     ok = insert_topic(topic, niche, trim(grounding, max_words=max(min_words+50, 250)),
                       channel, source, effective_priority, volume=volume,
-                      breakdown=effective_breakdown, tavily_score=avg_score)
+                      breakdown=effective_breakdown, tavily_score=avg_score,
+                      topic_image_url=topic_image_url)
     if ok:
         bd_count = len(_parse_breakdown(effective_breakdown))
         bd_src   = 'google' if (breakdown and breakdown.lower() != topic.lower()) else 'tavily'
