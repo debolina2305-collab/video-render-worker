@@ -61,6 +61,12 @@
 
 /* ===== OPTION CARDS ===== */
 .qp-options { width:100%; display:flex; flex-direction:column; gap:24px; }
+.qp-options-label {
+  font-size:32px; font-weight:900; letter-spacing:5px; text-transform:uppercase;
+  color:var(--accent-3); margin-bottom:8px; text-align:left; width:100%;
+  opacity:0; animation:_fadeIn 0.5s ease-out 0.2s forwards;
+}
+@keyframes _fadeIn { from{opacity:0;transform:translateY(12px);} to{opacity:1;transform:translateY(0);} }
 .qp-option {
   display:flex; align-items:center; gap:24px;
   background: linear-gradient(135deg, rgba(255,255,255,0.09), rgba(255,255,255,0.04));
@@ -89,13 +95,51 @@
 @keyframes pulseCorrect { 0%,100%{transform:scale(1);} 50%{transform:scale(1.025);} }
 .qp-option.wrong { opacity:0.15; }
 
-/* ===== MISSION IMPOSSIBLE — single combined screen, NO hint anywhere ===== */
+/* ===== HINT — pinned to bottom safe-zone edge, never overlaps options ===== */
+.qp-hint {
+  position:absolute; bottom:432px; left:50%; transform:translateX(-50%);
+  width:calc(100% - 120px);
+  font-size:38px; font-weight:600; color:#ffd166; text-align:center;
+  background:rgba(0,0,0,0.55); border-radius:20px; padding:20px 28px;
+  opacity:0; z-index:20;
+  animation: hintSlideUp var(--hint-time) step-end forwards;
+}
+@keyframes hintSlideUp {
+  0%,99%{opacity:0;transform:translateX(-50%) translateY(20px);}
+  100%{opacity:1;transform:translateX(-50%) translateY(0);}
+}
+
+/* ===== QUESTION fade-in ===== */
+.question-appear-slide .qp-card-question {
+  animation: _fadeIn 0.6s ease-out forwards !important;
+  opacity:0;
+}
+
+/* ===== MISSION IMPOSSIBLE — dramatic fly-in title, then question fades in ===== */
 .mission-title-huge {
   font-size:96px; font-weight:900; letter-spacing:4px; text-transform:uppercase;
   color:#ff3b3b; line-height:1.0; text-align:center;
-  text-shadow:0 0 40px rgba(255,59,59,0.9), 0 0 80px rgba(255,59,59,0.5);
-  animation: shakeLabel 0.5s ease-in-out infinite alternate;
-  margin-bottom:24px;
+  text-shadow:0 0 40px rgba(255,59,59,0.9), 0 0 80px rgba(255,59,59,0.5),
+              0 0 160px rgba(255,0,0,0.4);
+  animation: miFlyIn 0.7s cubic-bezier(.17,.67,.27,1.4) forwards,
+             miShake 0.4s ease-in-out 0.7s 3 alternate,
+             miPulse 1.5s ease-in-out 1.9s infinite;
+  opacity:0; transform:scale(0.1) rotate(-15deg);
+  margin-bottom:16px;
+}
+@keyframes miFlyIn {
+  0%  { opacity:0; transform:scale(0.1) rotate(-15deg) translateY(200px); }
+  60% { opacity:1; transform:scale(1.18) rotate(3deg) translateY(-20px); }
+  100%{ opacity:1; transform:scale(1) rotate(0deg) translateY(0); }
+}
+@keyframes miShake {
+  from { transform:rotate(-3deg) scale(1.05); }
+  to   { transform:rotate(3deg)  scale(1.05); }
+}
+@keyframes miPulse {
+  0%,100%{ text-shadow:0 0 40px rgba(255,59,59,0.9), 0 0 80px rgba(255,59,59,0.5); }
+  50%    { text-shadow:0 0 80px rgba(255,59,59,1),   0 0 160px rgba(255,0,0,0.8),
+                       0 0 240px rgba(255,100,0,0.5); }
 }
 .mission-tagline {
   font-size:44px; font-weight:700; color:#fff; text-align:center;
@@ -106,10 +150,18 @@
   text-shadow:0 0 24px rgba(255,59,59,0.7);
   animation: shakeLabel 0.6s ease-in-out infinite alternate;
 }
+/* MI question + options fade in AFTER title has landed (2s delay) */
 .mission-question {
-  font-size:52px; font-weight:900; line-height:1.35; margin-bottom:30px;
+  font-size:52px; font-weight:900; line-height:1.35; margin-bottom:20px;
+  opacity:0; animation: _fadeIn 0.7s ease-out 2.2s forwards;
 }
-.mi-options { width:100%; display:flex; flex-direction:column; gap:18px; margin-bottom:10px; }
+.mi-options-label {
+  font-size:30px; font-weight:900; letter-spacing:5px; text-transform:uppercase;
+  color:#ff8800; margin-bottom:10px; text-align:left; width:100%;
+  opacity:0; animation: _fadeIn 0.5s ease-out 2.8s forwards;
+}
+.mi-options { width:100%; display:flex; flex-direction:column; gap:18px; margin-bottom:10px;
+  opacity:0; animation: _fadeIn 0.7s ease-out 2.8s forwards; }
 .mi-option {
   display:flex; align-items:center; gap:20px;
   background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
@@ -234,7 +286,8 @@
 .thumb-challenge-banner {
   position:absolute; bottom:-10px; transform:rotate(-7deg);
   font-size:96px; font-weight:900; letter-spacing:2px; text-transform:uppercase;
-  color:#fff; padding:16px 60px; white-space:nowrap;
+  color:#fff; padding:16px 60px; white-space:normal; text-align:center;
+  max-width:95%; line-height:1.1; word-break:break-word;
   background:linear-gradient(135deg, #ff2d2d, #ff7a00);
   border:6px solid #fff;
   box-shadow:0 0 70px rgba(255,60,0,0.85), 0 12px 36px rgba(0,0,0,0.6);
@@ -247,12 +300,14 @@
 .thumb-big-banner {
   position:relative; align-self:center; transform:rotate(-5deg);
   font-size:84px; font-weight:900; letter-spacing:2px; text-transform:uppercase;
-  color:#fff; padding:20px 56px; white-space:nowrap; text-align:center;
+  color:#fff; padding:20px 56px; text-align:center; white-space:normal;
+  max-width:95%; line-height:1.1;
   background:linear-gradient(135deg, #ff2d2d, #ff7a00);
   border:6px solid #fff; border-radius:16px;
   box-shadow:0 0 70px rgba(255,60,0,0.85), 0 12px 36px rgba(0,0,0,0.6);
   -webkit-text-stroke:1.5px rgba(0,0,0,0.35);
   margin:24px 0;
+  word-break:break-word;
 }
 
 .thumb-question-card {
@@ -410,6 +465,7 @@
         </svg>
         <div class="qp-timer-number">⏱️</div>
       </div>
+      <div class="qp-options-label">⚡ OPTIONS</div>
       <div class="qp-options" style="opacity:1;">
         <div class="qp-option"><span class="qp-option-badge">A</span>{{options[0]}}</div>
         <div class="qp-option"><span class="qp-option-badge">B</span>{{options[1]}}</div>
@@ -555,8 +611,10 @@
   </div>
 
   <!-- MISSION IMPOSSIBLE — items 18-24 ALL on ONE screen.
-       Title + tagline + question + 4 options appear TOGETHER (sfx + mission_intro_audio).
-       After 2.5s, cta3 fades in (class toggle). NO hint/50-50/reveal/TTS on Q+options. -->
+       1) Title flies in with miFlyIn animation (0-0.7s), shakes (0.7-1.9s), pulses.
+       2) Question fades in at 2.2s delay (gives title 2s to land first).
+       3) OPTIONS label + mi-options fade in at 2.8s.
+       4) After 2.5s from screen start, cta3 fades in (class toggle). -->
   <div class="screen mission-final-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="niche-marquee">{{marquee_text}}</div>
@@ -571,14 +629,15 @@
     <div class="content">
       <div class="mission-title-huge" style="font-size:108px;margin-bottom:10px;">🔥 MISSION IMPOSSIBLE</div>
       <div class="mission-tagline" style="display:none;">{{mission_intro_text}}</div>
-      <div class="mission-question" id="mi-question" style="font-size:46px;margin-bottom:24px;">{{mission_question}}</div>
+      <div class="mission-question" id="mi-question" style="font-size:46px;margin-bottom:16px;">{{mission_question}}</div>
+      <div class="mi-options-label">⚡ OPTIONS</div>
       <div class="mi-options" id="mi-options">
         <div class="mi-option"><span class="mi-option-badge">A</span>{{mi_option_0}}</div>
         <div class="mi-option"><span class="mi-option-badge">B</span>{{mi_option_1}}</div>
         <div class="mi-option"><span class="mi-option-badge">C</span>{{mi_option_2}}</div>
         <div class="mi-option"><span class="mi-option-badge">D</span>{{mi_option_3}}</div>
       </div>
-      <div class="cta3-text cta-text glow-text" id="mi-cta3" style="margin-top:28px;font-size:51px;">
+      <div class="cta3-text cta-text glow-text" id="mi-cta3" style="margin-top:20px;font-size:51px;">
         {{cta3_text}}<br>
         <span style="font-size:45px;color:#0b5fff;font-weight:900;">👉 {{platform_url}}</span>
       </div>
