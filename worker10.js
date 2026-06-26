@@ -714,7 +714,10 @@ async function buildVideo(quiz, workDir) {
     '{{thumb_catchphrase}}':thumbTitle.phrase,
     '{{thumb_catchphrase_size}}':thumbTitle.fontSize,
     '{{thumb_mission_text}}':miQuestion||question,
-    '{{thumb_bg_image}}':thumbImgDataUri,
+    '{{thumb_bg_image_style}}': thumbImgDataUri
+      ? `background-image:url("${thumbImgDataUri}");`
+      : '',
+    '{{thumb_bg_image_class}}': thumbImgDataUri ? '' : ' thumb-photo-bg-hidden',
     '{{confetti_0}}':confettiSet[0], '{{confetti_1}}':confettiSet[1],
     '{{confetti_2}}':confettiSet[2], '{{confetti_3}}':confettiSet[3],
     '{{confetti_4}}':confettiSet[4], '{{confetti_5}}':confettiSet[5],
