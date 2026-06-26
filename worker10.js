@@ -891,7 +891,7 @@ async function buildVideo(quiz, workDir) {
     prerecorded:hasCta1?cta1AudioFile:cta2AudioFile,
     fallbackText:hasCta1
       ?(cta1Desc||quiz.affiliate_text||'Check the exclusive link in the description below!')
-      :(quiz.cta2_text||'Play the real quiz and earn O.N.S tokens! Tap the link now!'),
+      :(quiz.cta2_text||'Want to play the real challenge? Click the link in the description now!'),
     fallbackSec:3, voice, leadGap:GAP_DEFAULT, workDir, name:hasCta1?'cta1':'cta2'
   });
   console.log(`[FINALCTA-DIAG] built audio path=${ctaAudio.path} dur=${ctaAudio.dur.toFixed(2)}s`);
@@ -923,7 +923,7 @@ async function buildVideo(quiz, workDir) {
     }
     pushClip(await recordedClip(page, miAudio, miAudioDur, workDir, 'clip_mi'));
 
-    // cta3 fades in + cta3 audio (contains "Click the link in description" + like/share/subscribe)
+    // cta3 fades in (like/share/subscribe on MI screen)
     await page.evaluate(()=>{
       const c=document.getElementById('mi-cta3');
       if(c) c.classList.add('show-cta3');
@@ -931,11 +931,19 @@ async function buildVideo(quiz, workDir) {
     await new Promise(r=>setTimeout(r,150));
     console.log(`[CTA3-DIAG] cta3AudioFile=${cta3AudioFile||'NULL'} cta3_text="${(quiz.cta3_text||'').slice(0,50)}"`);
     const cta3Audio = await buildAudio({
-      prerecorded:cta3AudioFile, fallbackText:quiz.cta3_text||'Like, share and challenge a friend! Subscribe! Click the link in the description.',
-      fallbackSec:4, voice, leadGap:0.15, workDir, name:'cta3'
+      prerecorded:cta3AudioFile, fallbackText:quiz.cta3_text||'Like, share and challenge a friend! Subscribe!',
+      fallbackSec:3, voice, leadGap:0.15, workDir, name:'cta3'
     });
     console.log(`[CTA3-DIAG] built audio path=${cta3Audio.path} dur=${cta3Audio.dur.toFixed(2)}s`);
     pushClip(await recordedClip(page, cta3Audio.path, cta3Audio.dur, workDir, 'clip_cta3'));
+
+    // CTA3 SCREEN — dedicated screen with "Click the link in description"
+    await showOnly('.cta3-screen');
+    await new Promise(r=>setTimeout(r,150));
+    const cta3ScreenTts = path.join(workDir,'cta3_screen.mp3');
+    await tts('Click the link given in the description to play the real quiz and earn tokens!', voice, cta3ScreenTts, 3);
+    const cta3ScreenDur = Math.max(await audioDur(cta3ScreenTts), 2.5);
+    pushClip(await recordedClip(page, cta3ScreenTts, cta3ScreenDur, workDir, 'clip_cta3_screen'));
   }
 
   await browser.close();
