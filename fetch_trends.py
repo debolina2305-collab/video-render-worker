@@ -6,7 +6,7 @@ Requirements: pip install trendspyg feedparser requests tavily-python
 Secrets: SUPABASE_URL, SUPABASE_SERVICE_KEY, TAVILY_API_KEY
 """
 
-import os, re, sys, time, json, logging, argparse
+import os, re, sys, time, json, logging, argparse, unicodedata
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -170,40 +170,70 @@ def count_todays_topics(country_code):
         log.debug(f'count_todays_topics fallback: {e}')
         return 0
 
+def ascii_normalize(s):
+    """
+    Normalize a Unicode string to ASCII by decomposing accented chars.
+    'arda guler' -> 'arda guler', 'turkiye' stays 'turkiye'.
+    This ensures dedup keys match even when topics have umlauts/accents.
+    """
+    return unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode('ascii')
+
 def already_queued(topic, country_code):
     """
     Check if this topic was already inserted into quiz_queue today.
-    Uses first 40 chars of topic, stripped to only alphanumeric + spaces.
-    This is the most URL-safe approach — avoids all special char issues.
+
+    CRITICAL: Non-ASCII chars (umlauts, accents etc.) must be normalized BEFORE
+    making the key. Otherwise 'arda guler' key never finds 'arda guler' in DB.
+    Strategy: normalize both the key AND the search to ASCII, then ILIKE match.
+    We search the ASCII-normalized form so it matches regardless of how the
+    topic was stored (with or without accent marks).
     """
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    # Keep only alphanumeric and spaces — guaranteed URL-safe and substring-matchable
-    key = re.sub(r'[^a-zA-Z0-9 ]', '', topic[:60]).strip()[:40]
+    # Normalize to ASCII first (ü->u, é->e etc.), then keep alphanumeric + spaces
+    ascii_topic = ascii_normalize(topic)
+    key = re.sub(r'[^a-zA-Z0-9 ]', '', ascii_topic[:60]).strip()[:40]
     if len(key) < 5:
-        key = re.sub(r'[^a-zA-Z0-9]', '', topic[:40]).strip()
+        key = re.sub(r'[^a-zA-Z0-9]', '', ascii_topic[:40]).strip()
     safe = quote(key)
-    try:
-        rows = db_get(
-            f'quiz_queue?trnding_topic=ilike.%25{safe}%25'
-            f'&country_code=eq.{country_code}'
-            f'&created_at=gte.{today}'
-            f'&limit=1&select=id'
-        )
-        if len(rows) > 0:
-            log.debug(f'  Dedup hit: "{topic[:60]}"')
-            return True
-        return False
-    except Exception:
+
+    # Also try searching by the raw topic (in case stored WITH accents)
+    # We run TWO queries: one with ASCII key, one with original (URL-encoded)
+    # If either hits, it's a duplicate.
+    def _check(query_suffix):
         try:
             rows = db_get(
-                f'quiz_queue?trnding_topic=ilike.%25{safe}%25'
+                f'quiz_queue?trnding_topic=ilike.%25{query_suffix}%25'
+                f'&country_code=eq.{country_code}'
                 f'&created_at=gte.{today}'
                 f'&limit=1&select=id'
             )
             return len(rows) > 0
-        except Exception as e:
-            log.debug(f'Dedup check failed (non-fatal): {e}')
-            return False
+        except Exception:
+            try:
+                rows = db_get(
+                    f'quiz_queue?trnding_topic=ilike.%25{query_suffix}%25'
+                    f'&created_at=gte.{today}'
+                    f'&limit=1&select=id'
+                )
+                return len(rows) > 0
+            except Exception as e:
+                log.debug(f'Dedup check failed: {e}')
+                return False
+
+    # Try ASCII-normalized key first
+    if _check(safe):
+        log.debug(f'  Dedup hit (ascii key): "{topic[:60]}"')
+        return True
+
+    # Also try with the raw topic first 30 chars (for topics stored with accents)
+    raw_key = re.sub(r'[^a-zA-Z0-9 ]', '', topic[:50]).strip()[:30]
+    if len(raw_key) >= 4:
+        raw_safe = quote(raw_key)
+        if _check(raw_safe):
+            log.debug(f'  Dedup hit (raw key): "{topic[:60]}"')
+            return True
+
+    return False
 
 # -- Tavily quality filter -----------------------------------------------------
 def tavily_search(topic, country_code):
@@ -377,7 +407,7 @@ def extract_wiki_term(topic):
             if len(p) < 2:
                 continue
             # Normalize non-ASCII country names before lookup
-            p = p.replace('turkiye', 'turkey').replace('türkiye', 'turkey')
+            p = p.replace('turkiye', 'turkey').replace('turkiye', 'turkey')
             # Strip all known suffixes from each vs-part
             for suffix in WIKI_STRIP_SUFFIXES:
                 if p.endswith(suffix):
@@ -576,6 +606,11 @@ def volume_to_priority(volume):
 
 # -- Insert into quiz_queue ----------------------------------------------------
 def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, breakdown='', tavily_score=0.0, topic_image_url=None):
+    # Normalize topic to ASCII — prevents dedup failures with accented chars.
+    # 'arda guler' -> 'arda guler', 'türkiye vs usa' -> 'turkiye vs usa'.
+    # The meaning is preserved; accents only matter for display, not quiz content.
+    topic = ascii_normalize(topic)
+
     # Parse breakdown into clean keyword list using flexible separator detection
     breakdown_list = _parse_breakdown(breakdown)
     # Canonical string: comma-separated, clean, ready for YouTube tags / blog meta
