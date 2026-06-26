@@ -668,12 +668,13 @@ async function buildVideo(quiz, workDir) {
   const marqueeHtml = buildMarqueeHtml(quiz.topic);
   const floatIcons  = pickFloatIcons(niche, quiz.topic);
 
-  // Wikipedia thumbnail image — downloaded to a temp file so Puppeteer can
-  // reference it as file:// URL. Embedding as base64 inside the HTML caused
-  // the HTML to become several MB, which Chrome rendered as plain text (source
-  // view) instead of a page. Writing to disk and using a file:// path is safe
-  // because we launch Puppeteer with --allow-file-access-from-files.
-  let thumbImgFileUrl = '';
+  // Wikipedia thumbnail image — downloaded and base64-encoded, then injected
+  // as a <style> block into the HTML. We cannot use file:// URLs for sub-resources
+  // from a file:// page in headless Chrome (blocked even with --allow-file-access).
+  // We also cannot embed the data URI inline in the HTML body (bloats HTML → Chrome
+  // renders as plain text). The safe approach: a dedicated <style> block appended
+  // to <head> sets the background via CSS class, keeping the body HTML small.
+  let thumbBgStyleBlock = '';
   if (quiz.topic_image_url) {
     try {
       const imgRes = await fetch(quiz.topic_image_url, {
@@ -681,12 +682,13 @@ async function buildVideo(quiz, workDir) {
       });
       if (imgRes.ok) {
         const imgBuf  = await imgRes.arrayBuffer();
-        const imgPath = path.join(workDir, 'thumb_bg.jpg');
-        await fs.writeFile(imgPath, Buffer.from(imgBuf));
-        thumbImgFileUrl = `file://${imgPath}`;
-        console.log(`[THUMB-IMG] Saved Wikipedia image to ${imgPath} (${(imgBuf.byteLength/1024).toFixed(0)}KB)`);
+        const imgB64  = Buffer.from(imgBuf).toString('base64');
+        const mime    = imgRes.headers.get('content-type') || 'image/jpeg';
+        const dataUri = `data:${mime};base64,${imgB64}`;
+        thumbBgStyleBlock = `<style>.thumb-photo-bg-img{background-image:url("${dataUri}") !important;}</style>`;
+        console.log(`[THUMB-IMG] Encoded Wikipedia image (${(imgBuf.byteLength/1024).toFixed(0)}KB): ${quiz.topic_image_url.slice(0,70)}`);
       } else {
-        console.log(`[THUMB-IMG] Fetch failed: HTTP ${imgRes.status} for ${quiz.topic_image_url.slice(0,70)}`);
+        console.log(`[THUMB-IMG] Fetch failed: HTTP ${imgRes.status}`);
       }
     } catch (e) {
       console.log(`[THUMB-IMG] Image fetch failed (non-fatal): ${e.message}`);
@@ -718,10 +720,8 @@ async function buildVideo(quiz, workDir) {
     '{{thumb_catchphrase}}':thumbTitle.phrase,
     '{{thumb_catchphrase_size}}':thumbTitle.fontSize,
     '{{thumb_mission_text}}':miQuestion||question,
-    '{{thumb_bg_image_style}}': thumbImgFileUrl
-      ? `background-image:url("${thumbImgFileUrl}");`
-      : '',
-    '{{thumb_bg_image_class}}': thumbImgFileUrl ? '' : ' thumb-photo-bg-hidden',
+    '{{thumb_bg_style_block}}': thumbBgStyleBlock,
+    '{{thumb_bg_image_class}}': thumbBgStyleBlock ? ' thumb-photo-bg-img' : ' thumb-photo-bg-hidden',
     '{{confetti_0}}':confettiSet[0], '{{confetti_1}}':confettiSet[1],
     '{{confetti_2}}':confettiSet[2], '{{confetti_3}}':confettiSet[3],
     '{{confetti_4}}':confettiSet[4], '{{confetti_5}}':confettiSet[5],
