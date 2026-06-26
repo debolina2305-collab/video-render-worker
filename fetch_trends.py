@@ -283,6 +283,17 @@ WIKI_KNOWN_ENTITIES = {
     'air canada': 'Air Canada',
     'fortnite': 'Fortnite',
     'rockstar games': 'Rockstar Games',
+    'usmnt': "United States men's national soccer team",
+    'us soccer': "United States men's national soccer team",
+    'usa soccer': "United States men's national soccer team",
+    'united states soccer': "United States men's national soccer team",
+    'christian pulisic': 'Christian Pulisic',
+    'pulisic': 'Christian Pulisic',
+    'arda guler': 'Arda Guler',
+    'world cup 2026': '2026 FIFA World Cup',
+    'fifa world cup': '2026 FIFA World Cup',
+    'turkey soccer': 'Turkey national football team',
+    'turkiye': 'Turkey',
     'walmart': 'Walmart',
     'darden': 'Darden Restaurants',
     'olive garden': 'Olive Garden',
@@ -363,19 +374,23 @@ def extract_wiki_term(topic):
         candidates = []
         for p in parts:
             p = p.strip()
-            if len(p) < 3:
+            if len(p) < 2:
                 continue
+            # Normalize non-ASCII country names before lookup
+            p = p.replace('turkiye', 'turkey').replace('türkiye', 'turkey')
             # Strip all known suffixes from each vs-part
             for suffix in WIKI_STRIP_SUFFIXES:
                 if p.endswith(suffix):
                     p = p[:-len(suffix)].strip()
-            # Strip trailing noise words from each part
+            # Strip trailing tournament noise words
             p_words = p.split()
-            TRAILING_NOISE_LOCAL = {'out', 'up', 'down', 'back', 'off', 'on', 'standings', 'results', 'score', 'scores', 'table'}
+            TRAILING_NOISE_LOCAL = {'out', 'up', 'down', 'back', 'off', 'on',
+                                    'standings', 'results', 'score', 'scores',
+                                    'table', 'cup', 'world', '2026', '2025', '2024'}
             while p_words and p_words[-1].lower() in TRAILING_NOISE_LOCAL:
                 p_words.pop()
             p = ' '.join(p_words)
-            if p:
+            if p and len(p) >= 2:
                 candidates.append(p.title())
         if candidates:
             return candidates
@@ -449,15 +464,16 @@ def fetch_wikipedia_image(topic):
     is used on the thumbnail instead.
 
     Notes:
-    - SVG files on Wikimedia only support specific thumbnail widths (not 800px).
-      We use 320px for SVGs which is always valid.
-    - Flag images (Flag_of_*.svg) are skipped — they look bad as blurred backgrounds
-      and don't represent the actual topic well.
+    - Flag images (Flag_of_*.svg) are skipped — they look bad as blurred backgrounds.
+    - SVG files use 320px (always valid on Wikimedia, not 800px).
+    - For JPG/PNG: we use the ORIGINAL width from the API if it's already >= 400px,
+      otherwise request 640px. We never request 800px because the original image
+      might be smaller than 800px which causes a Wikimedia 400 error.
+    - Direct Commons URLs (no /thumb/ path) are returned as-is.
     """
     candidates = extract_wiki_term(topic)
     for term in candidates:
         try:
-            # Wikipedia page summary API -- returns thumbnail if the article has one
             encoded = requests.utils.quote(term.replace(' ', '_'))
             r = requests.get(
                 f'https://en.wikipedia.org/api/rest_v1/page/summary/{encoded}',
@@ -466,23 +482,47 @@ def fetch_wikipedia_image(topic):
             )
             if r.status_code == 200:
                 data = r.json()
-                img = data.get('thumbnail', {}).get('source')
-                if img:
-                    # Skip flag images — poor background, not representative
-                    if 'Flag_of_' in img or 'flag_of_' in img:
-                        log.debug(f'  Skipping flag image for "{term}"')
-                        continue
-                    # SVG files: use 320px (always valid on Wikimedia)
-                    # Non-SVG (jpg/png): use 800px for higher quality
-                    if img.lower().endswith('.svg.png') or '.svg/' in img.lower():
-                        img = re.sub(r'/\d+px-', '/320px-', img)
-                    else:
-                        img = re.sub(r'/\d+px-', '/800px-', img)
+                thumb = data.get('thumbnail', {})
+                img = thumb.get('source')
+                if not img:
+                    continue
+
+                # Skip flag images — poor thumbnail background
+                if 'Flag_of_' in img or 'flag_of_' in img:
+                    log.debug(f'  Skipping flag image for "{term}"')
+                    continue
+
+                # If no /thumb/ path — it's a direct image URL, use as-is
+                if '/thumb/' not in img:
                     log.info(f'  Wikipedia image for "{term}": {img[:80]}')
                     return img
+
+                # SVG files: use 320px (Wikimedia SVG restriction)
+                if img.lower().endswith('.svg.png') or '.svg/' in img.lower():
+                    img = re.sub(r'/\d+px-', '/320px-', img)
+                    log.info(f'  Wikipedia image for "{term}" (svg): {img[:80]}')
+                    return img
+
+                # JPG/PNG: use original width from API if >= 400px, else try 640px
+                # NEVER request larger than the original — causes Wikimedia 400 error
+                orig_width = thumb.get('width', 0)
+                if orig_width >= 640:
+                    img = re.sub(r'/\d+px-', '/640px-', img)
+                elif orig_width >= 400:
+                    # Use the size as returned by API (don't upscale)
+                    pass  # img already has the correct size from API
+                else:
+                    # Image too small to be useful, skip
+                    log.debug(f'  Skipping small image ({orig_width}px) for "{term}"')
+                    continue
+
+                log.info(f'  Wikipedia image for "{term}": {img[:80]}')
+                return img
+
         except Exception as e:
             log.debug(f'  Wikipedia API error for "{term}": {e}')
             continue
+
     log.debug(f'  No Wikipedia image found for topic: "{topic}"')
     return None
 
