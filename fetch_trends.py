@@ -45,7 +45,21 @@ TRENDSPYG_REJECT_KEYWORDS = [
     'breaking news', 'news today', 'live update', 'latest news',
     'weather today', 'weather forecast', 'horoscope', 'wordle',
     'nyt connections', 'nfl scores', 'nba scores', 'mlb scores',
+    # Pure score/status queries -- not trivia topics
+    ' score', ' scores', ' standings', ' standings today',
+    ' server status', ' down right now', ' is down',
+    ' live score', ' live update', ' live updates',
+    # Generic search patterns
+    'how to watch', 'where to watch', 'what channel',
+    'what time is', 'when is the',
 ]
+
+# Question-starting words — topics that START with these are search queries, not trivia
+QUESTION_PREFIXES = (
+    'is ', 'are ', 'was ', 'were ', 'will ', 'can ', 'does ', 'did ',
+    'how ', 'why ', 'what ', 'when ', 'where ', 'who ', 'which ',
+    'has ', 'have ', 'had ',
+)
 TRENDSPYG_REJECT_MIN_WORDS = 1   # single word keywords are usually too vague
 
 def is_quizable_trend(keyword):
@@ -53,6 +67,10 @@ def is_quizable_trend(keyword):
     k = keyword.lower().strip()
     if len(k.split()) <= TRENDSPYG_REJECT_MIN_WORDS:
         return False, f'too_short({len(k.split())}w)'
+    # Reject question-form topics — these are search queries, not trivia subjects.
+    # "is usa out of the world cup" can't be turned into a quiz question by W8.
+    if k.startswith(QUESTION_PREFIXES):
+        return False, f'question_form'
     for bad in TRENDSPYG_REJECT_KEYWORDS:
         if bad in k:
             return False, f'blocklisted("{bad}")'
