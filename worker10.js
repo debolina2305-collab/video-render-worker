@@ -668,21 +668,25 @@ async function buildVideo(quiz, workDir) {
   const marqueeHtml = buildMarqueeHtml(quiz.topic);
   const floatIcons  = pickFloatIcons(niche, quiz.topic);
 
-  // Wikipedia thumbnail image — blurred dark overlay behind the animated background.
-  // Downloaded and base64-encoded so Puppeteer can render it on a file:// page.
-  // Falls back to empty string → CSS hides the element → animated bg shows instead.
-  let thumbImgDataUri = '';
+  // Wikipedia thumbnail image — downloaded to a temp file so Puppeteer can
+  // reference it as file:// URL. Embedding as base64 inside the HTML caused
+  // the HTML to become several MB, which Chrome rendered as plain text (source
+  // view) instead of a page. Writing to disk and using a file:// path is safe
+  // because we launch Puppeteer with --allow-file-access-from-files.
+  let thumbImgFileUrl = '';
   if (quiz.topic_image_url) {
     try {
       const imgRes = await fetch(quiz.topic_image_url, {
         headers: { 'User-Agent': 'AutoQuiz/1.0 thumbnail renderer' }
       });
       if (imgRes.ok) {
-        const imgBuf   = await imgRes.arrayBuffer();
-        const imgB64   = Buffer.from(imgBuf).toString('base64');
-        const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
-        thumbImgDataUri = `data:${mimeType};base64,${imgB64}`;
-        console.log(`[THUMB-IMG] Loaded Wikipedia image: ${quiz.topic_image_url.slice(0,70)}`);
+        const imgBuf  = await imgRes.arrayBuffer();
+        const imgPath = path.join(workDir, 'thumb_bg.jpg');
+        await fs.writeFile(imgPath, Buffer.from(imgBuf));
+        thumbImgFileUrl = `file://${imgPath}`;
+        console.log(`[THUMB-IMG] Saved Wikipedia image to ${imgPath} (${(imgBuf.byteLength/1024).toFixed(0)}KB)`);
+      } else {
+        console.log(`[THUMB-IMG] Fetch failed: HTTP ${imgRes.status} for ${quiz.topic_image_url.slice(0,70)}`);
       }
     } catch (e) {
       console.log(`[THUMB-IMG] Image fetch failed (non-fatal): ${e.message}`);
@@ -714,10 +718,10 @@ async function buildVideo(quiz, workDir) {
     '{{thumb_catchphrase}}':thumbTitle.phrase,
     '{{thumb_catchphrase_size}}':thumbTitle.fontSize,
     '{{thumb_mission_text}}':miQuestion||question,
-    '{{thumb_bg_image_style}}': thumbImgDataUri
-      ? `background-image:url("${thumbImgDataUri}");`
+    '{{thumb_bg_image_style}}': thumbImgFileUrl
+      ? `background-image:url("${thumbImgFileUrl}");`
       : '',
-    '{{thumb_bg_image_class}}': thumbImgDataUri ? '' : ' thumb-photo-bg-hidden',
+    '{{thumb_bg_image_class}}': thumbImgFileUrl ? '' : ' thumb-photo-bg-hidden',
     '{{confetti_0}}':confettiSet[0], '{{confetti_1}}':confettiSet[1],
     '{{confetti_2}}':confettiSet[2], '{{confetti_3}}':confettiSet[3],
     '{{confetti_4}}':confettiSet[4], '{{confetti_5}}':confettiSet[5],
