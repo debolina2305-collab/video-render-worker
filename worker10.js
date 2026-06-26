@@ -641,7 +641,7 @@ async function buildVideo(quiz, workDir) {
   const [
     hookFile, questionIntroFile, optionsIntroFile,
     timeupFile, cta1AudioFile, cta2AudioFile,
-    missionIntroFile, cta3AudioFile,
+    missionIntroFile, cta3AudioFile, cta4AudioFile,
     sfxFile, countdownFile, bgFile, correctSfxFile, sfxMissionFile
   ] = await Promise.all([
     downloadAudio(quiz.hook_audio_url,               `hook_${quiz.id}`),
@@ -652,6 +652,7 @@ async function buildVideo(quiz, workDir) {
     downloadAudio(quiz.cta2_audio_url,               `cta2_${quiz.id}`),
     downloadAudio(quiz.mission_intro_audio_url,      `missintro_${quiz.id}`),
     downloadAudio(quiz.cta3_audio_url,               `cta3_${quiz.id}`),
+    downloadAudio(quiz.cta4_audio_url,               `cta4_${quiz.id}`),
     downloadAudio(quiz.sfx_audio_url,                `sfx_${quiz.id}`,'question_appear'),
     downloadAudio(quiz.countdown_music,              `countdown_${quiz.id}`),
     downloadAudio(quiz.background_music||DEFAULT_BG_MUSIC,`bgmusic_${quiz.id}`),
@@ -714,6 +715,7 @@ async function buildVideo(quiz, workDir) {
     '{{cta1_description_text}}':cta1Desc||quiz.affiliate_text||'',
     '{{cta2_text}}':quiz.cta2_text||'Play real quiz and earn ONS tokens!',
     '{{cta3_text}}':quiz.cta3_text||'Like, Share & Challenge a friend! Subscribe!',
+    '{{cta4_text}}':quiz.cta4_text||'Write your answer in the comments below!',
     '{{niche}}':niche,
     '{{thumb_icon}}':thumbIconFor(niche),
     '{{thumb_badge_text}}':pickThumbBadgeText(),
@@ -937,13 +939,16 @@ async function buildVideo(quiz, workDir) {
     console.log(`[CTA3-DIAG] built audio path=${cta3Audio.path} dur=${cta3Audio.dur.toFixed(2)}s`);
     pushClip(await recordedClip(page, cta3Audio.path, cta3Audio.dur, workDir, 'clip_cta3'));
 
-    // CTA3 SCREEN — dedicated screen with "Click the link in description"
-    await showOnly('.cta3-screen');
+    // CTA4 SCREEN — "Write your answer in comments" — last screen of video.
+    // Uses cta4_audio_url (prerecorded from cta4_cues table) or TTS fallback.
+    await showOnly('.cta4-screen');
     await new Promise(r=>setTimeout(r,150));
-    const cta3ScreenTts = path.join(workDir,'cta3_screen.mp3');
-    await tts('Click the link given in the description to play the real quiz and earn tokens!', voice, cta3ScreenTts, 3);
-    const cta3ScreenDur = Math.max(await audioDur(cta3ScreenTts), 2.5);
-    pushClip(await recordedClip(page, cta3ScreenTts, cta3ScreenDur, workDir, 'clip_cta3_screen'));
+    const cta4Audio = await buildAudio({
+      prerecorded: cta4AudioFile,
+      fallbackText: quiz.cta4_text || 'Write your answer in the comments below! Can you get it right?',
+      fallbackSec: 3, voice, leadGap: 0.1, workDir, name: 'cta4'
+    });
+    pushClip(await recordedClip(page, cta4Audio.path, cta4Audio.dur, workDir, 'clip_cta4'));
   }
 
   await browser.close();
