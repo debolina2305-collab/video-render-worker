@@ -156,7 +156,9 @@
 /* Wikipedia topic image: blurred dark photo behind all thumbnail content.
    Sits above the animated CSS background (z-index:1) but below the gradient
    overlay (z-index:2) and content (z-index:5).
-   Background image injected inline via style attribute — no JS needed. */
+   Background image injected via <style> block in <head> by Worker 10.
+   When image present: div gets class thumb-photo-bg-img (sets background-image).
+   When no image: div gets class thumb-photo-bg-hidden (display:none). */
 .thumb-photo-bg {
   position:absolute; inset:0; z-index:1;
   background-size:cover; background-position:center center; background-repeat:no-repeat;
@@ -301,6 +303,7 @@
 /* ===== Helper: hide an element completely (used for "not yet revealed" states) ===== */
 .hidden-pre-reveal { opacity:0 !important; visibility:hidden !important; }
 </style>
+{{thumb_bg_style_block}}
 </head>
 <body>
 
@@ -589,7 +592,7 @@
     {{theme_deco_html}}
     <!-- Wikipedia topic image — blurred dark overlay. Sits above the animated
          background but below all content. Hidden via CSS when no image provided. -->
-    <div class="thumb-photo-bg{{thumb_bg_image_class}}" style="{{thumb_bg_image_style}}"></div>
+    <div class="thumb-photo-bg{{thumb_bg_image_class}}"></div>
     <div class="thumb-bg-overlay"></div>
     <!-- Big diagonal CHALLENGE stamp — always visible regardless of variant -->
     <div class="thumb-challenge-stamp">CHALLENGE</div>
