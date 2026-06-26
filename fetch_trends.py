@@ -447,6 +447,12 @@ def fetch_wikipedia_image(topic):
     Tries each candidate term from extract_wiki_term() in order.
     Falls back silently -- missing image means the animated CSS background
     is used on the thumbnail instead.
+
+    Notes:
+    - SVG files on Wikimedia only support specific thumbnail widths (not 800px).
+      We use 320px for SVGs which is always valid.
+    - Flag images (Flag_of_*.svg) are skipped — they look bad as blurred backgrounds
+      and don't represent the actual topic well.
     """
     candidates = extract_wiki_term(topic)
     for term in candidates:
@@ -462,8 +468,16 @@ def fetch_wikipedia_image(topic):
                 data = r.json()
                 img = data.get('thumbnail', {}).get('source')
                 if img:
-                    # Upgrade to larger size (Wikipedia thumbnails support ?width= param)
-                    img = re.sub(r'/\d+px-', '/800px-', img)
+                    # Skip flag images — poor background, not representative
+                    if 'Flag_of_' in img or 'flag_of_' in img:
+                        log.debug(f'  Skipping flag image for "{term}"')
+                        continue
+                    # SVG files: use 320px (always valid on Wikimedia)
+                    # Non-SVG (jpg/png): use 800px for higher quality
+                    if img.lower().endswith('.svg.png') or '.svg/' in img.lower():
+                        img = re.sub(r'/\d+px-', '/320px-', img)
+                    else:
+                        img = re.sub(r'/\d+px-', '/800px-', img)
                     log.info(f'  Wikipedia image for "{term}": {img[:80]}')
                     return img
         except Exception as e:
