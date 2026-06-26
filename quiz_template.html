@@ -169,6 +169,45 @@
   box-shadow: 0 0 16px rgba(255,59,59,0.5);
 }
 
+/* ===== COMMENT CTA SCREEN — last screen, 3 seconds ===== */
+.comment-cta-icon {
+  font-size:160px; line-height:1;
+  animation: commentPop 0.5s cubic-bezier(.34,1.8,.64,1) forwards;
+  opacity:0;
+  filter:drop-shadow(0 0 40px rgba(255,210,74,0.7));
+}
+@keyframes commentPop { to { opacity:1; transform:scale(1); } }
+.comment-cta-card {
+  width:100%;
+  background:rgba(255,255,255,0.1);
+  border:3px solid rgba(255,210,74,0.6);
+  border-radius:36px; padding:48px 44px;
+  backdrop-filter:blur(10px);
+  box-shadow:0 0 80px rgba(255,210,74,0.3), 0 20px 60px rgba(0,0,0,0.5);
+  animation: commentCardSlide 0.6s cubic-bezier(.34,1.8,.64,1) 0.15s forwards;
+  opacity:0; transform:translateY(50px);
+}
+@keyframes commentCardSlide { to { opacity:1; transform:translateY(0); } }
+.comment-cta-text {
+  font-size:62px; font-weight:900; line-height:1.3; text-align:center;
+  color:#ffd24a;
+  text-shadow:0 0 40px rgba(255,210,74,0.9), 0 4px 16px rgba(0,0,0,0.8);
+  animation: commentTextGlow 1.2s ease-in-out infinite alternate;
+}
+@keyframes commentTextGlow {
+  from { text-shadow:0 0 30px rgba(255,210,74,0.7), 0 4px 16px rgba(0,0,0,0.8); }
+  to   { text-shadow:0 0 70px rgba(255,240,100,1), 0 0 120px rgba(255,180,0,0.6), 0 4px 16px rgba(0,0,0,0.8); }
+}
+.comment-cta-pencil {
+  font-size:110px; line-height:1;
+  animation: pencilWrite 0.6s ease-in-out infinite alternate;
+  filter:drop-shadow(0 0 20px rgba(255,255,255,0.5));
+}
+@keyframes pencilWrite {
+  from { transform:rotate(-15deg) translateX(-10px); }
+  to   { transform:rotate(5deg)  translateX(10px); }
+}
+
 /* ===== REAL CHALLENGE SCREEN ===== */
 .real-challenge-badge {
   font-size:44px; font-weight:900; letter-spacing:6px; text-transform:uppercase;
@@ -440,7 +479,51 @@
   text-shadow:0 2px 6px rgba(0,0,0,0.5);
 }
 
-/* ===== Helper: hide an element completely (used for "not yet revealed" states) ===== */
+/* ===== CTA4 SCREEN — Write your answer in comments ===== */
+.cta4-icon {
+  font-size:180px; line-height:1;
+  animation: cta4IconPop 0.7s cubic-bezier(.34,1.8,.64,1) forwards,
+             cta4IconFloat 2s ease-in-out 0.7s infinite alternate;
+  opacity:0; transform:scale(0.3);
+  filter:drop-shadow(0 0 40px rgba(255,210,74,0.8));
+}
+@keyframes cta4IconPop   { to { opacity:1; transform:scale(1); } }
+@keyframes cta4IconFloat { from{transform:translateY(0) scale(1);} to{transform:translateY(-18px) scale(1.05);} }
+
+.cta4-card {
+  width:100%; border-radius:40px; padding:52px 48px;
+  background:rgba(255,255,255,0.09);
+  border:3px solid rgba(255,210,74,0.5);
+  backdrop-filter:blur(10px);
+  box-shadow:0 0 80px rgba(255,210,74,0.3), 0 20px 60px rgba(0,0,0,0.5);
+  display:flex; flex-direction:column; align-items:center; gap:24px;
+  animation:cta4CardIn 0.7s cubic-bezier(.34,1.8,.64,1) 0.2s forwards;
+  opacity:0; transform:translateY(50px);
+}
+@keyframes cta4CardIn { to { opacity:1; transform:translateY(0); } }
+
+.cta4-label {
+  font-size:40px; font-weight:900; letter-spacing:8px; text-transform:uppercase;
+  color:var(--accent-3);
+  text-shadow:0 0 30px color-mix(in srgb,var(--accent-3) 80%,transparent);
+  animation:cta4LabelGlow 1.2s ease-in-out infinite alternate;
+}
+@keyframes cta4LabelGlow {
+  from { opacity:0.8; letter-spacing:8px; }
+  to   { opacity:1;   letter-spacing:10px; text-shadow:0 0 60px color-mix(in srgb,var(--accent-3) 100%,transparent); }
+}
+.cta4-main-text {
+  font-size:58px; font-weight:900; line-height:1.3; text-align:center; color:#fff;
+  text-shadow:0 0 30px rgba(255,210,74,0.6), 0 4px 16px rgba(0,0,0,0.8);
+}
+.cta4-arrow {
+  font-size:120px; line-height:1;
+  animation:cta4ArrowBounce 0.7s ease-in-out infinite alternate;
+  filter:drop-shadow(0 0 24px rgba(255,210,74,0.7));
+}
+@keyframes cta4ArrowBounce { from{transform:translateY(0);} to{transform:translateY(20px);} }
+
+/* ===== Helper: hide an element completely ===== */
 .hidden-pre-reveal { opacity:0 !important; visibility:hidden !important; }
 </style>
 {{thumb_bg_style_block}}
@@ -746,8 +829,9 @@
     </div>
   </div>
 
-  <!-- CTA3 SCREEN — plays after MI, contains "Click the link in description" -->
-  <div class="screen cta3-screen">
+  <!-- COMMENT CTA SCREEN — last screen, 3 seconds only.
+       Text fetched from quiz.cta3_text (DB). Pre-recorded audio from cta3_audio_url. -->
+  <div class="screen comment-cta-screen">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
@@ -758,13 +842,38 @@
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
-    <div class="content" style="justify-content:center;gap:48px;">
-      <div class="cta3-actions">
-        <span class="cta3-action cta3-like">👍 LIKE</span>
-        <span class="cta3-action cta3-share">🔁 SHARE</span>
-        <span class="cta3-action cta3-sub">🔔 SUBSCRIBE</span>
+    <div class="content" style="justify-content:center; gap:44px;">
+      <!-- Animated comment icon -->
+      <div class="comment-cta-icon">💬</div>
+      <!-- Dynamic text from DB cta3_text -->
+      <div class="comment-cta-card">
+        <div class="comment-cta-text">{{cta3_text}}</div>
       </div>
-      <div class="cta3-link-phrase">👉 Click the link in description!</div>
+      <!-- Animated pencil writing -->
+      <div class="comment-cta-pencil">✍️</div>
+    </div>
+  </div>
+
+  <!-- CTA4 SCREEN — "Write your answer in comments" — LAST screen of video.
+       Text and audio fetched dynamically from cta4_cues table via Worker 8. -->
+  <div class="screen cta4-screen">
+    <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="niche-marquee">{{marquee_text}}</div>
+    <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
+    <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
+    <div class="float-icon-big fi-2" style="left:7%;top:44%;animation-delay:2.8s;">{{float_icon_2}}</div>
+    <div class="float-icon-big fi-3" style="right:5%;top:62%;animation-delay:4.2s;">{{float_icon_3}}</div>
+    <div class="float-icon-big fi-4" style="left:9%;top:71%;animation-delay:5.6s;">{{float_icon_4}}</div>
+    <div class="bg-anim"></div><div class="bg-grid"></div>
+    <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+    {{theme_deco_html}}
+    <div class="content" style="justify-content:center; gap:56px;">
+      <div class="cta4-icon">💬</div>
+      <div class="cta4-card">
+        <div class="cta4-label">YOUR TURN!</div>
+        <div class="cta4-main-text">{{cta4_text}}</div>
+      </div>
+      <div class="cta4-arrow">👇</div>
     </div>
   </div>
 
