@@ -660,6 +660,13 @@ async function buildVideo(quiz, workDir) {
     downloadAudio(quiz.sfx_mission_impossible,       `sfxmission_${quiz.id}`)
   ]);
   console.log(`[CTA] cta2AudioFile=${cta2AudioFile ? 'OK' : 'NULL (will use TTS fallback)'} cta1AudioFile=${cta1AudioFile ? 'OK' : 'NULL'}`);
+  // If bg music download failed, retry with default track
+  let resolvedBgFile = bgFile;
+  if (!resolvedBgFile) {
+    console.log('[BGMUSIC] Primary download failed — retrying with DEFAULT_BG_MUSIC');
+    resolvedBgFile = await downloadAudio(DEFAULT_BG_MUSIC, `bgmusic_default`);
+  }
+  console.log(`[BGMUSIC] resolved bgFile=${resolvedBgFile || 'NULL (music will be skipped)'}`);
 
   const { themeCss, decoHtml } = await resolveTheme(quiz);
   const confettiSet = pickConfettiSet(niche, quiz.topic);
@@ -705,7 +712,6 @@ async function buildVideo(quiz, workDir) {
     '{{theme_css}}':themeCss, '{{theme_deco_html}}':decoHtml, '{{LOGO_DATA_URI}}':logoDataUri,
     '{{hook_phrase}}':quiz.hook_phrase||'Stop scrolling! Can you beat this?',
     '{{quiz_no}}':quiz.quiz_no ? `Challenge No # ${quiz.quiz_no}` : '',
-    '{{quiz_title}}':quiz.youtube_title || quiz.topic || '',
     '{{question}}':question,
     '{{options[0]}}':options[0]||'', '{{options[1]}}':options[1]||'',
     '{{options[2]}}':options[2]||'', '{{options[3]}}':options[3]||'',
@@ -976,7 +982,7 @@ async function buildVideo(quiz, workDir) {
   // clamp below — this was the real cause of "CTA2/CTA3 audio not playing"
   // even though the source audio files were confirmed valid.
   const total = Math.max(measuredTotal, runningTotal) + 0.4; // small safety margin
-  const finalVideoPath = await applyBgMusic(concatenated,total,voiceRanges,bgFile,workDir);
+  const finalVideoPath = await applyBgMusic(concatenated,total,voiceRanges,resolvedBgFile,workDir);
   return { videoPath: finalVideoPath, thumbnailUrl };
 }
 
