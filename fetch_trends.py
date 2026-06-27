@@ -870,9 +870,15 @@ def load_trend_config(country_code):
         'max_process_per_run': 80,
     }
     try:
-        rows = db_get(f'trend_config?country_code=eq.{country_code}&is_active=eq.true&limit=1')
+        # Normalize to lowercase — trend_config stores 'us', channel may have 'US'
+        cc = (country_code or 'us').lower()
+        rows = db_get(f'trend_config?country_code=eq.{cc}&is_active=eq.true&limit=1')
+        if not rows:
+            # Try uppercase fallback
+            rows = db_get(f'trend_config?country_code=eq.{cc.upper()}&is_active=eq.true&limit=1')
         if rows:
             cfg = rows[0]
+            log.debug(f'  trend_config loaded for {cc}: {cfg}')
             return {
                 'max_topics_per_run':  cfg.get('max_topics_per_run')  or defaults['max_topics_per_run'],
                 'time_window_hours':   cfg.get('time_window_hours')   or defaults['time_window_hours'],
@@ -880,6 +886,7 @@ def load_trend_config(country_code):
                 'min_grounding_words': cfg.get('min_grounding_words') or defaults['min_grounding_words'],
                 'max_process_per_run': cfg.get('max_process_per_run') or defaults['max_process_per_run'],
             }
+        log.warning(f'  No trend_config row found for country_code={cc} — using defaults')
     except Exception as e:
         log.warning(f'Could not load trend_config for {country_code}, using defaults: {e}')
     return defaults
