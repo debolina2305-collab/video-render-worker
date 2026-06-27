@@ -666,7 +666,7 @@ async function buildVideo(quiz, workDir) {
   const thumbTitle  = (quiz.youtube_title && quiz.youtube_title.trim())
                       ? thumbTitleStyle(quiz.youtube_title.trim())
                       : pickThumbCatchphrase();
-  const marqueeHtml = buildMarqueeHtml(quiz.topic);
+  const marqueeHtml = buildMarqueeHtml(quiz.youtube_title || quiz.topic);
   const floatIcons  = pickFloatIcons(niche, quiz.topic);
 
   // Wikipedia thumbnail image — downloaded and base64-encoded, then injected
@@ -704,6 +704,8 @@ async function buildVideo(quiz, workDir) {
   const R = {
     '{{theme_css}}':themeCss, '{{theme_deco_html}}':decoHtml, '{{LOGO_DATA_URI}}':logoDataUri,
     '{{hook_phrase}}':quiz.hook_phrase||'Stop scrolling! Can you beat this?',
+    '{{quiz_no}}':quiz.quiz_no ? `Challenge No # ${quiz.quiz_no}` : '',
+    '{{quiz_title}}':quiz.youtube_title || quiz.topic || '',
     '{{question}}':question,
     '{{options[0]}}':options[0]||'', '{{options[1]}}':options[1]||'',
     '{{options[2]}}':options[2]||'', '{{options[3]}}':options[3]||'',
