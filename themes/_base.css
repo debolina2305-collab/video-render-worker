@@ -39,7 +39,7 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 /* ═══ NICHE MARQUEE — scrolling ticker strip near top of every screen.
    Single biggest lever for "this looks niche-specific at a glance". ═══ */
 .niche-marquee {
-  position:relative; z-index:10; width:100%; min-height:72px; margin-top:160px;
+  position:relative; z-index:10; width:100%; min-height:72px; margin-top:230px;
   background:#0a0a0a;
   border-top:2px solid #ffd24a; border-bottom:2px solid #ffd24a;
   display:flex; align-items:center; justify-content:center; flex-wrap:wrap;
