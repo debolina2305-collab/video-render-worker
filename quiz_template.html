@@ -43,6 +43,23 @@
   50%     { transform:scale(1.35); opacity:1;   }
 }
 
+/* ── Challenge number + title below logo ────────── */
+.challenge-no {
+  position:absolute; top:148px; left:50%; transform:translateX(-50%);
+  z-index:51; white-space:nowrap;
+  font-size:24px; font-weight:700; letter-spacing:2px;
+  color:rgba(255,255,255,0.65);
+  text-shadow:0 0 14px rgba(255,210,74,0.5);
+}
+.quiz-title {
+  position:absolute; top:178px; left:50%; transform:translateX(-50%);
+  z-index:51; width:88%; text-align:center;
+  font-size:28px; font-weight:800; line-height:1.2; letter-spacing:0.5px;
+  color:#fff;
+  text-shadow:0 0 20px rgba(255,255,255,0.35), 0 2px 8px rgba(0,0,0,0.9);
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+
 /* ===== LOGO ===== */
 .logo-wrap {
   width:200px; height:200px; border-radius:50%;
@@ -548,6 +565,8 @@
   <!-- STEP 3a: question_intro_audio_url plays — question TEXT HIDDEN -->
   <div class="screen question-waiting-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="challenge-no">{{quiz_no}}</div>
+    <div class="quiz-title">{{quiz_title}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
     <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
@@ -567,6 +586,8 @@
   <!-- STEP 3b: question_1 REVEALED + TTS -->
   <div class="screen question-appear-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="challenge-no">{{quiz_no}}</div>
+    <div class="quiz-title">{{quiz_title}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
     <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
@@ -586,6 +607,8 @@
   <!-- STEP 4a: options_intro_audio_url plays — options HIDDEN, question stays visible -->
   <div class="screen options-waiting-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="challenge-no">{{quiz_no}}</div>
+    <div class="quiz-title">{{quiz_title}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
     <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
@@ -611,6 +634,8 @@
   <!-- STEP 4b: options_1 REVEALED + TTS + "time starts now" -->
   <div class="screen question-static">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="challenge-no">{{quiz_no}}</div>
+    <div class="quiz-title">{{quiz_title}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
     <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
@@ -647,6 +672,8 @@
   <div class="screen question-phase"
        style="--qtime:{{qtime}}s;--hint-time:{{hint_time}}s;--fiftyfifty-time:{{fiftyfifty_time}}s;">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="challenge-no">{{quiz_no}}</div>
+    <div class="quiz-title">{{quiz_title}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
     <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
@@ -687,6 +714,8 @@
   <!-- STEP 9: PRE-REVEAL — audio only, no text changes -->
   <div class="screen pre-reveal-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="challenge-no">{{quiz_no}}</div>
+    <div class="quiz-title">{{quiz_title}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
     <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
@@ -712,6 +741,8 @@
   <!-- STEP 10: ANSWER REVEAL -->
   <div class="screen answer-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="challenge-no">{{quiz_no}}</div>
+    <div class="quiz-title">{{quiz_title}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
     <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
@@ -743,6 +774,8 @@
   <!-- CTA1: affiliate (checklist item 17) -->
   <div class="screen cta1-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="challenge-no">{{quiz_no}}</div>
+    <div class="quiz-title">{{quiz_title}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
     <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
@@ -762,6 +795,8 @@
   <!-- REAL CHALLENGE SCREEN — styled "Want to play real challenge? Click link in description" -->
   <div class="screen cta2-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="challenge-no">{{quiz_no}}</div>
+    <div class="quiz-title">{{quiz_title}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
     <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
@@ -797,6 +832,8 @@
        4) After MI audio plays, cta3 fades in (class toggle). -->
   <div class="screen mission-final-slide">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="challenge-no">{{quiz_no}}</div>
+    <div class="quiz-title">{{quiz_title}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
     <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
@@ -833,6 +870,8 @@
        Text fetched from quiz.cta3_text (DB). Pre-recorded audio from cta3_audio_url. -->
   <div class="screen comment-cta-screen">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="challenge-no">{{quiz_no}}</div>
+    <div class="quiz-title">{{quiz_title}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
     <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
@@ -858,6 +897,8 @@
        Text and audio fetched dynamically from cta4_cues table via Worker 8. -->
   <div class="screen cta4-screen">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
+    <div class="challenge-no">{{quiz_no}}</div>
+    <div class="quiz-title">{{quiz_title}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
     <div class="float-icon-big fi-0" style="left:5%;top:9%;animation-delay:0s;">{{float_icon_0}}</div>
     <div class="float-icon-big fi-1" style="right:6%;top:26%;animation-delay:1.4s;">{{float_icon_1}}</div>
