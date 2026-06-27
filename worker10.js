@@ -44,7 +44,7 @@ const VOICE_MAP = {
   es: 'es-ES-ElviraNeural', pt: 'pt-BR-FranciscaNeural'
 };
 const THEMES_DIR        = path.join(__dirname, 'themes');
-const CACHE_DIR         = path.join(__dirname, 'audio_cache');
+const CACHE_DIR         = '/tmp/audio_cache';  // persistent within one GH Actions run, avoids repo dir issues
 const DEFAULT_THEME     = 'particle_field';
 const LOGO_PATH         = path.join(__dirname, 'assets', 'jaasX-logo-saved-for-web.png');
 const DEFAULT_BG_MUSIC  = 'https://pub-3578d297d3904e1d8ffedfc9dd4102f2.r2.dev/audio/background_music/The_Midnight_Audit.mp3';
@@ -982,7 +982,14 @@ async function buildVideo(quiz, workDir) {
   // clamp below — this was the real cause of "CTA2/CTA3 audio not playing"
   // even though the source audio files were confirmed valid.
   const total = Math.max(measuredTotal, runningTotal) + 0.4; // small safety margin
-  const finalVideoPath = await applyBgMusic(concatenated,total,voiceRanges,resolvedBgFile,workDir);
+  console.log(`[BGMUSIC] About to apply: resolvedBgFile=${resolvedBgFile} total=${total.toFixed(2)}s voiceRanges=${voiceRanges.length}`);
+  let finalVideoPath;
+  try {
+    finalVideoPath = await applyBgMusic(concatenated, total, voiceRanges, resolvedBgFile, workDir);
+  } catch (e) {
+    console.error(`[BGMUSIC] applyBgMusic FAILED: ${e.message} — using video without bg music`);
+    finalVideoPath = concatenated;
+  }
   return { videoPath: finalVideoPath, thumbnailUrl };
 }
 
