@@ -499,12 +499,6 @@ async function applyBgMusic(concatMp4, totalDur, voiceRanges, bgFile, workDir) {
   // Extract foreground (voice + sfx + cta audio) from the concatenated video.
   await ffmpeg(`-y -i "${concatMp4}" -vn -ar 44100 -acodec libmp3lame "${fgAudio}"`, 'extractFg');
 
-  // Diagnostic: measure fg audio volume at the end (cta4 range: last ~3s)
-  try {
-    const cta4Start = Math.max(0, totalDur - 4).toFixed(1);
-    await ffmpeg(`-y -i "${fgAudio}" -ss ${cta4Start} -af "volumedetect" -f null /dev/null`, 'fgVolDiag').catch(()=>{});
-  } catch {}
-
   // Mix foreground + bg. CRITICAL: amix normalizes by dividing by input count
   // (halving both signals). We counter this with normalize=0 so foreground
   // stays at full volume, and bg is already attenuated via BG_VOL_BASE.
@@ -976,6 +970,7 @@ async function buildVideo(quiz, workDir) {
       fallbackSec:3, voice, leadGap:0.15, workDir, name:'cta3'
     });
     console.log(`[CTA3-DIAG] built audio path=${cta3Audio.path} dur=${cta3Audio.dur.toFixed(2)}s`);
+    await checkAndBoostVolume(cta3Audio.path, 'cta3_audio');
     pushClip(await recordedClip(page, cta3Audio.path, cta3Audio.dur, workDir, 'clip_cta3'));
 
     // CTA4 SCREEN — "Write your answer in comments" — last screen of video.
@@ -987,6 +982,8 @@ async function buildVideo(quiz, workDir) {
       fallbackText: quiz.cta4_text || 'Write your answer in the comments below! Can you get it right?',
       fallbackSec: 3, voice, leadGap: 0.1, workDir, name: 'cta4'
     });
+    console.log(`[CTA4-DIAG] built audio path=${cta4Audio.path} dur=${cta4Audio.dur.toFixed(2)}s cta4AudioFile=${cta4AudioFile||'NULL'}`);
+    await checkAndBoostVolume(cta4Audio.path, 'cta4_audio');
     pushClip(await recordedClip(page, cta4Audio.path, cta4Audio.dur, workDir, 'clip_cta4'));
   }
 
