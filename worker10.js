@@ -458,18 +458,18 @@ async function recordedClip(page, audioP, dur, workDir, name) {
   await ffmpeg(`-y -i "${rawVideo}" -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264}"`, `${name} reencode`);
 
   const out = path.join(workDir, `${name}.mp4`);
-  // Direct mux: video from h264 re-encode + audio from audioP.
-  // No -stream_loop: it was causing audio track desync on some clips (cta3/cta4)
-  // because looping resets video timestamps while audio continues linearly.
-  // -shortest ensures output matches the shorter of the two (should be equal).
+  // Mux video + audio. Use libx264 re-encode (not -c:v copy) to ensure
+  // consistent timebase between video and audio streams — copy can cause
+  // audio start-time misalignment when source timebase differs from audio.
+  // -shortest stops at the shorter stream; -t is a hard safety clamp.
   await ffmpeg(
-    `-y -i "${h264}" -i "${audioP}" -c:v copy -t ${safeDur} ` +
-    `-c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 -shortest "${out}"`,
+    `-y -i "${h264}" -i "${audioP}" ` +
+    `-c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 ` +
+    `-c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 -shortest -t ${safeDur} "${out}"`,
     `${name} mux`
   );
   const actualDur = await videoDur(out);
   console.log(`[CLIP] ${name}: requested=${safeDur.toFixed(2)}s actual=${actualDur.toFixed(2)}s (recorded)`);
-  return { path: out, dur: actualDur };
   return { path: out, dur: actualDur };
 }
 
@@ -990,11 +990,8 @@ async function buildVideo(quiz, workDir) {
     }
     pushClip(await recordedClip(page, miAudio, miAudioDur, workDir, 'clip_mi'));
 
-    // cta3 fades in (like/share/subscribe on MI screen)
-    await page.evaluate(()=>{
-      const c=document.getElementById('mi-cta3');
-      if(c) c.classList.add('show-cta3');
-    });
+    // CTA3 SCREEN — dedicated comment/share/subscribe screen
+    await showOnly('.comment-cta-screen');
     await new Promise(r=>setTimeout(r,150));
     console.log(`[CTA3-DIAG] cta3AudioFile=${cta3AudioFile||'NULL'} cta3_text="${(quiz.cta3_text||'').slice(0,50)}"`);
     const cta3Audio = await buildAudio({
