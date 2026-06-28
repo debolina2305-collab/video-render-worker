@@ -458,14 +458,18 @@ async function recordedClip(page, audioP, dur, workDir, name) {
   await ffmpeg(`-y -i "${rawVideo}" -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264}"`, `${name} reencode`);
 
   const out = path.join(workDir, `${name}.mp4`);
-  // -stream_loop -1 on the (already-correct-length) recording is harmless padding
-  // safety net in case the recording came in a hair short; -t hard-clamps either way.
+  // Direct mux: video from h264 re-encode + audio from audioP.
+  // No -stream_loop: it was causing audio track desync on some clips (cta3/cta4)
+  // because looping resets video timestamps while audio continues linearly.
+  // -shortest ensures output matches the shorter of the two (should be equal).
   await ffmpeg(
-    `-y -stream_loop -1 -i "${h264}" -i "${audioP}" -c:v libx264 -crf 18 -preset medium -t ${safeDur} -pix_fmt yuv420p -r 30 ` +
-    `-c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 "${out}"`, `${name} mux`
+    `-y -i "${h264}" -i "${audioP}" -c:v copy -t ${safeDur} ` +
+    `-c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 -shortest "${out}"`,
+    `${name} mux`
   );
   const actualDur = await videoDur(out);
   console.log(`[CLIP] ${name}: requested=${safeDur.toFixed(2)}s actual=${actualDur.toFixed(2)}s (recorded)`);
+  return { path: out, dur: actualDur };
   return { path: out, dur: actualDur };
 }
 
