@@ -612,8 +612,36 @@ async function processJobs() {
     await fs.copyFile(videoPath, artifactPath);
     await fs.writeFile('/tmp/artifact_ready', artifactPath);
 
-    const patchBody = { video_status:'rendered', render_duration_sec:Math.round(dur), file_size_mb:sizeMb, updated_at:new Date().toISOString() };
+    // Upload video to R2 so it's permanently accessible via URL
+    let videoUrl = null;
+    if (R2_CONFIGURED) {
+      try {
+        const videoBuf = await fs.readFile(artifactPath);
+        const videoKey = `videos/${quiz.id}.mp4`;
+        await withTimeout(
+          s3Client.send(new PutObjectCommand({
+            Bucket: R2_BUCKET,
+            Key: videoKey,
+            Body: videoBuf,
+            ContentType: 'video/mp4',
+          })),
+          60000, 'R2 video upload'
+        );
+        videoUrl = `${R2_PUBLIC_URL.replace(/\/$/,'')}/${videoKey}`;
+        console.log(`[R2] Video uploaded: ${videoUrl}`);
+      } catch (e) {
+        console.warn(`[R2] Video upload failed (non-fatal): ${e.message}`);
+      }
+    }
+
+    const patchBody = {
+      video_status:'rendered',
+      render_duration_sec:Math.round(dur),
+      file_size_mb:sizeMb,
+      updated_at:new Date().toISOString()
+    };
     if (thumbnailUrl) patchBody.thumbnail_url = thumbnailUrl;
+    if (videoUrl)     patchBody.video_url     = videoUrl;
     await fetchSupabase(`quiz?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(patchBody)});
 
     await fs.rm(workDir,{recursive:true,force:true});
