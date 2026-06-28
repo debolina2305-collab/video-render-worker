@@ -499,6 +499,12 @@ async function applyBgMusic(concatMp4, totalDur, voiceRanges, bgFile, workDir) {
   // Extract foreground (voice + sfx + cta audio) from the concatenated video.
   await ffmpeg(`-y -i "${concatMp4}" -vn -ar 44100 -acodec libmp3lame "${fgAudio}"`, 'extractFg');
 
+  // Diagnostic: measure fg audio volume at the end (cta4 range: last ~3s)
+  try {
+    const cta4Start = Math.max(0, totalDur - 4).toFixed(1);
+    await ffmpeg(`-y -i "${fgAudio}" -ss ${cta4Start} -af "volumedetect" -f null /dev/null`, 'fgVolDiag').catch(()=>{});
+  } catch {}
+
   // Mix foreground + bg. CRITICAL: amix normalizes by dividing by input count
   // (halving both signals). We counter this with normalize=0 so foreground
   // stays at full volume, and bg is already attenuated via BG_VOL_BASE.
