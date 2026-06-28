@@ -199,8 +199,11 @@ function pickThumbVariant(hasMI) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-const BG_VOL_BASE = 0.10;
-const BG_VOL_DUCK = 0.035;
+// Background music levels. Tuned so music is clearly audible but never
+// drowns out narration. base = volume when no voice; duck = volume during voice.
+// Previous 0.10/0.035 were far too quiet (≈-20/-29dB) → music was inaudible.
+const BG_VOL_BASE = 0.28;   // ≈ -11dB — clearly present during non-voice moments
+const BG_VOL_DUCK = 0.12;   // ≈ -18dB — soft bed under narration, still audible
 const DUCK_RAMP   = 0.12;
 
 const GAP_DEFAULT     = 0.25;
@@ -470,25 +473,47 @@ async function recordedClip(page, audioP, dur, workDir, name) {
 // BG MUSIC DUCKING
 // ─────────────────────────────────────────────
 async function applyBgMusic(concatMp4, totalDur, voiceRanges, bgFile, workDir) {
-  if (!bgFile || !(await fileExists(bgFile))) { console.log('[BGMUSIC] skip'); return concatMp4; }
+  if (!bgFile || !(await fileExists(bgFile))) { console.log('[BGMUSIC] skip — no bgFile'); return concatMp4; }
   const bgLooped=path.join(workDir,'bg_looped.mp3'), bgDucked=path.join(workDir,'bg_ducked.mp3');
   const fgAudio=path.join(workDir,'fg_audio.mp3'), mixedAudio=path.join(workDir,'mixed_audio.mp3');
   const finalMp4=path.join(workDir,'final_with_music.mp4');
+
+  // Loop bg music to full video length at BASE volume.
   await ffmpeg(`-y -stream_loop -1 -i "${bgFile}" -t ${totalDur} -af "volume=${BG_VOL_BASE}" -ar 44100 -acodec libmp3lame "${bgLooped}"`, 'bgLoop');
+
+  // Duck the bg music DOWN during voice ranges so narration is clear.
   if (voiceRanges.length > 0) {
     const ratio = (BG_VOL_DUCK/BG_VOL_BASE).toFixed(4);
     const filters = voiceRanges.map(r => {
       const s=Math.max(0,r.start-DUCK_RAMP).toFixed(3), e=(r.end+DUCK_RAMP).toFixed(3);
-      return `volume=enable='between(t,${s},${e})':volume=${ratio}`;
+      return `volume=${ratio}:enable='between(t,${s},${e})'`;
     }).join(',');
-    await ffmpeg(`-y -i "${bgLooped}" -af "${filters}" -ar 44100 -acodec libmp3lame "${bgDucked}"`, 'bgDuck');
+    try {
+      await ffmpeg(`-y -i "${bgLooped}" -af "${filters}" -ar 44100 -acodec libmp3lame "${bgDucked}"`, 'bgDuck');
+    } catch (e) {
+      console.warn(`[BGMUSIC] ducking failed (${e.message}) — using undocked bg music`);
+      await fs.copyFile(bgLooped, bgDucked);
+    }
   } else { await fs.copyFile(bgLooped, bgDucked); }
+
+  // Extract foreground (voice + sfx + cta audio) from the concatenated video.
   await ffmpeg(`-y -i "${concatMp4}" -vn -ar 44100 -acodec libmp3lame "${fgAudio}"`, 'extractFg');
-  await ffmpeg(`-y -i "${fgAudio}" -i "${bgDucked}" -filter_complex "[0:a]volume=1.0[fg];[1:a]volume=1.0[bg];[fg][bg]amix=inputs=2:duration=first:dropout_transition=0[a]" -map "[a]" -ar 44100 -acodec libmp3lame "${mixedAudio}"`, 'mixAudio');
-  // -t totalDur is a hard duration clamp — final video CANNOT exceed the sum of intended clips
+
+  // Mix foreground + bg. CRITICAL: amix normalizes by dividing by input count
+  // (halving both signals). We counter this with normalize=0 so foreground
+  // stays at full volume, and bg is already attenuated via BG_VOL_BASE.
+  await ffmpeg(
+    `-y -i "${fgAudio}" -i "${bgDucked}" ` +
+    `-filter_complex "[0:a]volume=1.0[fg];[1:a]volume=1.0[bg];` +
+    `[fg][bg]amix=inputs=2:duration=first:normalize=0[a]" ` +
+    `-map "[a]" -ar 44100 -acodec libmp3lame "${mixedAudio}"`,
+    'mixAudio'
+  );
+
+  // Remux mixed audio onto the video.
   await ffmpeg(`-y -i "${concatMp4}" -i "${mixedAudio}" -c:v copy -map 0:v:0 -map 1:a:0 -c:a aac -b:a 192k -t ${totalDur} -movflags +faststart "${finalMp4}"`, 'remux');
   const finalDur = await videoDur(finalMp4);
-  console.log(`[BGMUSIC] Final video duration after remux: ${finalDur.toFixed(2)}s (target was ${totalDur.toFixed(2)}s)`);
+  console.log(`[BGMUSIC] Mixed bg music (base=${BG_VOL_BASE}, duck=${BG_VOL_DUCK}) + foreground. Final: ${finalDur.toFixed(2)}s`);
   return finalMp4;
 }
 
