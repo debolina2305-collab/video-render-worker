@@ -731,23 +731,28 @@ async function buildVideo(quiz, workDir) {
   const thumbTitle  = (quiz.youtube_title && quiz.youtube_title.trim())
                       ? thumbTitleStyle(quiz.youtube_title.trim())
                       : pickThumbCatchphrase();
-  // ── REQ1: Per-niche challenge number ──────────────────────────────
-  // Count how many quizzes in THIS niche have been rendered before this one.
-  // That gives a per-niche incrementing number starting at 1.
-  let nicheNo = 1;
-  try {
-    const nicheCount = await fetchSupabase(
-      `quiz?niche=eq.${encodeURIComponent(niche)}&video_status=eq.rendered&id=neq.${quiz.id}&select=id`
-    );
-    nicheNo = (nicheCount ? nicheCount.length : 0) + 1;
-    console.log(`[NICHE-NO] niche=${niche} nicheNo=${nicheNo} (${nicheCount?.length||0} previously rendered)`);
-  } catch(e) {
-    console.warn(`[NICHE-NO] Failed to count niche (non-fatal): ${e.message}`);
+  // ── REQ1: Per-niche challenge number (from DB column set by Worker 8) ───
+  // niche_challenge_no is populated by Worker 8 at quiz creation time.
+  // Fallback: count rendered quizzes in this niche if column is missing.
+  let nicheNo = quiz.niche_challenge_no || null;
+  if (!nicheNo) {
+    try {
+      const nicheCount = await fetchSupabase(
+        `quiz?niche=eq.${encodeURIComponent(niche)}&video_status=eq.rendered&id=neq.${quiz.id}&select=id`
+      );
+      nicheNo = (nicheCount ? nicheCount.length : 0) + 1;
+      console.log(`[NICHE-NO] niche_challenge_no missing — counted ${nicheCount?.length||0} rendered → using ${nicheNo}`);
+    } catch(e) {
+      nicheNo = 1;
+      console.warn(`[NICHE-NO] Failed to count niche (non-fatal): ${e.message}`);
+    }
+  } else {
+    console.log(`[NICHE-NO] niche=${niche} niche_challenge_no=${nicheNo} (from DB)`);
   }
   const nicheLabel = niche ? niche.charAt(0).toUpperCase() + niche.slice(1) : 'General';
-  // REQ1: marquee = "Sports Challenge No #14"
+  // Marquee: "Sports Challenge No #18"
   const marqueeHtml = buildMarqueeHtml(`${nicheLabel} Challenge No #${nicheNo}`);
-  // REQ2: below-logo label = "Challenge ID 2606280011"
+  // Below-logo label: "Challenge ID 2606280011"
   const challengeIdLabel = quiz.quiz_no ? `Challenge ID ${quiz.quiz_no}` : '';
   const floatIcons  = pickFloatIcons(niche, quiz.topic);
 
@@ -805,6 +810,9 @@ async function buildVideo(quiz, workDir) {
     '{{thumb_catchphrase}}':thumbTitle.phrase,
     '{{thumb_catchphrase_size}}':thumbTitle.fontSize,
     '{{thumb_mission_text}}':miQuestion||question,
+    '{{niche_challenge_no}}': String(nicheNo),
+    '{{niche_label}}': nicheLabel,
+    '{{niche_challenge_label}}': `${nicheLabel} Challenge No #${nicheNo}`,
     '{{thumb_bg_style_block}}': thumbBgStyleBlock,
     '{{thumb_bg_image_class}}': thumbBgStyleBlock ? ' thumb-photo-bg-img' : ' thumb-photo-bg-hidden',
     '{{confetti_0}}':confettiSet[0], '{{confetti_1}}':confettiSet[1],
