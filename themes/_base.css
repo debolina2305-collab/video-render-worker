@@ -36,10 +36,10 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
   box-sizing:border-box;
 }
 
-/* ═══ NICHE MARQUEE — "Sports Challenge" / "Tech Challenge" etc.
+/* ═══ NICHE MARQUEE — "Sports Challenge No #18" etc.
    Bold, centered, lucrative design — shown on every screen. ═══ */
 .niche-marquee {
-  position:relative; z-index:10; width:100%; min-height:88px; margin-top:186px;
+  position:relative; z-index:10; width:100%; min-height:88px; margin-top:320px;
   background:linear-gradient(135deg, #0a0a0a 0%, #1a1200 50%, #0a0a0a 100%);
   border-top:3px solid #ffd24a; border-bottom:3px solid #ffd24a;
   display:flex; align-items:center; justify-content:center; flex-wrap:wrap;
