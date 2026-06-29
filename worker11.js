@@ -219,10 +219,10 @@ function buildMetadata(quiz) {
   const cleanTag = t => t
     .toLowerCase()
     .replace(/[^\x00-\x7F]/g, '')   // strip ALL non-ASCII (emojis, unicode)
-    .replace(/[^a-z0-9\s]/g, '')    // strip special chars, keep letters/numbers/spaces
-    .replace(/\s+/g, ' ')
+    .replace(/[^a-z0-9\s]/g, '')    // strip special chars
+    .replace(/\s+/g, '')            // remove ALL spaces → single word tag
     .trim()
-    .slice(0, 30);
+    .slice(0, 30);                  // max 30 chars per tag
 
   const extraTags = [];
   let tagsCharCount = baseTags.join('').length;
