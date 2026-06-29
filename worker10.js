@@ -699,7 +699,7 @@ async function buildVideo(quiz, workDir) {
     hookFile, questionIntroFile, optionsIntroFile,
     timeupFile, cta1AudioFile, cta2AudioFile,
     missionIntroFile, cta3AudioFile, cta4AudioFile,
-    sfxFile, countdownFile, bgFile, correctSfxFile, sfxMissionFile
+    sfxFile, sfxOptsFile, countdownFile, bgFile, correctSfxFile, sfxMissionFile
   ] = await Promise.all([
     downloadAudio(quiz.hook_audio_url,               `hook_${quiz.id}`),
     downloadAudio(quiz.question_intro_audio_url,     `qintro_${quiz.id}`),
@@ -711,6 +711,7 @@ async function buildVideo(quiz, workDir) {
     downloadAudio(quiz.cta3_audio_url,               `cta3_${quiz.id}`),
     downloadAudio(quiz.cta4_audio_url,               `cta4_${quiz.id}`),
     downloadAudio(quiz.sfx_audio_url,                `sfx_${quiz.id}`,'question_appear'),
+    downloadAudio(quiz.sfx_audio_url,                `sfxopts_${quiz.id}`,'options_appear'),
     downloadAudio(quiz.countdown_music,              `countdown_${quiz.id}`),
     downloadAudio(quiz.background_music||DEFAULT_BG_MUSIC,`bgmusic_${quiz.id}`),
     downloadAudio(quiz.correct_answer_sfx_audio_url, `correctsfx_${quiz.id}`),
@@ -730,9 +731,24 @@ async function buildVideo(quiz, workDir) {
   const thumbTitle  = (quiz.youtube_title && quiz.youtube_title.trim())
                       ? thumbTitleStyle(quiz.youtube_title.trim())
                       : pickThumbCatchphrase();
-  const marqueeHtml = buildMarqueeHtml(
-    (niche ? niche.charAt(0).toUpperCase() + niche.slice(1) : 'General') + ' Challenge'
-  );
+  // ── REQ1: Per-niche challenge number ──────────────────────────────
+  // Count how many quizzes in THIS niche have been rendered before this one.
+  // That gives a per-niche incrementing number starting at 1.
+  let nicheNo = 1;
+  try {
+    const nicheCount = await fetchSupabase(
+      `quiz?niche=eq.${encodeURIComponent(niche)}&video_status=eq.rendered&id=neq.${quiz.id}&select=id`
+    );
+    nicheNo = (nicheCount ? nicheCount.length : 0) + 1;
+    console.log(`[NICHE-NO] niche=${niche} nicheNo=${nicheNo} (${nicheCount?.length||0} previously rendered)`);
+  } catch(e) {
+    console.warn(`[NICHE-NO] Failed to count niche (non-fatal): ${e.message}`);
+  }
+  const nicheLabel = niche ? niche.charAt(0).toUpperCase() + niche.slice(1) : 'General';
+  // REQ1: marquee = "Sports Challenge No #14"
+  const marqueeHtml = buildMarqueeHtml(`${nicheLabel} Challenge No #${nicheNo}`);
+  // REQ2: below-logo label = "Challenge ID 2606280011"
+  const challengeIdLabel = quiz.quiz_no ? `Challenge ID ${quiz.quiz_no}` : '';
   const floatIcons  = pickFloatIcons(niche, quiz.topic);
 
   // Wikipedia thumbnail image — downloaded and base64-encoded, then injected
@@ -770,7 +786,7 @@ async function buildVideo(quiz, workDir) {
   const R = {
     '{{theme_css}}':themeCss, '{{theme_deco_html}}':decoHtml, '{{LOGO_DATA_URI}}':logoDataUri,
     '{{hook_phrase}}':quiz.hook_phrase||'Stop scrolling! Can you beat this?',
-    '{{quiz_no}}':quiz.quiz_no ? `Challenge No ${quiz.quiz_no}` : '',
+    '{{quiz_no}}': challengeIdLabel,
     '{{question}}':question,
     '{{options[0]}}':options[0]||'', '{{options[1]}}':options[1]||'',
     '{{options[2]}}':options[2]||'', '{{options[3]}}':options[3]||'',
@@ -996,9 +1012,9 @@ async function buildVideo(quiz, workDir) {
     await showOnly('.comment-cta-screen');
     await new Promise(r=>setTimeout(r,200));
 
-    console.log(`[CTA-COMBINED] cta4AudioFile=${cta4AudioFile||'NULL'}`);
+    console.log(`[CTA-COMBINED] cta4AudioFile=${cta4AudioFile||'NULL'} sfxOptsFile=${sfxOptsFile||'NULL'} sfxFile=${sfxFile||'NULL'}`);
 
-    // Build cta4 audio (the MUST-HAVE audio per req)
+    // Build cta4 audio — MUST play. Use prerecorded or TTS fallback.
     let cta4Mp3 = cta4AudioFile;
     if (!cta4Mp3) {
       const cta4Tts = path.join(workDir,'cta4_tts.mp3');
@@ -1009,25 +1025,75 @@ async function buildVideo(quiz, workDir) {
     const cta4SourceDur = await audioDur(cta4Mp3);
     console.log(`[CTA-COMBINED] cta4 source dur=${cta4SourceDur.toFixed(2)}s`);
 
-    // Total screen duration:
-    // - 0.0s: LIKE pill pops in
-    // - 0.8s: SHARE pill pops in  
-    // - 1.5s: SUBSCRIBE pill pops in
-    // - 2.3s: cta4 card slides in — cta4 AUDIO starts here
-    // - total = 2.3s lead + cta4 audio duration + 0.5s tail
-    const CTA_LEAD = 2.3;   // silence before cta4 audio starts (animations play)
-    const CTA_TAIL = 0.5;
-    const totalCtaDur = CTA_LEAD + cta4SourceDur + CTA_TAIL;
-    console.log(`[CTA-COMBINED] total screen dur=${totalCtaDur.toFixed(2)}s (lead=${CTA_LEAD}s + cta4=${cta4SourceDur.toFixed(2)}s + tail=${CTA_TAIL}s)`);
+    // SFX to play at each pill appearance. Use options_appear sfx if available,
+    // fallback to question_appear sfx (both come from sfx_cues table).
+    const pillSfx = sfxOptsFile || sfxFile;
 
-    // Build final audio: silence lead + cta4 audio + silence tail
-    const ctaLeadSil = path.join(workDir,'cta_lead_sil.mp3');
-    const ctaTailSil = path.join(workDir,'cta_tail_sil.mp3');
-    await silence(CTA_LEAD, ctaLeadSil);
-    await silence(CTA_TAIL, ctaTailSil);
+    // Timeline of the CTA screen:
+    // 0.0s  → LIKE pill pops in    → play SFX
+    // 0.8s  → SHARE pill pops in   → play SFX
+    // 1.5s  → SUBSCRIBE pill pops in → play SFX
+    // 2.3s  → CTA4 card slides in  → CTA4 AUDIO starts
+    // 2.3s + cta4Dur + 0.4s tail   → end
+    const LIKE_T  = 0.1;
+    const SHARE_T = 0.8;
+    const SUB_T   = 1.5;
+    const CTA4_T  = 2.3;
+    const CTA_TAIL = 0.4;
+    const totalCtaDur = CTA4_T + cta4SourceDur + CTA_TAIL;
+    console.log(`[CTA-COMBINED] total screen dur=${totalCtaDur.toFixed(2)}s`);
+
+    // Build the CTA audio track using FFmpeg amix with adelay for precise timing.
+    // Strategy: create a base silence track, then overlay SFX at pill times and
+    // cta4 audio at CTA4_T. This is more reliable than concatAudio (no duration mismatch).
+    const ctaSilBase = path.join(workDir,'cta_sil_base.mp3');
+    await silence(totalCtaDur, ctaSilBase);
+
     const ctaFinalAudio = path.join(workDir,'cta_final_audio.mp3');
-    await concatAudio([ctaLeadSil, cta4Mp3, ctaTailSil], ctaFinalAudio, workDir);
+
+    if (pillSfx && await fileExists(pillSfx)) {
+      // Mix: base_silence + sfx@LIKE_T + sfx@SHARE_T + sfx@SUB_T + cta4@CTA4_T
+      const likeMs  = Math.round(LIKE_T  * 1000);
+      const shareMs = Math.round(SHARE_T * 1000);
+      const subMs   = Math.round(SUB_T   * 1000);
+      const cta4Ms  = Math.round(CTA4_T  * 1000);
+      // Use amix with adelay to position each audio at exact timestamps.
+      // normalize=0 prevents volume halving. duration=first keeps total=base silence dur.
+      try {
+        await ffmpeg(
+          `-y -i "${ctaSilBase}" -i "${pillSfx}" -i "${pillSfx}" -i "${pillSfx}" -i "${cta4Mp3}" ` +
+          `-filter_complex ` +
+          `"[1:a]adelay=${likeMs}|${likeMs}[like];` +
+          `[2:a]adelay=${shareMs}|${shareMs}[share];` +
+          `[3:a]adelay=${subMs}|${subMs}[sub];` +
+          `[4:a]adelay=${cta4Ms}|${cta4Ms}[cta4];` +
+          `[0:a][like][share][sub][cta4]amix=inputs=5:duration=first:normalize=0[a]" ` +
+          `-map "[a]" -t ${totalCtaDur} -ar 44100 -ac 2 -acodec libmp3lame "${ctaFinalAudio}"`,
+          'cta_mix_with_sfx'
+        );
+        console.log(`[CTA-COMBINED] Mixed: sfx@${LIKE_T}s ${SHARE_T}s ${SUB_T}s + cta4@${CTA4_T}s`);
+      } catch(e) {
+        // Fallback: if amix fails, just put cta4 audio with silence lead
+        console.warn(`[CTA-COMBINED] SFX mix failed (${e.message}) — falling back to cta4-only`);
+        const ctaLeadSil = path.join(workDir,'cta_lead_sil.mp3');
+        const ctaTailSil = path.join(workDir,'cta_tail_sil.mp3');
+        await silence(CTA4_T, ctaLeadSil);
+        await silence(CTA_TAIL, ctaTailSil);
+        await concatAudio([ctaLeadSil, cta4Mp3, ctaTailSil], ctaFinalAudio, workDir);
+      }
+    } else {
+      // No SFX — just cta4 audio with silence lead
+      console.log(`[CTA-COMBINED] No SFX available — cta4 only at ${CTA4_T}s`);
+      const ctaLeadSil = path.join(workDir,'cta_lead_sil.mp3');
+      const ctaTailSil = path.join(workDir,'cta_tail_sil.mp3');
+      await silence(CTA4_T, ctaLeadSil);
+      await silence(CTA_TAIL, ctaTailSil);
+      await concatAudio([ctaLeadSil, cta4Mp3, ctaTailSil], ctaFinalAudio, workDir);
+    }
+
     await checkAndBoostVolume(ctaFinalAudio, 'cta_final_audio');
+    const ctaAudioDur = await audioDur(ctaFinalAudio);
+    console.log(`[CTA-COMBINED] final audio dur=${ctaAudioDur.toFixed(2)}s`);
 
     // Record visual for total duration
     const ctaRawVideo = path.join(workDir,'clip_cta_combined_raw.mp4');
@@ -1036,14 +1102,14 @@ async function buildVideo(quiz, workDir) {
     await new Promise(r=>setTimeout(r, totalCtaDur * 1000));
     await withTimeout(recCta.stop(), TIMEOUT_RECORDER, 'clip_cta_combined recorder.stop()');
 
-    // Re-encode video to h264
+    // Re-encode video to h264 (video-only, no audio yet)
     const ctaH264 = path.join(workDir,'clip_cta_combined_h264.mp4');
-    await ffmpeg(`-y -i "${ctaRawVideo}" -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${ctaH264}"`, 'cta_combined reencode');
+    await ffmpeg(`-y -i "${ctaRawVideo}" -an -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${ctaH264}"`, 'cta_combined reencode');
 
-    // DEFINITIVE AUDIO FIX:
-    // Use -stream_loop -1 on VIDEO so it loops to fill audio length.
-    // Audio runs to its natural end — no -shortest, no premature cut.
-    // -t is set to totalCtaDur which exactly equals audio duration.
+    // DEFINITIVE AUDIO MUX:
+    // -stream_loop -1 on VIDEO ensures video never runs shorter than audio.
+    // Audio is placed as an independent input — no -shortest so it runs to full length.
+    // -t totalCtaDur clamps both at the known total duration.
     const ctaOut = path.join(workDir,'clip_cta_combined.mp4');
     await ffmpeg(
       `-y -stream_loop -1 -i "${ctaH264}" -i "${ctaFinalAudio}" ` +
