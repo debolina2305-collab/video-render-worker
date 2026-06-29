@@ -730,7 +730,9 @@ async function buildVideo(quiz, workDir) {
   const thumbTitle  = (quiz.youtube_title && quiz.youtube_title.trim())
                       ? thumbTitleStyle(quiz.youtube_title.trim())
                       : pickThumbCatchphrase();
-  const marqueeHtml = buildMarqueeHtml(quiz.youtube_title || quiz.topic);
+  const marqueeHtml = buildMarqueeHtml(
+    (niche ? niche.charAt(0).toUpperCase() + niche.slice(1) : 'General') + ' Challenge'
+  );
   const floatIcons  = pickFloatIcons(niche, quiz.topic);
 
   // Wikipedia thumbnail image — downloaded and base64-encoded, then injected
@@ -768,7 +770,7 @@ async function buildVideo(quiz, workDir) {
   const R = {
     '{{theme_css}}':themeCss, '{{theme_deco_html}}':decoHtml, '{{LOGO_DATA_URI}}':logoDataUri,
     '{{hook_phrase}}':quiz.hook_phrase||'Stop scrolling! Can you beat this?',
-    '{{quiz_no}}':quiz.quiz_no ? `Challenge No # ${quiz.quiz_no}` : '',
+    '{{quiz_no}}':quiz.quiz_no ? `Challenge No ${quiz.quiz_no}` : '',
     '{{question}}':question,
     '{{options[0]}}':options[0]||'', '{{options[1]}}':options[1]||'',
     '{{options[2]}}':options[2]||'', '{{options[3]}}':options[3]||'',
@@ -990,76 +992,70 @@ async function buildVideo(quiz, workDir) {
     }
     pushClip(await recordedClip(page, miAudio, miAudioDur, workDir, 'clip_mi'));
 
-    // ══ COMBINED CTA SCREEN (cta3 + cta4 merged into one screen) ══
-    // Show the single combined screen
+    // ══ COMBINED CTA SCREEN (like→share→subscribe + cta4) ══
     await showOnly('.comment-cta-screen');
     await new Promise(r=>setTimeout(r,200));
 
-    // Build combined audio: cta3 audio + small gap + cta4 audio
-    // Both audios are concatenated so both play on the single screen.
-    console.log(`[CTA-COMBINED] cta3AudioFile=${cta3AudioFile||'NULL'} cta4AudioFile=${cta4AudioFile||'NULL'}`);
+    console.log(`[CTA-COMBINED] cta4AudioFile=${cta4AudioFile||'NULL'}`);
 
-    const cta3Parts = [];
-    const cta4Parts = [];
-
-    // CTA3 audio
-    if (cta3AudioFile) {
-      cta3Parts.push(cta3AudioFile);
-    } else {
-      const cta3Tts = path.join(workDir,'cta3_tts.mp3');
-      await tts(quiz.cta3_text||'Like, share and subscribe! Write your answer in the comments!', voice, cta3Tts, 3);
-      cta3Parts.push(cta3Tts);
-    }
-
-    // CTA4 audio
-    if (cta4AudioFile) {
-      cta4Parts.push(cta4AudioFile);
-    } else {
+    // Build cta4 audio (the MUST-HAVE audio per req)
+    let cta4Mp3 = cta4AudioFile;
+    if (!cta4Mp3) {
       const cta4Tts = path.join(workDir,'cta4_tts.mp3');
       await tts(quiz.cta4_text||'Write your answer in the comments right now!', voice, cta4Tts, 3);
-      cta4Parts.push(cta4Tts);
+      cta4Mp3 = cta4Tts;
     }
+    await checkAndBoostVolume(cta4Mp3, 'cta4_source');
+    const cta4SourceDur = await audioDur(cta4Mp3);
+    console.log(`[CTA-COMBINED] cta4 source dur=${cta4SourceDur.toFixed(2)}s`);
 
-    // Gap between cta3 and cta4
-    const ctaGap = path.join(workDir,'cta_gap.mp3');
-    await silence(0.4, ctaGap);
+    // Total screen duration:
+    // - 0.0s: LIKE pill pops in
+    // - 0.8s: SHARE pill pops in  
+    // - 1.5s: SUBSCRIBE pill pops in
+    // - 2.3s: cta4 card slides in — cta4 AUDIO starts here
+    // - total = 2.3s lead + cta4 audio duration + 0.5s tail
+    const CTA_LEAD = 2.3;   // silence before cta4 audio starts (animations play)
+    const CTA_TAIL = 0.5;
+    const totalCtaDur = CTA_LEAD + cta4SourceDur + CTA_TAIL;
+    console.log(`[CTA-COMBINED] total screen dur=${totalCtaDur.toFixed(2)}s (lead=${CTA_LEAD}s + cta4=${cta4SourceDur.toFixed(2)}s + tail=${CTA_TAIL}s)`);
 
-    // Concat: cta3 + gap + cta4
-    const ctaCombinedAudio = path.join(workDir,'cta_combined.mp3');
-    await concatAudio([...cta3Parts, ctaGap, ...cta4Parts], ctaCombinedAudio, workDir);
-    const ctaCombinedDur = await audioDur(ctaCombinedAudio);
-    console.log(`[CTA-COMBINED] combined audio dur=${ctaCombinedDur.toFixed(2)}s`);
-    await checkAndBoostVolume(ctaCombinedAudio, 'cta_combined_audio');
+    // Build final audio: silence lead + cta4 audio + silence tail
+    const ctaLeadSil = path.join(workDir,'cta_lead_sil.mp3');
+    const ctaTailSil = path.join(workDir,'cta_tail_sil.mp3');
+    await silence(CTA_LEAD, ctaLeadSil);
+    await silence(CTA_TAIL, ctaTailSil);
+    const ctaFinalAudio = path.join(workDir,'cta_final_audio.mp3');
+    await concatAudio([ctaLeadSil, cta4Mp3, ctaTailSil], ctaFinalAudio, workDir);
+    await checkAndBoostVolume(ctaFinalAudio, 'cta_final_audio');
 
-    // Record the visual for the full combined duration
+    // Record visual for total duration
     const ctaRawVideo = path.join(workDir,'clip_cta_combined_raw.mp4');
-    const recorder2 = new PuppeteerScreenRecorder(page, { fps:30, videoFrame:{width:1080,height:1920}, aspectRatio:'9:16', followNewTab:false });
-    await recorder2.start(ctaRawVideo);
-    await new Promise(r=>setTimeout(r, ctaCombinedDur * 1000));
-    await withTimeout(recorder2.stop(), TIMEOUT_RECORDER, 'clip_cta_combined recorder.stop()');
+    const recCta = new PuppeteerScreenRecorder(page, { fps:30, videoFrame:{width:1080,height:1920}, aspectRatio:'9:16', followNewTab:false });
+    await recCta.start(ctaRawVideo);
+    await new Promise(r=>setTimeout(r, totalCtaDur * 1000));
+    await withTimeout(recCta.stop(), TIMEOUT_RECORDER, 'clip_cta_combined recorder.stop()');
 
-    // Re-encode to h264
+    // Re-encode video to h264
     const ctaH264 = path.join(workDir,'clip_cta_combined_h264.mp4');
     await ffmpeg(`-y -i "${ctaRawVideo}" -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${ctaH264}"`, 'cta_combined reencode');
 
-    // ── AUDIO FIX: inject audio AFTER video is done, using a fresh ffmpeg mux ──
-    // This avoids the -shortest/-t truncation issue that was cutting audio.
-    // We pad the audio to match video duration if needed, or pad video if audio is longer.
-    const ctaVideoDur = await videoDur(ctaH264);
-    const ctaFinalDur = Math.max(ctaVideoDur, ctaCombinedDur);
+    // DEFINITIVE AUDIO FIX:
+    // Use -stream_loop -1 on VIDEO so it loops to fill audio length.
+    // Audio runs to its natural end — no -shortest, no premature cut.
+    // -t is set to totalCtaDur which exactly equals audio duration.
     const ctaOut = path.join(workDir,'clip_cta_combined.mp4');
-    // Use -stream_loop on VIDEO (not audio) so video loops to fill audio duration if needed
-    // Use apad on audio to fill any remaining video duration
     await ffmpeg(
-      `-y -stream_loop -1 -i "${ctaH264}" -i "${ctaCombinedAudio}" ` +
+      `-y -stream_loop -1 -i "${ctaH264}" -i "${ctaFinalAudio}" ` +
+      `-map 0:v:0 -map 1:a:0 ` +
       `-c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 ` +
-      `-c:a aac -b:a 192k -ar 44100 -af "apad" ` +
-      `-map 0:v:0 -map 1:a:0 -t ${ctaFinalDur} "${ctaOut}"`,
+      `-c:a aac -b:a 192k -ar 44100 ` +
+      `-t ${totalCtaDur} "${ctaOut}"`,
       'cta_combined mux'
     );
     const ctaActualDur = await videoDur(ctaOut);
-    console.log(`[CTA-COMBINED] clip recorded: ${ctaActualDur.toFixed(2)}s`);
-    await checkAndBoostVolume(ctaOut, 'clip_cta_combined');
+    await checkAndBoostVolume(ctaOut, 'clip_cta_combined_out');
+    console.log(`[CTA-COMBINED] final clip: ${ctaActualDur.toFixed(2)}s`);
     pushClip({ path: ctaOut, dur: ctaActualDur });
   }
 
