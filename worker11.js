@@ -381,6 +381,15 @@ async function uploadToYouTube(accessToken, videoPath, metadata) {
 // MAIN
 // ─────────────────────────────────────────────
 async function processPublish() {
+  // ── Random startup delay: 1–8 minutes ────────────────────────────────────
+  // Adds human-like variance so uploads don't happen at the exact same second
+  // every day even when cron fires at the same time.
+  const delayMs = (60 + Math.floor(Math.random() * 420)) * 1000; // 60–480 seconds
+  const delayMin = (delayMs / 60000).toFixed(1);
+  console.log(`[PUBLISHER] Random startup delay: ${delayMin} min (anti-detection)`);
+  await new Promise(r => setTimeout(r, delayMs));
+  // ─────────────────────────────────────────────────────────────────────────
+
   console.log('[PUBLISHER] Checking for approved videos to publish...');
 
   // Poll for quiz rows that are:
