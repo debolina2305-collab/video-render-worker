@@ -699,7 +699,7 @@ async function buildVideo(quiz, workDir) {
     hookFile, questionIntroFile, optionsIntroFile,
     timeupFile, cta1AudioFile, cta2AudioFile,
     missionIntroFile, cta3AudioFile, cta4AudioFile,
-    sfxFile, sfxOptsFile, countdownFile, bgFile, correctSfxFile, sfxMissionFile
+    sfxFile, countdownFile, bgFile, correctSfxFile, sfxMissionFile
   ] = await Promise.all([
     downloadAudio(quiz.hook_audio_url,               `hook_${quiz.id}`),
     downloadAudio(quiz.question_intro_audio_url,     `qintro_${quiz.id}`),
@@ -711,7 +711,6 @@ async function buildVideo(quiz, workDir) {
     downloadAudio(quiz.cta3_audio_url,               `cta3_${quiz.id}`),
     downloadAudio(quiz.cta4_audio_url,               `cta4_${quiz.id}`),
     downloadAudio(quiz.sfx_audio_url,                `sfx_${quiz.id}`,'question_appear'),
-    downloadAudio(quiz.sfx_audio_url,                `sfxopts_${quiz.id}`,'options_appear'),
     downloadAudio(quiz.countdown_music,              `countdown_${quiz.id}`),
     downloadAudio(quiz.background_music||DEFAULT_BG_MUSIC,`bgmusic_${quiz.id}`),
     downloadAudio(quiz.correct_answer_sfx_audio_url, `correctsfx_${quiz.id}`),
@@ -1020,11 +1019,17 @@ async function buildVideo(quiz, workDir) {
     await showOnly('.comment-cta-screen');
     await new Promise(r=>setTimeout(r,200));
 
-    console.log(`[CTA-COMBINED] cta4AudioFile=${cta4AudioFile||'NULL'} sfxOptsFile=${sfxOptsFile||'NULL'} sfxFile=${sfxFile||'NULL'}`);
+    console.log(`[CTA-COMBINED] cta4AudioFile=${cta4AudioFile||'NULL'}`);
 
-    // Build cta4 audio — MUST play. Use prerecorded or TTS fallback.
+    // ── REQ: Hardcoded SFX for like/share/subscribe (no DB fetch) ──
+    const PILL_SFX_URL = 'https://pub-3578d297d3904e1d8ffedfc9dd4102f2.r2.dev/audio/hint_reveal/sound10_sharp.wav';
+    const pillSfx = await downloadAudio(PILL_SFX_URL, `pillsfx_${quiz.id}`);
+    console.log(`[CTA-COMBINED] pillSfx (hardcoded URL) = ${pillSfx || 'DOWNLOAD FAILED'}`);
+
+    // ── REQ: cta4 audio MUST come from quiz table and MUST play ──
     let cta4Mp3 = cta4AudioFile;
     if (!cta4Mp3) {
+      console.warn(`[CTA-COMBINED] cta4AudioFile is NULL — quiz.cta4_audio_url=${quiz.cta4_audio_url||'(empty)'} — using TTS fallback`);
       const cta4Tts = path.join(workDir,'cta4_tts.mp3');
       await tts(quiz.cta4_text||'Write your answer in the comments right now!', voice, cta4Tts, 3);
       cta4Mp3 = cta4Tts;
@@ -1033,41 +1038,29 @@ async function buildVideo(quiz, workDir) {
     const cta4SourceDur = await audioDur(cta4Mp3);
     console.log(`[CTA-COMBINED] cta4 source dur=${cta4SourceDur.toFixed(2)}s`);
 
-    // SFX to play at each pill appearance. Use options_appear sfx if available,
-    // fallback to question_appear sfx (both come from sfx_cues table).
-    const pillSfx = sfxOptsFile || sfxFile;
-
-    // Timeline of the CTA screen:
-    // 0.0s  → LIKE pill pops in    → play SFX
-    // 0.8s  → SHARE pill pops in   → play SFX
-    // 1.5s  → SUBSCRIBE pill pops in → play SFX
-    // 2.3s  → CTA4 card slides in  → CTA4 AUDIO starts
-    // 2.3s + cta4Dur + 0.4s tail   → end
-    const LIKE_T  = 0.1;
-    const SHARE_T = 0.8;
-    const SUB_T   = 1.5;
-    const CTA4_T  = 2.3;
-    const CTA_TAIL = 0.4;
+    // Timeline:
+    // 0.1s → LIKE pill + SFX
+    // 0.8s → SHARE pill + SFX
+    // 1.5s → SUBSCRIBE pill + SFX
+    // 2.3s → CTA4 card + CTA4 AUDIO
+    const LIKE_T  = 0.1, SHARE_T = 0.8, SUB_T = 1.5, CTA4_T = 2.3, CTA_TAIL = 0.5;
     const totalCtaDur = CTA4_T + cta4SourceDur + CTA_TAIL;
     console.log(`[CTA-COMBINED] total screen dur=${totalCtaDur.toFixed(2)}s`);
 
-    // Build the CTA audio track using FFmpeg amix with adelay for precise timing.
-    // Strategy: create a base silence track, then overlay SFX at pill times and
-    // cta4 audio at CTA4_T. This is more reliable than concatAudio (no duration mismatch).
+    // Build CTA audio track. CRITICAL: force MONO (-ac 1) output to match all
+    // other clips' audio (which are mono from TTS). A stereo CTA clip mixed with
+    // mono body clips caused channel-count mismatch → audio dropped in concat.
+    const ctaFinalAudio = path.join(workDir,'cta_final_audio.mp3');
     const ctaSilBase = path.join(workDir,'cta_sil_base.mp3');
     await silence(totalCtaDur, ctaSilBase);
 
-    const ctaFinalAudio = path.join(workDir,'cta_final_audio.mp3');
+    const cta4Ms = Math.round(CTA4_T * 1000);
 
     if (pillSfx && await fileExists(pillSfx)) {
-      // Mix: base_silence + sfx@LIKE_T + sfx@SHARE_T + sfx@SUB_T + cta4@CTA4_T
-      const likeMs  = Math.round(LIKE_T  * 1000);
-      const shareMs = Math.round(SHARE_T * 1000);
-      const subMs   = Math.round(SUB_T   * 1000);
-      const cta4Ms  = Math.round(CTA4_T  * 1000);
-      // Use amix with adelay to position each audio at exact timestamps.
-      // normalize=0 prevents volume halving. duration=first keeps total=base silence dur.
+      const likeMs = Math.round(LIKE_T*1000), shareMs = Math.round(SHARE_T*1000), subMs = Math.round(SUB_T*1000);
       try {
+        // Mix base silence + 3 SFX (at pill times) + cta4 audio (at 2.3s).
+        // -ac 1 forces mono. normalize=0 keeps full volume.
         await ffmpeg(
           `-y -i "${ctaSilBase}" -i "${pillSfx}" -i "${pillSfx}" -i "${pillSfx}" -i "${cta4Mp3}" ` +
           `-filter_complex ` +
@@ -1076,60 +1069,51 @@ async function buildVideo(quiz, workDir) {
           `[3:a]adelay=${subMs}|${subMs}[sub];` +
           `[4:a]adelay=${cta4Ms}|${cta4Ms}[cta4];` +
           `[0:a][like][share][sub][cta4]amix=inputs=5:duration=first:normalize=0[a]" ` +
-          `-map "[a]" -t ${totalCtaDur} -ar 44100 -ac 2 -acodec libmp3lame "${ctaFinalAudio}"`,
+          `-map "[a]" -t ${totalCtaDur} -ar 44100 -ac 1 -acodec libmp3lame "${ctaFinalAudio}"`,
           'cta_mix_with_sfx'
         );
-        console.log(`[CTA-COMBINED] Mixed: sfx@${LIKE_T}s ${SHARE_T}s ${SUB_T}s + cta4@${CTA4_T}s`);
+        console.log(`[CTA-COMBINED] Mixed sfx@${LIKE_T}/${SHARE_T}/${SUB_T}s + cta4@${CTA4_T}s (mono)`);
       } catch(e) {
-        // Fallback: if amix fails, just put cta4 audio with silence lead
-        console.warn(`[CTA-COMBINED] SFX mix failed (${e.message}) — falling back to cta4-only`);
-        const ctaLeadSil = path.join(workDir,'cta_lead_sil.mp3');
-        const ctaTailSil = path.join(workDir,'cta_tail_sil.mp3');
-        await silence(CTA4_T, ctaLeadSil);
-        await silence(CTA_TAIL, ctaTailSil);
-        await concatAudio([ctaLeadSil, cta4Mp3, ctaTailSil], ctaFinalAudio, workDir);
+        console.warn(`[CTA-COMBINED] SFX mix failed (${e.message}) — cta4-only fallback`);
+        const lead=path.join(workDir,'cta_lead.mp3'), tail=path.join(workDir,'cta_tail.mp3');
+        await silence(CTA4_T, lead); await silence(CTA_TAIL, tail);
+        await concatAudio([lead, cta4Mp3, tail], ctaFinalAudio, workDir);
       }
     } else {
-      // No SFX — just cta4 audio with silence lead
-      console.log(`[CTA-COMBINED] No SFX available — cta4 only at ${CTA4_T}s`);
-      const ctaLeadSil = path.join(workDir,'cta_lead_sil.mp3');
-      const ctaTailSil = path.join(workDir,'cta_tail_sil.mp3');
-      await silence(CTA4_T, ctaLeadSil);
-      await silence(CTA_TAIL, ctaTailSil);
-      await concatAudio([ctaLeadSil, cta4Mp3, ctaTailSil], ctaFinalAudio, workDir);
+      // SFX download failed — still must play cta4 audio
+      console.warn(`[CTA-COMBINED] pillSfx unavailable — cta4-only at ${CTA4_T}s`);
+      const lead=path.join(workDir,'cta_lead.mp3'), tail=path.join(workDir,'cta_tail.mp3');
+      await silence(CTA4_T, lead); await silence(CTA_TAIL, tail);
+      await concatAudio([lead, cta4Mp3, tail], ctaFinalAudio, workDir);
     }
 
     await checkAndBoostVolume(ctaFinalAudio, 'cta_final_audio');
-    const ctaAudioDur = await audioDur(ctaFinalAudio);
-    console.log(`[CTA-COMBINED] final audio dur=${ctaAudioDur.toFixed(2)}s`);
+    console.log(`[CTA-COMBINED] final audio dur=${(await audioDur(ctaFinalAudio)).toFixed(2)}s`);
 
-    // Record visual for total duration
+    // Record visual
     const ctaRawVideo = path.join(workDir,'clip_cta_combined_raw.mp4');
     const recCta = new PuppeteerScreenRecorder(page, { fps:30, videoFrame:{width:1080,height:1920}, aspectRatio:'9:16', followNewTab:false });
     await recCta.start(ctaRawVideo);
     await new Promise(r=>setTimeout(r, totalCtaDur * 1000));
     await withTimeout(recCta.stop(), TIMEOUT_RECORDER, 'clip_cta_combined recorder.stop()');
 
-    // Re-encode video to h264 (video-only, no audio yet)
+    // Re-encode video-only (no audio)
     const ctaH264 = path.join(workDir,'clip_cta_combined_h264.mp4');
     await ffmpeg(`-y -i "${ctaRawVideo}" -an -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${ctaH264}"`, 'cta_combined reencode');
 
-    // DEFINITIVE AUDIO MUX:
-    // -stream_loop -1 on VIDEO ensures video never runs shorter than audio.
-    // Audio is placed as an independent input — no -shortest so it runs to full length.
-    // -t totalCtaDur clamps both at the known total duration.
+    // Mux: -ac 1 (MONO) + 128k to EXACTLY match other clips → concat won't drop audio.
     const ctaOut = path.join(workDir,'clip_cta_combined.mp4');
     await ffmpeg(
       `-y -stream_loop -1 -i "${ctaH264}" -i "${ctaFinalAudio}" ` +
       `-map 0:v:0 -map 1:a:0 ` +
       `-c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 ` +
-      `-c:a aac -b:a 192k -ar 44100 ` +
+      `-c:a aac -b:a 128k -ar 44100 -ac 1 ` +
       `-t ${totalCtaDur} "${ctaOut}"`,
       'cta_combined mux'
     );
     const ctaActualDur = await videoDur(ctaOut);
     await checkAndBoostVolume(ctaOut, 'clip_cta_combined_out');
-    console.log(`[CTA-COMBINED] final clip: ${ctaActualDur.toFixed(2)}s`);
+    console.log(`[CTA-COMBINED] final clip: ${ctaActualDur.toFixed(2)}s (mono 128k)`);
     pushClip({ path: ctaOut, dur: ctaActualDur });
   }
 
