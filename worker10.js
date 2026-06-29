@@ -1007,11 +1007,11 @@ async function buildVideo(quiz, workDir) {
     await concatAudio(miParts,miAudioRaw,workDir);
     let miAudioDur = await audioDur(miAudioRaw);
     let miAudio = miAudioRaw;
-    if (miAudioDur < 2.5) {
-      const pad=path.join(workDir,'mi_pad.mp3'); await silence(2.5 - miAudioDur, pad);
+    if (miAudioDur < 3.5) {
+      const pad=path.join(workDir,'mi_pad.mp3'); await silence(3.5 - miAudioDur, pad);
       miAudio=path.join(workDir,'mi_audio.mp3');
       await concatAudio([miAudioRaw,pad],miAudio,workDir);
-      miAudioDur = 2.5;
+      miAudioDur = 3.5;
     }
     pushClip(await recordedClip(page, miAudio, miAudioDur, workDir, 'clip_mi'));
 
