@@ -218,10 +218,11 @@ function buildMetadata(quiz) {
   ];
   const cleanTag = t => t
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '')   // remove all special chars, keep letters/numbers/spaces
-    .replace(/\s+/g, ' ')           // collapse spaces
+    .replace(/[^\x00-\x7F]/g, '')   // strip ALL non-ASCII (emojis, unicode)
+    .replace(/[^a-z0-9\s]/g, '')    // strip special chars, keep letters/numbers/spaces
+    .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 30);                  // max 30 chars per tag
+    .slice(0, 30);
 
   const extraTags = [];
   let tagsCharCount = baseTags.join('').length;
@@ -234,8 +235,10 @@ function buildMetadata(quiz) {
     tagsCharCount += cleaned.length;
   }
   const tags = [...baseTags, ...extraTags].slice(0, 30);
+  console.log(`[META] tags sample: ${JSON.stringify(tags.slice(0,5))}`);
 
   console.log(`[META] description length=${description.length} tags=${tags.length}`);
+  console.log(`[META] ALL TAGS: ${JSON.stringify(tags)}`);
   return { title, description, tags, categoryId };
 }
 
@@ -316,6 +319,7 @@ async function uploadToYouTube(accessToken, videoPath, metadata) {
 
   if (!initRes.ok) {
     const err = await initRes.text();
+    console.error(`[YT] Init upload error body: ${err}`);
     throw new Error(`YouTube init upload failed: HTTP ${initRes.status} — ${err}`);
   }
 
