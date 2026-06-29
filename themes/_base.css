@@ -217,7 +217,7 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 .qp-option.wrong{ opacity:0.15; }
 
 .qp-hint{
-  position:absolute; bottom:460px; left:60px; right:60px;
+  position:absolute; bottom:440px; left:60px; right:60px;
   font-size:40px; font-weight:600; color:#ffd166; text-align:center;
   background:rgba(0,0,0,0.82); border:2px dashed #ffd166;
   border-radius:16px; padding:16px 20px; opacity:0; z-index:30;
