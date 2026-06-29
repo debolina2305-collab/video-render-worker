@@ -185,11 +185,22 @@ function buildMetadata(quiz) {
     .filter(h => h.length > 2)
     .join(' ');
 
-  const baseHashtags = `#quiz #trivia #challenge #shorts #youtubeshorts #quiztime #USATrendingChallenge #JaasX #${niche}quiz #${niche}challenge`;
+  const baseHashtags = [
+    // Channel
+    '#quiz #trivia #challenge #shorts #youtubeshorts #quiztime',
+    '#USATrendingChallenge #JaasX',
+    // Niche
+    `#${niche}quiz #${niche}challenge #${niche}trivia`,
+    // US geo + quiz combinations
+    '#USA #US #America #UnitedStates #American',
+    '#USAQuiz #AmericaQuiz #USAChallenge #AmericaChallenge',
+    '#USATrivia #TrendingUSA #USTrending #Trending #Viral',
+  ].join(' ');
 
   // Build description
   const description = [
     `🎯 Play the REAL CHALLENGE: jaasblog.online/quiz/${niche} and earn real ONS tokens!`,
+    `🇺🇸 Trending right now in the United States of America`,
     ``,
     `Challenge ID: ${quizNo}`,
     `${nicheLabel} Challenge No #${nicheNo}`,
@@ -214,12 +225,19 @@ function buildMetadata(quiz) {
     descHashtags,
   ].filter(line => line !== null && line !== undefined).join('\n').slice(0, 5000); // YT max 5000 chars
 
-  // Tags: base + cleaned trending keywords
+  // Tags: base + US geo tags + cleaned trending keywords
   // YouTube rules: plain text only, no special chars, max 30 chars per tag, max 500 chars total
   const baseTags = [
+    // Channel identity
     'quiz', 'trivia', 'challenge', 'shorts', 'youtubeshorts', 'quiztime',
-    'USATrendingChallenge', 'JaasX', niche, `${niche}quiz`, `${niche}challenge`,
-    'ONStoken', 'jaasblog'
+    'USATrendingChallenge', 'JaasX', 'ONStoken', 'jaasblog',
+    // Niche specific
+    niche, `${niche}quiz`, `${niche}challenge`, `${niche}trivia`,
+    // US geo + quiz combinations
+    'usa', 'us', 'america', 'unitedstates', 'american',
+    'usaquiz', 'americaquiz', 'usachallenge', 'americachallenge',
+    'ustrivia', 'americatrivia', 'trendingusa', 'ustrending',
+    'trending', 'viral', 'usatrending'
   ];
   const cleanTag = t => t
     .toLowerCase()
