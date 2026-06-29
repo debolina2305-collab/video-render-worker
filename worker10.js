@@ -1038,12 +1038,15 @@ async function buildVideo(quiz, workDir) {
     const cta4SourceDur = await audioDur(cta4Mp3);
     console.log(`[CTA-COMBINED] cta4 source dur=${cta4SourceDur.toFixed(2)}s`);
 
-    // Timeline:
-    // 0.1s → LIKE pill + SFX
-    // 0.8s → SHARE pill + SFX
-    // 1.5s → SUBSCRIBE pill + SFX
-    // 2.3s → CTA4 card + CTA4 AUDIO
-    const LIKE_T  = 0.1, SHARE_T = 0.8, SUB_T = 1.5, CTA4_T = 2.3, CTA_TAIL = 0.5;
+    // Timeline — SFX fires at animation-delay + 0.25s (midpoint of 0.5s pop animation)
+    // so the sound hits exactly when the pill feels "arrived" not when it starts scaling in.
+    // CSS animation-delay: LIKE=0.1s, SHARE=0.8s, SUB=1.5s → add 0.25s offset each
+    // CTA4 card: animation-delay=2.3s + 0.25s offset
+    const LIKE_T  = 0.35;   // 0.10 + 0.25
+    const SHARE_T = 1.05;   // 0.80 + 0.25
+    const SUB_T   = 1.75;   // 1.50 + 0.25
+    const CTA4_T  = 2.55;   // 2.30 + 0.25
+    const CTA_TAIL = 0.5;
     const totalCtaDur = CTA4_T + cta4SourceDur + CTA_TAIL;
     console.log(`[CTA-COMBINED] total screen dur=${totalCtaDur.toFixed(2)}s`);
 
