@@ -209,18 +209,29 @@ function buildMetadata(quiz) {
     hashtagsFromKw,
   ].filter(line => line !== null && line !== undefined).join('\n').slice(0, 5000); // YT max 5000 chars
 
-  // Tags: base + trending keywords (YouTube max 500 chars total)
+  // Tags: base + cleaned trending keywords
+  // YouTube rules: plain text only, no special chars, max 30 chars per tag, max 500 chars total
   const baseTags = [
-    'quiz','trivia','challenge','shorts','youtubeshorts','quiztime',
-    'USATrendingChallenge','JaasX', niche, `${niche}quiz`, `${niche}challenge`,
-    'ONStoken','jaasblog'
+    'quiz', 'trivia', 'challenge', 'shorts', 'youtubeshorts', 'quiztime',
+    'USATrendingChallenge', 'JaasX', niche, `${niche}quiz`, `${niche}challenge`,
+    'ONStoken', 'jaasblog'
   ];
-  let tagsTotal = baseTags.join('').length;
+  const cleanTag = t => t
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')   // remove all special chars, keep letters/numbers/spaces
+    .replace(/\s+/g, ' ')           // collapse spaces
+    .trim()
+    .slice(0, 30);                  // max 30 chars per tag
+
   const extraTags = [];
+  let tagsCharCount = baseTags.join('').length;
   for (const kw of kwRaw) {
-    const clean = kw.slice(0, 30);
-    if (tagsTotal + clean.length < 480) { extraTags.push(clean); tagsTotal += clean.length; }
-    if (extraTags.length >= 17) break; // keep total ≤ 30
+    const cleaned = cleanTag(kw);
+    if (!cleaned || cleaned.length < 2) continue;
+    if (tagsCharCount + cleaned.length > 480) break;
+    if (extraTags.length >= 17) break;
+    extraTags.push(cleaned);
+    tagsCharCount += cleaned.length;
   }
   const tags = [...baseTags, ...extraTags].slice(0, 30);
 
