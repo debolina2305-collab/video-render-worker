@@ -47,9 +47,9 @@
 .challenge-no {
   position:absolute; top:148px; left:50%; transform:translateX(-50%);
   z-index:51; white-space:nowrap;
-  font-size:24px; font-weight:700; letter-spacing:2px;
-  color:rgba(255,255,255,0.65);
-  text-shadow:0 0 14px rgba(255,210,74,0.5);
+  font-size:34px; font-weight:900; letter-spacing:3px;
+  color:#ffd24a;
+  text-shadow:0 0 18px rgba(255,210,74,0.9), 0 0 36px rgba(255,210,74,0.5), 0 2px 8px rgba(0,0,0,0.9);
 }
 
 /* ===== LOGO ===== */
@@ -104,10 +104,30 @@
 @keyframes pulseCorrect { 0%,100%{transform:scale(1);} 50%{transform:scale(1.025);} }
 .qp-option.wrong { opacity:0.15; }
 
-/* ===== QUESTION fade-in ===== */
+/* ===== QUESTION fade-in — dramatic first appearance ===== */
 .question-appear-slide .qp-card-question {
-  animation: _fadeIn 0.6s ease-out forwards !important;
+  animation: qRevealIn 0.6s cubic-bezier(.34,1.8,.64,1) forwards !important;
   opacity:0;
+  border-color:var(--accent-1) !important;
+  box-shadow:0 0 80px color-mix(in srgb,var(--accent-1) 60%,transparent),
+             0 0 160px color-mix(in srgb,var(--accent-3) 30%,transparent),
+             0 24px 60px rgba(0,0,0,0.6) !important;
+  background:rgba(255,255,255,0.1) !important;
+}
+@keyframes qRevealIn {
+  0%   { opacity:0; transform:scale(0.85) translateY(40px); }
+  60%  { opacity:1; transform:scale(1.04) translateY(-8px); }
+  100% { opacity:1; transform:scale(1) translateY(0); }
+}
+.question-appear-slide .qp-question {
+  font-size:62px !important;
+  text-shadow:0 0 30px rgba(255,255,255,0.3), 0 4px 16px rgba(0,0,0,0.8);
+}
+/* After reveal, subsequent slides use normal smaller size to fit options */
+.question-static .qp-question,
+.options-waiting-slide .qp-question,
+.question-phase .qp-question {
+  font-size:48px !important;
 }
 
 /* ===== MISSION IMPOSSIBLE — dramatic fly-in title, then question fades in ===== */
@@ -489,101 +509,130 @@
 }
 
 
-/* ===== Question-wait: big challenge number shown during intro audio ===== */
+/* ===== Question-wait: BREAKING NEWS style challenge number during intro audio ===== */
 .qwait-challenge-badge {
   display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:18px; padding:60px 48px; border-radius:48px;
-  background:rgba(255,255,255,0.07);
-  border:3px solid rgba(255,255,255,0.18);
-  backdrop-filter:blur(12px);
-  box-shadow:0 0 120px rgba(255,255,255,0.08), 0 24px 80px rgba(0,0,0,0.5);
-  animation:qwaitBadgeIn 0.5s cubic-bezier(.34,1.8,.64,1) forwards;
+  gap:24px; padding:70px 56px; border-radius:0;
+  background:linear-gradient(180deg, rgba(180,0,0,0.92) 0%, rgba(80,0,0,0.96) 100%);
+  border-top:8px solid #ffd24a;
+  border-bottom:8px solid #ffd24a;
+  width:100%;
+  box-shadow:0 0 120px rgba(220,0,0,0.7), 0 24px 80px rgba(0,0,0,0.7);
+  animation:qwaitBreakIn 0.4s cubic-bezier(.17,.67,.27,1.2) forwards;
+  opacity:0;
 }
-@keyframes qwaitBadgeIn {
-  from { opacity:0; transform:scale(0.7); }
-  to   { opacity:1; transform:scale(1); }
+@keyframes qwaitBreakIn {
+  from { opacity:0; transform:scaleY(0.1); }
+  to   { opacity:1; transform:scaleY(1); }
 }
-.qwait-label {
-  font-size:44px; font-weight:900; letter-spacing:12px; text-transform:uppercase;
-  color:var(--accent-1);
-  text-shadow:0 0 40px color-mix(in srgb,var(--accent-1) 80%,transparent);
+.qwait-breaking {
+  font-size:44px; font-weight:900; letter-spacing:6px; text-transform:uppercase;
+  color:#ffd24a;
+  text-shadow:0 0 20px rgba(255,210,74,0.9), 0 2px 8px rgba(0,0,0,0.9);
+  animation:qwaitBlinkRed 0.8s ease-in-out infinite alternate;
+}
+@keyframes qwaitBlinkRed {
+  from { opacity:0.8; } to { opacity:1; letter-spacing:8px; }
 }
 .qwait-no {
-  font-size:110px; font-weight:900; line-height:1;
+  font-size:88px; font-weight:900; line-height:1; text-align:center;
   color:#fff;
-  text-shadow:0 0 60px rgba(255,255,255,0.6), 0 4px 24px rgba(0,0,0,0.8);
-  animation:qwaitNoPulse 1.2s ease-in-out infinite alternate;
+  text-shadow:0 0 40px rgba(255,255,255,0.8), 0 0 80px rgba(255,210,74,0.4), 0 4px 24px rgba(0,0,0,0.9);
+  animation:qwaitNoPulse 1s ease-in-out infinite alternate;
 }
 @keyframes qwaitNoPulse {
-  from { text-shadow:0 0 40px rgba(255,255,255,0.4); }
-  to   { text-shadow:0 0 80px rgba(255,255,255,0.9), 0 0 120px color-mix(in srgb,var(--accent-2) 60%,transparent); }
+  from { transform:scale(1); }
+  to   { transform:scale(1.04); text-shadow:0 0 60px rgba(255,255,255,1), 0 0 120px rgba(255,210,74,0.6); }
 }
 .qwait-sublabel {
-  font-size:38px; font-weight:700; letter-spacing:4px;
-  color:var(--accent-2); opacity:0.85;
-  animation:qwaitSubBlink 1s ease-in-out infinite alternate;
+  font-size:40px; font-weight:800; letter-spacing:2px;
+  color:#fff; opacity:0.9;
+  animation:qwaitSubBlink 0.6s ease-in-out infinite alternate;
 }
 @keyframes qwaitSubBlink {
-  from { opacity:0.6; } to { opacity:1; }
+  from { opacity:0.7; transform:scale(1); }
+  to   { opacity:1;   transform:scale(1.03); }
 }
 
-/* ===== COMBINED CTA SCREEN (cta3 + cta4 merged) ===== */
-.cta-combined-pills {
-  display:flex; flex-direction:row; gap:18px; justify-content:center; flex-wrap:wrap;
-  animation:ctaPillsIn 0.5s cubic-bezier(.34,1.8,.64,1) forwards;
-  opacity:0;
-}
-@keyframes ctaPillsIn { to { opacity:1; transform:translateY(0); } from { opacity:0; transform:translateY(-30px); } }
-
+/* ===== COMBINED CTA SCREEN (like → share → subscribe → cta4) ===== */
+/* Each pill is full-width, appears one by one via animation-delay */
 .cta-pill {
-  padding:20px 36px; border-radius:100px; font-size:36px; font-weight:900;
-  letter-spacing:2px; display:inline-flex; align-items:center; gap:10px;
-  animation:ctaPillPop 0.45s cubic-bezier(.34,1.8,.64,1) both;
+  width:100%; padding:36px 48px; border-radius:28px;
+  font-size:56px; font-weight:900; letter-spacing:3px;
+  display:flex; align-items:center; justify-content:center; gap:20px;
+  animation:ctaPillPop 0.5s cubic-bezier(.34,1.8,.64,1) both;
   opacity:0;
 }
-@keyframes ctaPillPop { from{opacity:0;transform:scale(0.4);} to{opacity:1;transform:scale(1);} }
-.cta-pill-like  { background:linear-gradient(135deg,#e8003d,#ff6b6b); color:#fff; box-shadow:0 0 40px rgba(232,0,61,0.6); }
-.cta-pill-share { background:linear-gradient(135deg,#0099ff,#00cfff); color:#fff; box-shadow:0 0 40px rgba(0,153,255,0.6); }
-.cta-pill-sub   { background:linear-gradient(135deg,#ff6600,#ffcc00); color:#fff; box-shadow:0 0 40px rgba(255,102,0,0.6); }
+@keyframes ctaPillPop {
+  from { opacity:0; transform:scale(0.3) translateX(-60px); }
+  60%  { transform:scale(1.06) translateX(6px); }
+  to   { opacity:1; transform:scale(1) translateX(0); }
+}
+.cta-pill-like  {
+  background:linear-gradient(135deg,#c80030,#ff4466);
+  color:#fff; box-shadow:0 0 60px rgba(200,0,48,0.7), 0 12px 40px rgba(0,0,0,0.5);
+  border:3px solid rgba(255,100,120,0.5);
+}
+.cta-pill-share {
+  background:linear-gradient(135deg,#0055cc,#00aaff);
+  color:#fff; box-shadow:0 0 60px rgba(0,85,204,0.7), 0 12px 40px rgba(0,0,0,0.5);
+  border:3px solid rgba(0,180,255,0.5);
+}
+.cta-pill-sub {
+  background:linear-gradient(135deg,#cc4400,#ff8800);
+  color:#fff; box-shadow:0 0 60px rgba(204,68,0,0.7), 0 12px 40px rgba(0,0,0,0.5);
+  border:3px solid rgba(255,150,0,0.5);
+}
+
+.cta-divider {
+  width:80%; height:3px;
+  background:linear-gradient(90deg, transparent, #ffd24a, transparent);
+  box-shadow:0 0 20px rgba(255,210,74,0.6);
+  animation:ctaDividerIn 0.4s ease-out both;
+  opacity:0;
+}
+@keyframes ctaDividerIn { to{opacity:1;} }
 
 .cta-combined-card {
-  width:100%; border-radius:36px; padding:36px 40px;
-  background:rgba(255,255,255,0.09);
-  border:2.5px solid rgba(255,255,255,0.22);
+  width:100%; border-radius:36px; padding:40px 44px;
+  background:rgba(255,210,74,0.08);
+  border:3px solid rgba(255,210,74,0.5);
   backdrop-filter:blur(12px);
-  box-shadow:0 0 60px rgba(255,255,255,0.08), 0 16px 48px rgba(0,0,0,0.5);
+  box-shadow:0 0 80px rgba(255,210,74,0.25), 0 16px 48px rgba(0,0,0,0.6);
   display:flex; flex-direction:row; align-items:center; gap:24px;
   animation:ctaCardSlideUp 0.5s cubic-bezier(.34,1.8,.64,1) both;
   opacity:0;
 }
-@keyframes ctaCardSlideUp { from{opacity:0;transform:translateY(40px);} to{opacity:1;transform:translateY(0);} }
-.cta-card-bottom { border-color:rgba(255,210,74,0.4); box-shadow:0 0 60px rgba(255,210,74,0.15), 0 16px 48px rgba(0,0,0,0.5); }
+@keyframes ctaCardSlideUp {
+  from { opacity:0; transform:translateY(50px) scale(0.9); }
+  to   { opacity:1; transform:translateY(0) scale(1); }
+}
 
 .cta-combined-icon {
-  font-size:64px; flex-shrink:0;
-  filter:drop-shadow(0 0 20px rgba(255,255,255,0.5));
-  animation:ctaIconPulse 1.5s ease-in-out infinite alternate;
+  font-size:72px; flex-shrink:0;
+  animation:ctaIconPulse 1.2s ease-in-out infinite alternate;
 }
-@keyframes ctaIconPulse { from{transform:scale(1);} to{transform:scale(1.15);} }
-.cta4-accent { color:var(--accent-3); filter:drop-shadow(0 0 20px rgba(255,210,74,0.7)); }
+@keyframes ctaIconPulse { from{transform:scale(1);} to{transform:scale(1.2) rotate(10deg);} }
+.cta4-accent { color:var(--accent-3); filter:drop-shadow(0 0 24px rgba(255,210,74,0.8)); }
 
 .cta-combined-text {
-  font-size:48px; font-weight:900; line-height:1.25; color:#fff;
-  text-shadow:0 0 30px rgba(255,255,255,0.4), 0 4px 16px rgba(0,0,0,0.8);
+  font-size:52px; font-weight:900; line-height:1.25; color:#ffd24a;
+  text-shadow:0 0 30px rgba(255,210,74,0.6), 0 4px 16px rgba(0,0,0,0.8);
 }
 .cta-combined-text.cta4-accent {
-  color:var(--accent-3);
-  text-shadow:0 0 30px rgba(255,210,74,0.6), 0 4px 16px rgba(0,0,0,0.8);
+  color:#fff;
+  text-shadow:0 0 30px rgba(255,255,255,0.4), 0 4px 16px rgba(0,0,0,0.8);
 }
 
 .cta-combined-arrow {
-  font-size:96px; line-height:1;
-  animation:ctaArrowBounce 0.6s ease-in-out infinite alternate, ctaArrowIn 0.5s cubic-bezier(.34,1.8,.64,1) both;
-  filter:drop-shadow(0 0 24px rgba(255,210,74,0.8));
+  font-size:100px; line-height:1;
+  animation:ctaArrowBounce 0.55s ease-in-out infinite alternate,
+            ctaArrowIn 0.4s ease both;
+  filter:drop-shadow(0 0 28px rgba(255,210,74,0.9));
   opacity:0;
 }
-@keyframes ctaArrowIn   { to{opacity:1;} }
-@keyframes ctaArrowBounce { from{transform:translateY(0);} to{transform:translateY(18px);} }
+@keyframes ctaArrowIn   { to{ opacity:1; } }
+@keyframes ctaArrowBounce { from{transform:translateY(0) scale(1);} to{transform:translateY(20px) scale(1.1);} }
 
 /* ===== Helper: hide an element completely ===== */
 .hidden-pre-reveal { opacity:0 !important; visibility:hidden !important; }
@@ -621,11 +670,11 @@
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
     <div class="content" style="justify-content:center;align-items:center;gap:0;">
-      <!-- Big challenge number shown while question_intro_audio plays -->
+      <!-- Breaking-news style challenge number shown while question_intro_audio plays -->
       <div class="qwait-challenge-badge">
-        <div class="qwait-label">CHALLENGE</div>
-        <div class="qwait-no"># {{quiz_no}}</div>
-        <div class="qwait-sublabel">Get ready…</div>
+        <div class="qwait-breaking">🔴 LIVE CHALLENGE</div>
+        <div class="qwait-no">{{quiz_no}}</div>
+        <div class="qwait-sublabel">⚡ Get ready to answer! ⚡</div>
       </div>
       <div class="qp-card-question" style="opacity:0;animation:none;position:absolute;">
         <div class="qp-question">{{question}}</div>
@@ -907,9 +956,7 @@
     </div>
   </div>
 
-  <!-- COMBINED CTA SCREEN — replaces both comment-cta-screen and cta4-screen.
-       Shows like/share/subscribe + cta3_text + cta4_text in one high-impact screen.
-       Audio: cta3_audio + cta4_audio concatenated together. -->
+  <!-- COMBINED CTA SCREEN — like/share/subscribe one by one, then cta4 -->
   <div class="screen comment-cta-screen">
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="challenge-no">{{quiz_no}}</div>
@@ -922,29 +969,28 @@
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
     {{theme_deco_html}}
-    <div class="content" style="justify-content:center;gap:32px;">
+    <div class="content" style="justify-content:center;gap:36px;">
 
-      <!-- Row 1: Like / Share / Subscribe pills — fly in -->
-      <div class="cta-combined-pills">
-        <span class="cta-pill cta-pill-like"  style="animation-delay:0s;">👍 LIKE</span>
-        <span class="cta-pill cta-pill-share" style="animation-delay:0.2s;">🔁 SHARE</span>
-        <span class="cta-pill cta-pill-sub"   style="animation-delay:0.4s;">🔔 SUBSCRIBE</span>
-      </div>
+      <!-- Like — appears first -->
+      <div class="cta-pill cta-pill-like" style="animation-delay:0.1s;">👍 LIKE</div>
 
-      <!-- Row 2: cta3_text card — slide up -->
-      <div class="cta-combined-card cta-card-top" style="animation-delay:0.3s;">
-        <div class="cta-combined-icon">💬</div>
-        <div class="cta-combined-text">{{cta3_text}}</div>
-      </div>
+      <!-- Share — appears second -->
+      <div class="cta-pill cta-pill-share" style="animation-delay:0.8s;">🔁 SHARE</div>
 
-      <!-- Row 3: cta4_text card — slide up with delay, accent colour -->
-      <div class="cta-combined-card cta-card-bottom" style="animation-delay:0.55s;">
+      <!-- Subscribe — appears third -->
+      <div class="cta-pill cta-pill-sub" style="animation-delay:1.5s;">🔔 SUBSCRIBE</div>
+
+      <!-- Divider line -->
+      <div class="cta-divider" style="animation-delay:2.1s;"></div>
+
+      <!-- CTA4 — appears last, gold accent, most prominent -->
+      <div class="cta-combined-card cta-card-bottom" style="animation-delay:2.3s;">
         <div class="cta-combined-icon cta4-accent">✍️</div>
         <div class="cta-combined-text cta4-accent">{{cta4_text}}</div>
       </div>
 
-      <!-- Row 4: bouncing arrow -->
-      <div class="cta-combined-arrow" style="animation-delay:0.7s;">👇</div>
+      <!-- Bouncing arrow -->
+      <div class="cta-combined-arrow" style="animation-delay:2.8s;">👇</div>
 
     </div>
   </div>
