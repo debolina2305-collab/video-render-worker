@@ -39,7 +39,7 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 /* ═══ NICHE MARQUEE — "Sports Challenge No #18" etc.
    Bold, centered, lucrative design — shown on every screen. ═══ */
 .niche-marquee {
-  position:relative; z-index:10; width:100%; min-height:88px; margin-top:185px;
+  position:relative; z-index:10; width:100%; min-height:88px; margin-top:220px;
   background:linear-gradient(135deg, #0a0a0a 0%, #1a1200 50%, #0a0a0a 100%);
   border-top:3px solid #ffd24a; border-bottom:3px solid #ffd24a;
   display:flex; align-items:center; justify-content:center; flex-wrap:wrap;
@@ -233,7 +233,7 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 .question-phase .qp-timer-wrap     { margin-bottom:10px; width:130px; height:130px; }
 .question-phase .qp-timer-ring     { width:130px; height:130px; }
 .question-phase .qp-options        { gap:8px; }
-.question-phase .qp-option         { padding:14px 20px; font-size:32px; }
+.question-phase .qp-option         { padding:14px 20px; font-size:34px; }
 .question-phase .qp-option-badge   { width:46px; height:46px; font-size:24px; }
 
 /* ═══════════════════════════════════════════════════════════
