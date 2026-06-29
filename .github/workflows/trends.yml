@@ -2,7 +2,26 @@ name: Fetch Trending Topics
 
 on:
   schedule:
-    - cron: '0 */12 * * *'   # every 3 hours
+   # Slot 1:  7:05 AM ET  → 12:05 UTC
+    - cron: '5 12 * * *'
+    # Slot 2:  8:17 AM ET  → 13:17 UTC  (peak morning commute)
+    - cron: '17 13 * * *'
+    # Slot 3: 10:43 AM ET  → 15:43 UTC  (mid-morning break)
+    - cron: '43 15 * * *'
+    # Slot 4: 12:11 PM ET  → 17:11 UTC  (lunch peak)
+    - cron: '11 17 * * *'
+    # Slot 5:  1:38 PM ET  → 18:38 UTC  (post-lunch scroll)
+    - cron: '38 18 * * *'
+    # Slot 6:  3:22 PM ET  → 20:22 UTC  (school out, afternoon peak)
+    - cron: '22 20 * * *'
+    # Slot 7:  5:07 PM ET  → 22:07 UTC  (evening commute)
+    - cron: '7 22 * * *'
+    # Slot 8:  7:33 PM ET  → 00:33 UTC  (prime time starts)
+    - cron: '33 0 * * *'
+    # Slot 9:  9:11 PM ET  → 02:11 UTC  (peak prime time)
+    - cron: '11 2 * * *'
+    # Slot 10: 10:47 PM ET → 03:47 UTC  (late night scroll)
+    - cron: '47 3 * * *'
   workflow_dispatch:
     inputs:
       mode:
