@@ -90,51 +90,152 @@ async function downloadVideo(videoUrl, destPath) {
 }
 
 // ─────────────────────────────────────────────
+// NICHE-SPECIFIC FIXED DESCRIPTION BLOCKS
+// ─────────────────────────────────────────────
+const NICHE_DESC = {
+  sports: [
+    `🏆 Love sports trivia? You're in the right place!`,
+    `Every day we drop a new sports challenge — football, cricket, basketball, tennis, F1 and more.`,
+    `Train your sports brain, beat your friends, and climb the leaderboard on jaasblog.online`,
+  ].join('\n'),
+  finance: [
+    `💰 Boost your financial IQ one question at a time!`,
+    `From stock markets to crypto, economics to personal finance — we make money knowledge fun.`,
+    `Play the real challenge and earn ONS tokens at jaasblog.online`,
+  ].join('\n'),
+  tech: [
+    `💻 Stay ahead in tech with daily challenges!`,
+    `AI, coding, gadgets, startups — test your tech knowledge against the world.`,
+    `Level up your tech IQ at jaasblog.online`,
+  ].join('\n'),
+  entertainment: [
+    `🎬 How well do you know pop culture, movies, music and TV?`,
+    `Daily entertainment trivia that keeps you sharp and your friends jealous.`,
+    `Play the full challenge at jaasblog.online`,
+  ].join('\n'),
+  news: [
+    `📰 Stay sharp on current events with daily news challenges!`,
+    `Test your knowledge of breaking news, global events and trending topics.`,
+    `Join the conversation at jaasblog.online`,
+  ].join('\n'),
+  general: [
+    `🧠 Think you know everything? Prove it!`,
+    `Daily general knowledge challenges covering every topic imaginable.`,
+    `Compete with players worldwide at jaasblog.online`,
+  ].join('\n'),
+};
+
+// ─────────────────────────────────────────────
 // BUILD YouTube metadata from quiz row
 // ─────────────────────────────────────────────
 function buildMetadata(quiz) {
   const niche = (quiz.niche || 'general').toLowerCase();
 
-  // Category IDs: 22=People&Blogs, 17=Sports, 28=Science&Tech, 24=Entertainment, 25=News
   const categoryMap = {
-    sports:        '17',
-    tech:          '28',
-    technology:    '28',
-    finance:       '22',
-    entertainment: '24',
-    news:          '25',
-    general:       '22'
+    sports:'17', tech:'28', technology:'28',
+    finance:'22', entertainment:'24', news:'25', general:'22'
   };
   const categoryId = categoryMap[niche] || '22';
 
-  // Title — use youtube_title from DB, fallback to topic
   const title = (quiz.youtube_title || quiz.topic || 'Quiz Challenge').slice(0, 100);
-
-  // Description
-  const niceNo = quiz.niche_challenge_no || quiz.quiz_no || '';
   const nicheLabel = niche.charAt(0).toUpperCase() + niche.slice(1);
+  const nicheNo    = quiz.niche_challenge_no || '';
+  const quizNo     = quiz.quiz_no || '';
+  const nicheFixed = NICHE_DESC[niche] || NICHE_DESC.general;
+
+  // Trending keywords → hashtags (clean, no spaces, max 20)
+  const kwRaw = (quiz.trend_keywords || '').split(',').map(t => t.trim()).filter(Boolean);
+  const hashtagsFromKw = kwRaw
+    .slice(0, 20)
+    .map(k => '#' + k.replace(/[^a-zA-Z0-9]/g, ''))
+    .filter(h => h.length > 1)
+    .join(' ');
+
+  // Base hashtags
+  const baseHashtags = `#quiz #trivia #challenge #shorts #youtubeshorts #quiztime #USATrendingChallenge #JaasX #${niche}quiz #${niche}challenge`;
+
+  // Build description
   const description = [
+    `🎯 Play the REAL CHALLENGE: jaasblog.online/quiz/${niche} and earn real ONS tokens!`,
+    ``,
+    `Challenge ID: ${quizNo}`,
+    `${nicheLabel} Challenge No #${nicheNo}`,
+    ``,
     `${title}`,
     ``,
-    `🏆 ${nicheLabel} Challenge No #${niceNo}`,
+    `⚡ Can YOU answer this? Drop your answer in the comments below!`,
     ``,
-    `Can YOU answer this? Drop your answer in the comments!`,
+    // Answer explanation — gives SEO-rich unique content per video
+    quiz.explanation_1 ? `📚 EXPLANATION:\n${quiz.explanation_1}` : '',
     ``,
-    quiz.affiliate_url ? `🎯 Play the REAL CHALLENGE and earn ONS tokens: ${quiz.affiliate_url}` : `🎯 Play the REAL CHALLENGE: ${quiz.blog_page_url || 'https://jaasblog.online'}`,
+    `━━━━━━━━━━━━━━━━━━━━━━━━━`,
+    nicheFixed,
+    `━━━━━━━━━━━━━━━━━━━━━━━━━`,
     ``,
-    `📌 Like • Share • Subscribe for daily challenges!`,
+    `📌 Like • Share • Subscribe → New challenge every day!`,
+    `🔔 Hit the bell so you never miss a challenge!`,
     ``,
-    `#quiz #challenge #trivia #${niche} #shorts #youtubeshorts #quiztime #USATrendingChallenge`
-  ].join('\n');
+    // Trending keywords as plain text for SEO
+    kwRaw.length ? `🔥 TRENDING: ${kwRaw.slice(0, 15).join(', ')}` : '',
+    ``,
+    `${baseHashtags}`,
+    hashtagsFromKw,
+  ].filter(line => line !== null && line !== undefined).join('\n').slice(0, 5000); // YT max 5000 chars
 
-  // Tags
-  const tags = [
-    'quiz', 'trivia', 'challenge', niche, 'shorts', 'youtubeshorts',
-    'quiztime', 'USATrendingChallenge', 'JaasX',
-    ...(quiz.trend_keywords || '').split(',').map(t => t.trim()).filter(Boolean).slice(0, 10)
-  ].slice(0, 30); // YouTube max 30 tags
+  // Tags: base + trending keywords (YouTube max 500 chars total)
+  const baseTags = [
+    'quiz','trivia','challenge','shorts','youtubeshorts','quiztime',
+    'USATrendingChallenge','JaasX', niche, `${niche}quiz`, `${niche}challenge`,
+    'ONStoken','jaasblog'
+  ];
+  let tagsTotal = baseTags.join('').length;
+  const extraTags = [];
+  for (const kw of kwRaw) {
+    const clean = kw.slice(0, 30);
+    if (tagsTotal + clean.length < 480) { extraTags.push(clean); tagsTotal += clean.length; }
+    if (extraTags.length >= 17) break; // keep total ≤ 30
+  }
+  const tags = [...baseTags, ...extraTags].slice(0, 30);
 
+  console.log(`[META] description length=${description.length} tags=${tags.length}`);
   return { title, description, tags, categoryId };
+}
+
+// ─────────────────────────────────────────────
+// SET Custom Thumbnail from R2
+// ─────────────────────────────────────────────
+async function setThumbnail(accessToken, videoId, thumbnailUrl) {
+  if (!thumbnailUrl) { console.log('[THUMB] No thumbnail_url — skipping'); return; }
+  try {
+    console.log(`[THUMB] Downloading thumbnail: ${thumbnailUrl.slice(0,70)}...`);
+    const res = await fetch(thumbnailUrl);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    console.log(`[THUMB] Downloaded ${(buf.length/1024).toFixed(0)} KB — uploading to YouTube...`);
+
+    const thumbRes = await fetch(
+      `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${videoId}&uploadType=media`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'image/png',
+          'Content-Length': String(buf.length)
+        },
+        body: buf
+      }
+    );
+
+    if (!thumbRes.ok) {
+      const err = await thumbRes.text();
+      // Thumbnail upload failure is non-fatal — video is already live
+      console.warn(`[THUMB] Upload failed (non-fatal): HTTP ${thumbRes.status} — ${err.slice(0,200)}`);
+      return;
+    }
+    console.log(`[THUMB] ✓ Custom thumbnail set successfully`);
+  } catch (e) {
+    console.warn(`[THUMB] Failed (non-fatal): ${e.message}`);
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -266,7 +367,10 @@ async function processPublish() {
     // 4. Upload to YouTube
     const { videoId, youtubeUrl } = await uploadToYouTube(accessToken, videoPath, metadata);
 
-    // 5. Update Supabase — mark as published
+    // 5. Set custom thumbnail from R2
+    await setThumbnail(accessToken, videoId, quiz.thumbnail_url);
+
+    // 6. Update Supabase — mark as published
     await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -280,7 +384,7 @@ async function processPublish() {
     console.log(`[PUBLISHER] ✓ Published: ${youtubeUrl}`);
     console.log(`[PUBLISHER] ✓ quiz.youtube_video_id = ${videoId}`);
 
-    // 6. Cleanup
+    // 7. Cleanup
     await fs.unlink(videoPath).catch(() => {});
 
   } catch (e) {
