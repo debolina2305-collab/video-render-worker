@@ -93,36 +93,63 @@ async function downloadVideo(videoUrl, destPath) {
 // NICHE-SPECIFIC FIXED DESCRIPTION BLOCKS
 // ─────────────────────────────────────────────
 const NICHE_DESC = {
-  sports: [
-    `🏆 Love sports trivia? You're in the right place!`,
-    `Every day we drop a new sports challenge — football, cricket, basketball, tennis, F1 and more.`,
-    `Train your sports brain, beat your friends, and climb the leaderboard on jaasblog.online`,
-  ].join('\n'),
-  finance: [
-    `💰 Boost your financial IQ one question at a time!`,
-    `From stock markets to crypto, economics to personal finance — we make money knowledge fun.`,
-    `Play the real challenge and earn ONS tokens at jaasblog.online`,
-  ].join('\n'),
-  tech: [
-    `💻 Stay ahead in tech with daily challenges!`,
-    `AI, coding, gadgets, startups — test your tech knowledge against the world.`,
-    `Level up your tech IQ at jaasblog.online`,
-  ].join('\n'),
-  entertainment: [
-    `🎬 How well do you know pop culture, movies, music and TV?`,
-    `Daily entertainment trivia that keeps you sharp and your friends jealous.`,
-    `Play the full challenge at jaasblog.online`,
-  ].join('\n'),
-  news: [
-    `📰 Stay sharp on current events with daily news challenges!`,
-    `Test your knowledge of breaking news, global events and trending topics.`,
-    `Join the conversation at jaasblog.online`,
-  ].join('\n'),
-  general: [
-    `🧠 Think you know everything? Prove it!`,
-    `Daily general knowledge challenges covering every topic imaginable.`,
-    `Compete with players worldwide at jaasblog.online`,
-  ].join('\n'),
+
+  general: `🧠 Think you know everything? Let's find out!
+
+Welcome to USA Trending Challenge — where we turn today's hottest trending topics into quiz challenges that test your real-world knowledge.
+
+Every day, a new challenge. Every answer, a chance to prove you're smarter than 99% of viewers.
+
+💡 Play the REAL interactive challenge, earn ONS tokens, and compete with players worldwide at jaasblog.online`,
+
+  sports: `🏆 How deep is your sports knowledge?
+
+From World Cup drama to NBA finals, F1 pit stops to Wimbledon classics — USA Trending Challenge covers every sport trending right now in America and beyond.
+
+Answer today's challenge, drop your score in the comments, and challenge your friends!
+
+💡 Play the full interactive sports challenge and earn ONS tokens at jaasblog.online/quiz/sports`,
+
+  finance: `💰 Your financial IQ is being tested — right now.
+
+Markets crash, crypto spikes, companies rise and fall — do you understand what's really happening with money?
+
+USA Trending Challenge makes finance fun, fast, and competitive. One question. Ten seconds. How smart is your money brain?
+
+💡 Play the full finance challenge and earn ONS tokens at jaasblog.online/quiz/finance`,
+
+  tech: `💻 The tech world moves fast — can you keep up?
+
+AI breakthroughs, startup collapses, gadget launches, coding legends — if it's trending in tech, we're quizzing it.
+
+USA Trending Challenge keeps your tech knowledge razor-sharp with daily bite-sized challenges built from real headlines.
+
+💡 Play the full tech challenge and earn ONS tokens at jaasblog.online/quiz/tech`,
+
+  entertainment: `🎬 Pop culture. Movies. Music. TV. All trending. All quizzed.
+
+Think you know your Oscars from your Grammys? Your Marvel from your DC? Your Billboard Hot 100 from your Spotify Wrapped?
+
+USA Trending Challenge puts your entertainment knowledge on trial — daily, fast, and totally addictive.
+
+💡 Play the full entertainment challenge and earn ONS tokens at jaasblog.online/quiz/entertainment`,
+
+  news: `📰 The world is moving fast. Are you keeping up?
+
+From geopolitics to viral moments, election results to breaking headlines — USA Trending Challenge quizzes you on what's actually happening in the world today.
+
+Stay informed, stay sharp, and beat everyone else in the comments.
+
+💡 Play the full news challenge and earn ONS tokens at jaasblog.online/quiz/news`,
+
+  health: `🏥 How much do you really know about health and wellness?
+
+From medical breakthroughs to nutrition myths, mental health to fitness trends — USA Trending Challenge tests your health IQ with real questions from real headlines.
+
+One question. Ten seconds. Could save your life — or at least win an argument.
+
+💡 Play the full health challenge and earn ONS tokens at jaasblog.online/quiz/health`,
+
 };
 
 // ─────────────────────────────────────────────
