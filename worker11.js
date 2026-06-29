@@ -170,15 +170,21 @@ function buildMetadata(quiz) {
   const quizNo     = quiz.quiz_no || '';
   const nicheFixed = NICHE_DESC[niche] || NICHE_DESC.general;
 
-  // Trending keywords → hashtags (clean, no spaces, max 20)
+  // Parse trending keywords — used in both description (raw) and tags (cleaned)
   const kwRaw = (quiz.trend_keywords || '').split(',').map(t => t.trim()).filter(Boolean);
-  const hashtagsFromKw = kwRaw
-    .slice(0, 20)
-    .map(k => '#' + k.replace(/[^a-zA-Z0-9]/g, ''))
-    .filter(h => h.length > 1)
+
+  // Description: use RAW trend_keywords (full phrases, special chars OK in description)
+  const rawTrendingLine = kwRaw.length
+    ? `🔥 TRENDING: ${kwRaw.slice(0, 20).join(', ')}`
+    : '';
+
+  // Description hashtags: only short clean ones from top 5 keywords (visible + clickable)
+  const descHashtags = kwRaw
+    .slice(0, 5)
+    .map(k => '#' + k.replace(/[^a-zA-Z0-9]/g, '').slice(0, 20))
+    .filter(h => h.length > 2)
     .join(' ');
 
-  // Base hashtags
   const baseHashtags = `#quiz #trivia #challenge #shorts #youtubeshorts #quiztime #USATrendingChallenge #JaasX #${niche}quiz #${niche}challenge`;
 
   // Build description
@@ -202,11 +208,10 @@ function buildMetadata(quiz) {
     `📌 Like • Share • Subscribe → New challenge every day!`,
     `🔔 Hit the bell so you never miss a challenge!`,
     ``,
-    // Trending keywords as plain text for SEO
-    kwRaw.length ? `🔥 TRENDING: ${kwRaw.slice(0, 15).join(', ')}` : '',
+    rawTrendingLine,
     ``,
     `${baseHashtags}`,
-    hashtagsFromKw,
+    descHashtags,
   ].filter(line => line !== null && line !== undefined).join('\n').slice(0, 5000); // YT max 5000 chars
 
   // Tags: base + cleaned trending keywords
