@@ -36,30 +36,28 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
   box-sizing:border-box;
 }
 
-/* ═══ NICHE MARQUEE — scrolling ticker strip near top of every screen.
-   Single biggest lever for "this looks niche-specific at a glance". ═══ */
+/* ═══ NICHE MARQUEE — "Sports Challenge" / "Tech Challenge" etc.
+   Bold, centered, lucrative design — shown on every screen. ═══ */
 .niche-marquee {
-  position:relative; z-index:10; width:100%; min-height:72px; margin-top:186px;
-  background:#0a0a0a;
-  border-top:2px solid #ffd24a; border-bottom:2px solid #ffd24a;
+  position:relative; z-index:10; width:100%; min-height:88px; margin-top:186px;
+  background:linear-gradient(135deg, #0a0a0a 0%, #1a1200 50%, #0a0a0a 100%);
+  border-top:3px solid #ffd24a; border-bottom:3px solid #ffd24a;
   display:flex; align-items:center; justify-content:center; flex-wrap:wrap;
-  flex-shrink:0; padding:10px 24px;
-  box-shadow:0 0 24px rgba(255,210,74,0.35);
+  flex-shrink:0; padding:14px 32px;
+  box-shadow:0 0 36px rgba(255,210,74,0.5), inset 0 0 40px rgba(255,210,74,0.08);
 }
 .niche-marquee .topic-word {
   display:inline-block;
-  font-family:'Arial Black','Segoe UI',sans-serif; font-size:32px; font-weight:900; letter-spacing:1px;
-  color:#fff5cc; margin:0 8px;
-  text-shadow:0 0 2px #000, 0 0 4px #000, 2px 2px 6px #000, 0 0 16px #ffd24a;
+  font-family:'Arial Black','Segoe UI',sans-serif; font-size:46px; font-weight:900; letter-spacing:4px;
+  text-transform:uppercase;
+  color:#ffd24a; margin:0 6px;
+  text-shadow:0 0 2px #000, 0 0 8px #000, 0 0 24px #ffd24a, 0 0 48px rgba(255,210,74,0.6);
   animation: wordShimmer 2.4s ease-in-out infinite;
 }
-/* Each word's animation-delay is set inline per-word (staggered wave) — this
-   loops continuously and looks identical/seamless no matter when a fresh
-   segment recording starts, unlike a scroll-position animation which always
-   restarts from x=0 at the top of a new recording. */
+/* Each word's animation-delay is set inline per-word (staggered wave) */
 @keyframes wordShimmer {
-  0%, 100% { color:#fff5cc; text-shadow:0 0 2px #000, 0 0 4px #000, 2px 2px 6px #000, 0 0 16px #ffd24a; }
-  50%       { color:#ffd24a; text-shadow:0 0 2px #000, 0 0 4px #000, 2px 2px 6px #000, 0 0 30px #fff; }
+  0%, 100% { color:#ffd24a; text-shadow:0 0 2px #000, 0 0 8px #000, 0 0 24px #ffd24a; }
+  50%       { color:#fff;    text-shadow:0 0 2px #000, 0 0 8px #000, 0 0 40px #fff, 0 0 60px #ffd24a; }
 }
 
 /* ═══ Big floating niche icons — large, bold, with real directional travel ═══ */
