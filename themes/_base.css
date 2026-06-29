@@ -193,7 +193,7 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
   display:flex; align-items:center; gap:24px;
   background:linear-gradient(135deg,rgba(255,255,255,0.09),rgba(255,255,255,0.04));
   border:2.5px solid rgba(255,255,255,0.2); border-radius:28px;
-  padding:28px 32px; font-size:40px; font-weight:700; text-align:left;
+  padding:28px 32px; font-size:50px; font-weight:700; text-align:left;
   transition:opacity 0.6s ease,transform 0.6s ease;
   box-shadow:0 8px 32px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.12);
   backdrop-filter:blur(8px);
@@ -218,9 +218,9 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 
 .qp-hint{
   position:absolute; bottom:460px; left:60px; right:60px;
-  font-size:30px; font-weight:600; color:#ffd166; text-align:center;
+  font-size:40px; font-weight:600; color:#ffd166; text-align:center;
   background:rgba(0,0,0,0.82); border:2px dashed #ffd166;
-  border-radius:16px; padding:12px 20px; opacity:0; z-index:30;
+  border-radius:16px; padding:16px 20px; opacity:0; z-index:30;
   animation:hintIn 0.6s ease-out forwards;
   animation-delay:var(--hint-time);
   box-shadow:0 0 30px rgba(255,209,102,0.3);
@@ -233,8 +233,8 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 .question-phase .qp-timer-wrap     { margin-bottom:10px; width:130px; height:130px; }
 .question-phase .qp-timer-ring     { width:130px; height:130px; }
 .question-phase .qp-options        { gap:8px; }
-.question-phase .qp-option         { padding:14px 20px; font-size:34px; }
-.question-phase .qp-option-badge   { width:46px; height:46px; font-size:24px; }
+.question-phase .qp-option         { padding:14px 20px; font-size:44px; }
+.question-phase .qp-option-badge   { width:50px; height:50px; font-size:26px; }
 
 /* ═══════════════════════════════════════════════════════════
    STEP 10: ANSWER REVEAL
