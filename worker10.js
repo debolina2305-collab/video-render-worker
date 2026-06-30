@@ -1060,7 +1060,7 @@ async function buildVideo(quiz, workDir) {
     console.log(`[CTA-COMBINED] cta4AudioFile=${cta4AudioFile||'NULL'}`);
 
     // ── REQ: Hardcoded SFX for like/share/subscribe (no DB fetch) ──
-    const PILL_SFX_URL = 'https://pub-3578d297d3904e1d8ffedfc9dd4102f2.r2.dev/audio/hint_reveal/sound10_sharp.wav';
+    const PILL_SFX_URL = 'https://pub-3578d297d3904e1d8ffedfc9dd4102f2.r2.dev/audio/sfx/soundreality-pop-sound-423716.wav';
     const pillSfx = await downloadAudio(PILL_SFX_URL, `pillsfx_${quiz.id}`);
     console.log(`[CTA-COMBINED] pillSfx (hardcoded URL) = ${pillSfx || 'DOWNLOAD FAILED'}`);
 
