@@ -2,26 +2,22 @@ name: Fetch Trending Topics
 
 on:
   schedule:
-   # Slot 1:  7:05 AM ET  → 12:05 UTC
-    - cron: '5 12 * * *'
-    # Slot 2:  8:17 AM ET  → 13:17 UTC  (peak morning commute)
-    - cron: '17 13 * * *'
-    # Slot 3: 10:43 AM ET  → 15:43 UTC  (mid-morning break)
-    - cron: '43 15 * * *'
-    # Slot 4: 12:11 PM ET  → 17:11 UTC  (lunch peak)
-    - cron: '11 17 * * *'
-    # Slot 5:  1:38 PM ET  → 18:38 UTC  (post-lunch scroll)
-    - cron: '38 18 * * *'
-    # Slot 6:  3:22 PM ET  → 20:22 UTC  (school out, afternoon peak)
-    - cron: '22 20 * * *'
-    # Slot 7:  5:07 PM ET  → 22:07 UTC  (evening commute)
-    - cron: '7 22 * * *'
-    # Slot 8:  7:33 PM ET  → 00:33 UTC  (prime time starts)
-    - cron: '33 0 * * *'
-    # Slot 9:  9:11 PM ET  → 02:11 UTC  (peak prime time)
-    - cron: '11 2 * * *'
-    # Slot 10: 10:47 PM ET → 03:47 UTC  (late night scroll)
-    - cron: '47 3 * * *'
+    # ── 10 fetch slots per day, each 25 min before the matching publish.yml
+    # slot (5 min before Worker 8 generates, 20 min before Worker 10 renders).
+    # Chain: trends(-25) → worker8(-20) → render.yml(-15) → publish.yml(0)
+    # Same EDT/EST caveat: set for EDT (summer). ADD 1 HOUR in November.
+
+    - cron: '40 10 * * *'   # → publish slot 1  (7:05 AM ET)
+    - cron: '52 11 * * *'   # → publish slot 2  (8:17 AM ET)
+    - cron: '18 14 * * *'   # → publish slot 3  (10:43 AM ET)
+    - cron: '46 15 * * *'   # → publish slot 4  (12:11 PM ET)
+    - cron: '13 17 * * *'   # → publish slot 5  (1:38 PM ET)
+    - cron: '57 18 * * *'   # → publish slot 6  (3:22 PM ET)
+    - cron: '42 20 * * *'   # → publish slot 7  (5:07 PM ET)
+    - cron: '8 23 * * *'    # → publish slot 8  (7:33 PM ET)
+    - cron: '46 0 * * *'    # → publish slot 9  (9:11 PM ET)
+    - cron: '22 2 * * *'    # → publish slot 10 (10:47 PM ET)
+
   workflow_dispatch:
     inputs:
       mode:
