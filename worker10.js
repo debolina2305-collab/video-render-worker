@@ -591,8 +591,46 @@ async function processJobs() {
     for (const r of stuckRows) await fetchSupabase(`quiz?id=eq.${r.id}`,{method:'PATCH',body:JSON.stringify({video_status:'pending',updated_at:new Date().toISOString()})}).catch(()=>{});
   }
 
-  const rows = await fetchSupabase('quiz?video_status=eq.pending&is_active=eq.true&quiz_enriched=eq.true&select=*&order=created_at.asc&limit=1');
-  if (!rows?.length) { console.log('[WORKER] No pending quizzes.'); return; }
+  // ── Topic fairness / round-robin ─────────────────────────────────────
+  // PROBLEM: Worker 8 inserts multiple quiz rows per topic (one per question,
+  // often 3-5 rows with nearly identical created_at). A plain
+  // "ORDER BY created_at ASC LIMIT 1" query would render ALL of one topic's
+  // questions back-to-back before any other topic gets a turn — starving
+  // every other trending topic in the queue.
+  //
+  // FIX: pull a batch of pending rows, group by topic_slug, and pick the
+  // OLDEST row belonging to the topic that currently has the FEWEST
+  // already-rendered-or-in-progress videos. This round-robins across topics
+  // so topic A's 2nd/3rd/4th question only renders after every OTHER
+  // pending topic has had at least one turn.
+  const pendingBatch = await fetchSupabase(
+    'quiz?video_status=eq.pending&is_active=eq.true&quiz_enriched=eq.true' +
+    '&select=id,topic,topic_slug,niche,created_at&order=created_at.asc&limit=50'
+  );
+  if (!pendingBatch?.length) { console.log('[WORKER] No pending quizzes.'); return; }
+
+  // Count how many videos already exist (any non-pending status) per topic_slug,
+  // so we know which topics have already had a turn vs which haven't.
+  const topicSlugs = [...new Set(pendingBatch.map(r => r.topic_slug).filter(Boolean))];
+  const renderedCounts = {};
+  for (const slug of topicSlugs) {
+    const rendered = await fetchSupabase(
+      `quiz?topic_slug=eq.${encodeURIComponent(slug)}&video_status=neq.pending&select=id`
+    ).catch(() => []);
+    renderedCounts[slug] = rendered?.length || 0;
+  }
+
+  // Pick the pending row whose topic has the fewest renders so far.
+  // Tie-break: oldest created_at first (pendingBatch is already sorted that way).
+  let bestRow = null, bestCount = Infinity;
+  for (const row of pendingBatch) {
+    const c = renderedCounts[row.topic_slug] ?? 0;
+    if (c < bestCount) { bestCount = c; bestRow = row; }
+  }
+  console.log(`[WORKER] Round-robin pick: topic="${bestRow.topic}" (slug=${bestRow.topic_slug}) — ${bestCount} already rendered for this topic`);
+
+  const rows = await fetchSupabase(`quiz?id=eq.${bestRow.id}&select=*`);
+  if (!rows?.length) { console.log('[WORKER] Picked row vanished — will retry next run.'); return; }
 
   const quiz = rows[0];
   console.log(`[WORKER] Processing: ${quiz.id} — ${quiz.topic}`);
