@@ -1,7 +1,22 @@
 name: Video Render Worker
 on:
   schedule:
-    - cron: '0 */1 * * *'
+    # ── 10 render slots per day, each 15 min before the matching publish.yml
+    # slot, so a freshly rendered video is ready well before YouTube upload.
+    # Same EDT/EST caveat as publish.yml: these are set for EDT (summer).
+    # In November when US clocks fall back to EST, ADD 1 HOUR to every cron.
+
+    - cron: '50 10 * * *'   # → publish slot 1  (7:05 AM ET)
+    - cron: '2 12 * * *'    # → publish slot 2  (8:17 AM ET)
+    - cron: '28 14 * * *'   # → publish slot 3  (10:43 AM ET)
+    - cron: '56 15 * * *'   # → publish slot 4  (12:11 PM ET)
+    - cron: '23 17 * * *'   # → publish slot 5  (1:38 PM ET)
+    - cron: '7 19 * * *'    # → publish slot 6  (3:22 PM ET)
+    - cron: '52 20 * * *'   # → publish slot 7  (5:07 PM ET)
+    - cron: '18 23 * * *'   # → publish slot 8  (7:33 PM ET)
+    - cron: '56 0 * * *'    # → publish slot 9  (9:11 PM ET)
+    - cron: '32 2 * * *'    # → publish slot 10 (10:47 PM ET)
+
   workflow_dispatch:
 jobs:
   render:
