@@ -1,0 +1,75 @@
+/* ═══════════════════════════════════════════
+   THEME: glass — Frosted Glass / Blue Cyan
+   ═══════════════════════════════════════════ */
+:root {
+  --accent-1: #00cfff;
+  --accent-2: #0080ff;
+  --accent-3: #a0f0ff;
+  --bg-base:  #03101f;
+  --card-bg:  rgba(0,180,255,0.07);
+  --card-border: rgba(0,210,255,0.35);
+  --card-radius: 36px;
+  --card-shadow: 0 8px 60px rgba(0,180,255,0.25), inset 0 1px 0 rgba(255,255,255,0.18);
+  --font-primary: 'Segoe UI',Arial,sans-serif;
+  --font-weight-q: 800;
+  --option-radius: 32px;
+  --option-border: rgba(0,210,255,0.3);
+  --option-bg: rgba(0,180,255,0.09);
+  --option-shadow: 0 4px 30px rgba(0,180,255,0.2), inset 0 1px 0 rgba(255,255,255,0.15);
+  --badge-bg: linear-gradient(135deg,#0080ff,#00cfff);
+  --timer-stroke: #00cfff;
+  --hook-gradient: linear-gradient(160deg,#001a40,#003070,#001a40);
+  --marquee-bg: linear-gradient(135deg,#001528,#002a50,#001528);
+  --marquee-border: #00cfff;
+  --marquee-color: #00e5ff;
+}
+html,body{ background:var(--bg-base); }
+.screen{
+  background:linear-gradient(160deg, #020e1c 0%, #04213d 40%, #021830 100%);
+}
+.bg-anim {
+  background: radial-gradient(circle at 30% 20%, #001a40 0%, #020e1c 60%, #030a18 100%);
+}
+.bg-anim::before {
+  content:''; position:absolute; inset:0;
+  background: radial-gradient(ellipse at 70% 80%, rgba(0,180,255,0.12) 0%, transparent 60%);
+}
+.bg-grid { opacity:0.08; }
+
+/* Glass card override */
+.qp-card-question {
+  background: rgba(0,180,255,0.07) !important;
+  border: 2px solid rgba(0,210,255,0.3) !important;
+  border-radius: var(--card-radius) !important;
+  box-shadow: var(--card-shadow) !important;
+  backdrop-filter: blur(20px) !important;
+}
+.qp-option {
+  background: var(--option-bg) !important;
+  border: 2px solid var(--option-border) !important;
+  border-radius: var(--option-radius) !important;
+  box-shadow: var(--option-shadow) !important;
+  backdrop-filter: blur(16px) !important;
+}
+.qp-option-badge {
+  background: var(--badge-bg) !important;
+  border-radius: 50% !important;
+}
+.niche-marquee {
+  background: var(--marquee-bg) !important;
+  border-top-color: var(--marquee-border) !important;
+  border-bottom-color: var(--marquee-border) !important;
+  box-shadow: 0 0 40px rgba(0,210,255,0.4) !important;
+}
+.niche-marquee .topic-word {
+  color: var(--marquee-color) !important;
+  text-shadow: 0 0 20px var(--marquee-color), 0 0 40px rgba(0,210,255,0.5) !important;
+}
+.qp-hint {
+  border-color: #00cfff !important;
+  color: #00e5ff !important;
+  box-shadow: 0 0 30px rgba(0,210,255,0.4) !important;
+}
+.mission-title-huge { color:#00cfff !important; text-shadow:0 0 40px rgba(0,207,255,0.9) !important; }
+.mission-label { color:#00cfff !important; }
+.answer-badge { background: linear-gradient(135deg,#00cfff,#00ff8c) !important; }

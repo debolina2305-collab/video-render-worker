@@ -1,0 +1,81 @@
+/* ═══════════════════════════════════════════
+   THEME: comic — Pop Art / Comic Book Style
+   ═══════════════════════════════════════════ */
+:root {
+  --accent-1: #ff1c44;
+  --accent-2: #ffcc00;
+  --accent-3: #1a8cff;
+  --bg-base: #fff200;
+  --card-radius: 12px;
+  --option-radius: 12px;
+  --font-weight-q: 900;
+}
+html,body{ background:#fff200; }
+.screen {
+  background: #fff200;
+  color: #1a1a1a !important;
+  font-family: 'Arial Black', 'Impact', sans-serif;
+}
+.bg-anim {
+  background: #fff200;
+}
+.bg-anim::before {
+  content:''; position:absolute; inset:0;
+  background:
+    radial-gradient(circle, #fff 1px, transparent 1px),
+    radial-gradient(circle, #fff 1px, transparent 1px);
+  background-size: 30px 30px;
+  background-position: 0 0, 15px 15px;
+  opacity: 0.3;
+}
+.bg-grid { display:none; }
+.orb1 { background:#ff1c44 !important; filter:blur(60px) !important; opacity:0.15 !important; }
+.orb2 { background:#1a8cff !important; filter:blur(60px) !important; opacity:0.15 !important; }
+.orb3 { display:none; }
+
+.qp-card-question {
+  background: #fff !important;
+  border: 5px solid #1a1a1a !important;
+  border-radius: 12px !important;
+  box-shadow: 8px 8px 0 #1a1a1a !important;
+  backdrop-filter: none !important;
+}
+.qp-question { color:#1a1a1a !important; font-family:'Arial Black','Impact',sans-serif !important; font-weight:900 !important; text-transform:uppercase !important; letter-spacing:1px !important; }
+.qp-option {
+  background: #fff !important;
+  border: 4px solid #1a1a1a !important;
+  border-radius: 12px !important;
+  box-shadow: 5px 5px 0 #1a1a1a !important;
+  color: #1a1a1a !important;
+  font-family: 'Arial Black','Impact',sans-serif !important;
+  font-weight: 900 !important;
+  text-transform: uppercase !important;
+  backdrop-filter: none !important;
+  animation: comicPop 0.3s cubic-bezier(.34,1.8,.64,1) both !important;
+}
+@keyframes comicPop { from{transform:scale(0.8) rotate(-2deg)} to{transform:scale(1) rotate(0deg)} }
+.qp-option-badge {
+  background: #ff1c44 !important;
+  border: 3px solid #1a1a1a !important;
+  border-radius: 50% !important;
+  color: #fff !important;
+  font-family: 'Arial Black',sans-serif !important;
+}
+.niche-marquee {
+  background: #ff1c44 !important;
+  border-top: 5px solid #1a1a1a !important;
+  border-bottom: 5px solid #1a1a1a !important;
+  box-shadow: 0 6px 0 #1a1a1a !important;
+}
+.niche-marquee .topic-word {
+  color: #fff !important;
+  text-shadow: 3px 3px 0 #1a1a1a !important;
+  font-family: 'Arial Black','Impact',sans-serif !important;
+  letter-spacing: 4px !important;
+}
+.challenge-no { color:#1a1a1a !important; text-shadow:2px 2px 0 #ffcc00 !important; }
+.hook-text { color:#1a1a1a !important; text-shadow:4px 4px 0 #ff1c44 !important; font-family:'Arial Black',sans-serif !important; }
+.qp-hint { background:#ffcc00 !important; border:4px solid #1a1a1a !important; color:#1a1a1a !important; box-shadow:4px 4px 0 #1a1a1a !important; border-style:solid !important; border-radius:12px !important; }
+.mission-title-huge { color:#ff1c44 !important; text-shadow:4px 4px 0 #1a1a1a !important; font-family:'Arial Black',sans-serif !important; }
+.answer-badge { background:linear-gradient(135deg,#ff1c44,#ffcc00) !important; -webkit-text-fill-color:#1a1a1a !important; }
+.float-icon-big { filter:drop-shadow(3px 3px 0 #1a1a1a) !important; }

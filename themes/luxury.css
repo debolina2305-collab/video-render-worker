@@ -1,0 +1,86 @@
+/* ═══════════════════════════════════════════
+   THEME: luxury — Black Gold Premium
+   ═══════════════════════════════════════════ */
+:root {
+  --accent-1: #c9a227;
+  --accent-2: #e8c84a;
+  --accent-3: #f5e17a;
+  --bg-base: #050400;
+  --card-radius: 4px;
+  --option-radius: 4px;
+  --font-weight-q: 300;
+}
+html,body{ background:#050400; }
+.screen {
+  background: linear-gradient(180deg, #050400 0%, #0a0800 50%, #050400 100%);
+  font-family: 'Georgia', 'Times New Roman', serif;
+}
+.bg-anim {
+  background: radial-gradient(ellipse at 50% 0%, #1a1200 0%, #050400 50%);
+}
+.bg-anim::before {
+  content:''; position:absolute; inset:0;
+  background: repeating-linear-gradient(
+    90deg, transparent, transparent 120px,
+    rgba(201,162,39,0.03) 120px, rgba(201,162,39,0.03) 121px
+  );
+}
+.bg-anim::after {
+  content:''; position:absolute; top:0; left:50%; transform:translateX(-50%);
+  width:2px; height:100%;
+  background: linear-gradient(180deg, transparent, rgba(201,162,39,0.15), transparent);
+}
+.bg-grid { display:none; }
+.orb1,.orb2,.orb3 { display:none; }
+
+.qp-card-question {
+  background: rgba(201,162,39,0.04) !important;
+  border-top: 1px solid rgba(201,162,39,0.6) !important;
+  border-bottom: 1px solid rgba(201,162,39,0.6) !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  padding: 48px 60px !important;
+}
+.qp-question { font-family:'Georgia',serif !important; font-weight:300 !important; font-style:italic !important; letter-spacing:1px !important; }
+.qp-option {
+  background: rgba(201,162,39,0.03) !important;
+  border: none !important;
+  border-bottom: 1px solid rgba(201,162,39,0.2) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  font-family: 'Georgia', serif !important;
+  font-weight: 300 !important;
+  letter-spacing: 1px !important;
+  transition: background 0.4s ease !important;
+}
+.qp-option-badge {
+  background: transparent !important;
+  border: 1px solid #c9a227 !important;
+  border-radius: 0 !important;
+  color: #c9a227 !important;
+  font-family: 'Georgia', serif !important;
+  font-style: italic !important;
+}
+.niche-marquee {
+  background: #050400 !important;
+  border-top: 1px solid #c9a227 !important;
+  border-bottom: 1px solid #c9a227 !important;
+  box-shadow: none !important;
+}
+.niche-marquee .topic-word {
+  color: #c9a227 !important;
+  font-family: 'Georgia', serif !important;
+  font-style: italic !important;
+  letter-spacing: 8px !important;
+  text-shadow: 0 0 20px rgba(201,162,39,0.4) !important;
+  text-transform: uppercase !important;
+}
+.hook-text { font-family:'Georgia',serif !important; font-weight:300 !important; font-style:italic !important; }
+.qp-hint { border-color:#c9a227 !important; color:#c9a227 !important; border-style:solid !important; border-radius:0 !important; }
+.mission-title-huge { color:#c9a227 !important; text-shadow:0 0 40px rgba(201,162,39,0.7) !important; font-family:'Georgia',serif !important; font-style:italic !important; animation:none !important; }
+.answer-badge { background: linear-gradient(135deg,#c9a227,#f5e17a) !important; }
+.float-icon-big { display:none !important; }
