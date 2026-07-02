@@ -7,20 +7,15 @@
 // but no blog yet (no matching quiz_blog_posts row).
 // Uses the Tavily research already stored in quiz_queue.payload
 // plus the quiz questions from the quiz table.
-// Calls DeepSeek V3 to generate a 1000-word blog post as HTML.
+// Calls DeepSeek V3 (config from quiz_generation_settings table,
+// same as Worker 8) to generate a 1000-word blog post as HTML.
 // Inserts into quiz_blog_posts table.
-//
-// Runs as a GitHub Actions workflow (blog.yml).
 // ═══════════════════════════════════════════════════════════════
 
-const SUPABASE_URL  = process.env.SUPABASE_URL?.replace(/\/$/, '');
-const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY;
-const LLM_ENDPOINT  = process.env.LLM_API_ENDPOINT || 'https://ai-gateway.vercel.sh/v1/chat/completions';
-const LLM_MODEL     = process.env.LLM_MODEL        || 'deepseek/deepseek-v3.2';
-const LLM_API_KEY   = process.env.LLM_API_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_KEY) { console.error('[FATAL] Missing Supabase env'); process.exit(1); }
-if (!LLM_API_KEY)  { console.error('[FATAL] Missing LLM_API_KEY'); process.exit(1); }
 
 // ─────────────────────────────────────────────
 // SUPABASE HELPERS
@@ -49,22 +44,42 @@ async function supabase(path, opts = {}) {
 }
 
 // ─────────────────────────────────────────────
+// LOAD LLM CONFIG FROM quiz_generation_settings
+// Exactly the same pattern as Worker 8
+// ─────────────────────────────────────────────
+async function loadLLMConfig() {
+  const rows = await supabase('quiz_generation_settings?id=eq.1&limit=1');
+  const config = rows?.[0];
+  if (!config) throw new Error('quiz_generation_settings row not found — run quiz_generation_settings.sql first');
+
+  const apiKey   = config.llm_api_key;
+  const model    = config.llm_model;
+  const endpoint = config.llm_api_endpoint || 'https://ai-gateway.vercel.sh/v1/chat/completions';
+
+  if (!apiKey) throw new Error('llm_api_key is empty in quiz_generation_settings');
+  if (!model)  throw new Error('llm_model is empty in quiz_generation_settings');
+
+  console.log(`[W12] LLM config: model=${model} endpoint=${endpoint.split('/')[2]}`);
+  return { apiKey, model, endpoint };
+}
+
+// ─────────────────────────────────────────────
 // LLM CALL
 // ─────────────────────────────────────────────
-async function callLLM(systemPrompt, userPrompt, maxTokens = 3000) {
-  const res = await fetch(LLM_ENDPOINT, {
+async function callLLM({ apiKey, model, endpoint }, systemPrompt, userPrompt) {
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type':  'application/json',
-      'Authorization': `Bearer ${LLM_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model:       LLM_MODEL,
-      max_tokens:  maxTokens,
+      model,
+      max_tokens:  3500,
       temperature: 0.7,
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user',   content: userPrompt },
+        { role: 'user',   content: userPrompt   },
       ],
     }),
   });
@@ -180,6 +195,9 @@ function parseBlogJSON(raw) {
 async function run() {
   console.log('[W12] Blog generator starting...');
 
+  // Load LLM config from quiz_generation_settings (same table as Worker 8)
+  const llmConfig = await loadLLMConfig();
+
   // Find quiz_queue jobs that have a completed quiz but no blog yet.
   // Join via quiz.topic_slug matching quiz_queue.trnding_topic (approximate).
   // Simpler: find quiz rows with quiz_enriched=true that have no blog_post yet.
@@ -249,8 +267,8 @@ async function run() {
       const { systemPrompt, userPrompt } = buildPrompt(fakeJob, allRows);
 
       // Call DeepSeek
-      console.log('[W12] Calling DeepSeek V3...');
-      const rawResponse = await callLLM(systemPrompt, userPrompt, 3500);
+      console.log('[W12] Calling DeepSeek via quiz_generation_settings config...');
+      const rawResponse = await callLLM(llmConfig, systemPrompt, userPrompt);
       console.log(`[W12] LLM response: ${rawResponse.length} chars`);
 
       // Parse response
@@ -311,7 +329,7 @@ async function run() {
         // Metadata
         word_count:           totalWords,
         tavily_word_count:    (job?.searched_text || '').split(' ').length,
-        llm_model:            LLM_MODEL,
+        llm_model:            llmConfig.model,
 
         // Status — draft until manually published
         status:               'draft',
