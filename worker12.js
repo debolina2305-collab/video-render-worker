@@ -123,10 +123,11 @@ function buildPrompt(job, quizRows) {
   const sources  = (payload.tavily_sources || []).slice(0, 6);
   const images   = (payload.tavily_images  || []).slice(0, 5);
 
-  // Build quiz Q&A from the quiz rows
-  const quizQA = quizRows.slice(0, 6).map((q, i) => {
+  // Build quiz Q&A from the quiz rows — ALL questions included
+  const quizCount = Math.min(quizRows.length, 6);
+  const quizQA = quizRows.slice(0, quizCount).map((q, i) => {
     const opts = (q.options_1 || []).map((o, j) => `${['A','B','C','D'][j]}) ${o}`).join(' | ');
-    return `Q${i+1}: ${q.question_1}\nOptions: ${opts}\nAnswer: ${q.correct_answer_1}\nExplanation: ${q.explanation_1 || ''}`;
+    return `QUESTION_${i+1}:\nQ: ${q.question_1}\nOptions: ${opts}\nCorrect Answer: ${q.correct_answer_1}\nExplanation: ${q.explanation_1 || 'Correct based on research.'}`;
   }).join('\n\n');
 
   const sourceList = sources.map(s => `- ${s.title || s.domain}: ${s.url}`).join('\n');
@@ -142,7 +143,7 @@ Return ONLY valid JSON — no markdown fences, no preamble, no explanation outsi
 RESEARCH DATA (use this as your factual foundation — do not invent facts not supported here):
 ${research || 'Use general knowledge about this trending US topic.'}
 
-QUIZ QUESTIONS (include all of these in the FAQ section):
+QUIZ QUESTIONS — CRITICAL: You MUST include ALL ${quizCount} questions in the faq_html field. Every single QUESTION_1 through QUESTION_${quizCount} must appear as a separate faq-item div. Do not combine, skip, or summarize any question.
 ${quizQA || 'No quiz data available.'}
 
 AVAILABLE IMAGES (reference by URL in suggested_inline_image):
@@ -168,7 +169,7 @@ Return a JSON object with EXACTLY these fields (all HTML values use proper HTML 
   "section_3_html": "<p>200 words about why this matters to US audiences and what happens next...</p>",
   "table_caption": "Key Statistics: ${topic}",
   "table_html": "<table><thead><tr><th>Fact</th><th>Detail</th></tr></thead><tbody><tr><td>...</td><td>...</td></tr><!-- 5-6 rows of real data from the research --></tbody></table>",
-  "faq_html": "<div class='quiz-faq'><h3>Test Your Knowledge</h3><!-- All quiz questions as styled FAQ --><div class='faq-item'><p class='faq-question'><strong>Q1: [question]</strong></p><p class='faq-answer'>✅ <strong>Answer:</strong> [answer]. [explanation]</p></div><!-- repeat for all questions --></div>",
+  "faq_html": "<div class='quiz-faq'><h3>Test Your Knowledge: ${topic}</h3>IMPORTANT: You MUST include ALL ${quizCount} questions below as separate faq-item divs. Do NOT skip any question. Each question gets its own div. Format EXACTLY like this repeated ${quizCount} times:\n<div class='faq-item'><p class='faq-question'><strong>Q1: [exact question text from QUESTION_1]</strong><br>Options: A) [opt] | B) [opt] | C) [opt] | D) [opt]</p><p class='faq-answer'>✅ <strong>Answer:</strong> [correct answer]. [explanation text]</p></div><div class='faq-item'><p class='faq-question'><strong>Q2: [exact question text from QUESTION_2]</strong>...</p><p class='faq-answer'>✅ <strong>Answer:</strong> ...</p></div><!-- continue for ALL ${quizCount} questions --></div>",
   "conclusion_html": "<p>100-word conclusion summarising key points and encouraging the reader to play the interactive quiz.</p><p>🎯 <a href='https://jaasblog.online/quiz/${niche}'>Play the full ${niche} challenge on JaasX →</a></p>"
 }`;
 
@@ -251,10 +252,11 @@ async function run() {
       if (!job) {
         console.warn(`[W12] No quiz_queue row found for topic="${primaryQuiz.topic}" — using quiz data only`);
       } else {
-        const words = (job.searched_text || '').split(' ').length;
+        const words = (job.searched_text || '').split(/\s+/).filter(Boolean).length;
         const imgs  = (job.payload?.tavily_images || []).length;
         const srcs  = (job.payload?.tavily_sources || []).length;
-        console.log(`[W12] Tavily data: ${words} words, ${imgs} images, ${srcs} sources`);
+        if (words < 400) console.warn(`[W12] ⚠️ Thin Tavily data: only ${words} words — blog quality may be lower. Newer queue rows should have 1500+ words.`);
+        else console.log(`[W12] Tavily data: ${words} words, ${imgs} images, ${srcs} sources ✓`);
       }
 
       // Build prompt using job (Tavily data) + all quiz rows for this topic
@@ -322,13 +324,13 @@ async function run() {
         faq_html:             blog.faq_html             || null,
         conclusion_html:      blog.conclusion_html      || null,
 
-        // Sources and images
-        data_sources:         JSON.stringify(job?.payload?.tavily_sources || []),
-        all_images:           JSON.stringify(tavilyImages),
+        // Sources and images — JSONB columns, no JSON.stringify needed
+        data_sources:         job?.payload?.tavily_sources || [],
+        all_images:           tavilyImages,
 
         // Metadata
         word_count:           totalWords,
-        tavily_word_count:    (job?.searched_text || '').split(' ').length,
+        tavily_word_count:    (job?.searched_text || '').split(/\s+/).filter(Boolean).length,
         llm_model:            llmConfig.model,
 
         // Status — draft until manually published
