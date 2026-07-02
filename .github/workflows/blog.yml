@@ -48,9 +48,9 @@ jobs:
 
       - name: Run blog generator
         env:
-          SUPABASE_URL:        ${{ vars.SUPABASE_URL }}
+          SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          LLM_API_KEY:         ${{ secrets.LLM_API_KEY }}
-          LLM_API_ENDPOINT:    ${{ vars.LLM_API_ENDPOINT }}
-          LLM_MODEL:           ${{ vars.LLM_MODEL }}
+          # LLM config (api key, model, endpoint) is read from
+          # quiz_generation_settings table in Supabase — same as Worker 8.
+          # No LLM env vars needed here.
         run: node worker12.js
