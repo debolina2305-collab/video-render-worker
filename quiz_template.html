@@ -5,6 +5,8 @@
 <style>
 {{theme_css}}
 
+{{design_engine_css}}
+
 /* ===== Persistent glowing brand logo (top, entire video) — checklist item 28 ===== */
 .persistent-logo {
   position:absolute; top:38px; left:50%;
@@ -1084,6 +1086,44 @@
   </div>
 
 <script>
+// ═══════════════════════════════════════════════════════
+// DESIGN ENGINE — Transition & Countdown Controller
+// Variables injected by Worker 10:
+//   TRANSITION_STYLE: 'fade'|'slide_up'|'zoom_in'|'flip'|'blur_in'|'bounce'
+//   COUNTDOWN_STYLE:  'ring'|'bar'|'digital'|'bomb'|'hourglass'|'pulse'
+// ═══════════════════════════════════════════════════════
+
+const TRANSITION_STYLE = '{{transition_style}}';
+const COUNTDOWN_STYLE  = '{{countdown_style}}';
+const LAYOUT_VARIANT   = '{{layout_variant}}';
+
+// Apply layout variant class to body for CSS targeting
+document.body.classList.add('layout-' + LAYOUT_VARIANT);
+document.body.classList.add('countdown-' + COUNTDOWN_STYLE);
+document.body.classList.add('transition-' + TRANSITION_STYLE);
+
+// Countdown style: replace timer ring with alternative if needed
+if (COUNTDOWN_STYLE !== 'ring') {
+  document.querySelectorAll('.qp-timer-wrap').forEach(wrap => {
+    wrap.setAttribute('data-style', COUNTDOWN_STYLE);
+    const num = wrap.querySelector('.qp-timer-number');
+    const numVal = num ? num.textContent : '10';
+    const ring = wrap.querySelector('.qp-timer-ring');
+    if (ring) ring.style.display = 'none';
+    if (COUNTDOWN_STYLE === 'bar') {
+      wrap.innerHTML = '<div class="cd-bar-wrap"><div class="cd-bar-fill"></div></div><div class="qp-timer-number">' + numVal + '</div>';
+    } else if (COUNTDOWN_STYLE === 'digital') {
+      wrap.innerHTML = '<div class="cd-digital">' + numVal + '</div>';
+    } else if (COUNTDOWN_STYLE === 'bomb') {
+      wrap.innerHTML = '<div class="cd-bomb">💣</div><div class="cd-bomb-num">' + numVal + '</div>';
+    } else if (COUNTDOWN_STYLE === 'hourglass') {
+      wrap.innerHTML = '<div class="cd-hourglass">⏳</div><div class="cd-hourglass-num">' + numVal + '</div>';
+    } else if (COUNTDOWN_STYLE === 'pulse') {
+      wrap.innerHTML = '<div class="cd-pulse-num">' + numVal + '</div>';
+    }
+  });
+}
+
 // No runtime image loading needed — thumb-photo-bg background is set
 // inline via style attribute by Worker 10 template replacement.
 </script>
