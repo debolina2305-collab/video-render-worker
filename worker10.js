@@ -534,9 +534,14 @@ async function resolveTheme(quiz) {
   let css = base + '\n' + (await fs.readFile(themeFile,'utf8'));
   const a1=quiz.theme_accent_primary||'#00e0ff', a2=quiz.theme_accent_secondary||'#7b2ff7', a3=quiz.theme_accent_tertiary||'#ff2ec4';
   css = css.split('{{accent_primary}}').join(a1).split('{{accent_secondary}}').join(a2).split('{{accent_tertiary}}').join(a3);
-  if (quiz.quiz_background_css?.trim()) {
-    console.log('[THEME] Applying quiz_background_css (per-quiz dynamic background)');
+  if (quiz.quiz_background_css?.trim() && themeId === DEFAULT_THEME) {
+    // Only apply per-quiz dynamic background for the default particle_field theme.
+    // All other themes define their own complete background — overriding it would
+    // destroy the theme's visual identity (e.g. turning minimal white to dark blue).
+    console.log('[THEME] Applying quiz_background_css (particle_field theme only)');
     css += '\n/* === QUIZ-SPECIFIC BACKGROUND === */\n' + quiz.quiz_background_css;
+  } else if (quiz.quiz_background_css?.trim()) {
+    console.log(`[THEME] Skipping quiz_background_css — theme=${themeId} controls its own background`);
   } else {
     console.log('[THEME] No quiz_background_css set — using theme default');
   }
