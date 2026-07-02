@@ -67,3 +67,8 @@ html,body{ background:#f2f2f7; }
 .answer-badge { background: linear-gradient(135deg,#007aff,#34c759) !important; }
 .confetti-piece { opacity:0.7 !important; }
 .float-icon-big { opacity:0.1 !important; }
+
+/* Light bg: force dark text with subtle shadow for readability on white */
+.screen .qp-question { color:#1c1c1e !important; text-shadow:0 1px 3px rgba(0,0,0,0.1) !important; }
+.screen .qp-option   { color:#1c1c1e !important; text-shadow:0 1px 3px rgba(0,0,0,0.1) !important; }
+.screen .hook-text   { color:#1c1c1e !important; text-shadow:0 2px 4px rgba(0,0,0,0.15) !important; }

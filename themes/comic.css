@@ -79,3 +79,8 @@ html,body{ background:#fff200; }
 .mission-title-huge { color:#ff1c44 !important; text-shadow:4px 4px 0 #1a1a1a !important; font-family:'Arial Black',sans-serif !important; }
 .answer-badge { background:linear-gradient(135deg,#ff1c44,#ffcc00) !important; -webkit-text-fill-color:#1a1a1a !important; }
 .float-icon-big { filter:drop-shadow(3px 3px 0 #1a1a1a) !important; }
+
+/* Yellow bg: all text must be dark, remove default dark text-shadow */
+.screen * { text-shadow: 2px 2px 0 rgba(0,0,0,0.2) !important; }
+.screen .qp-question { color:#1a1a1a !important; }
+.screen .qp-option   { color:#1a1a1a !important; }
