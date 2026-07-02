@@ -522,13 +522,15 @@ async function applyBgMusic(concatMp4, totalDur, voiceRanges, bgFile, workDir) {
 }
 
 // ─────────────────────────────────────────────
-// THEME + quiz_background_css
+// THEME + quiz_background_css + design engine
 // ─────────────────────────────────────────────
+const DESIGN_ENGINE_CSS_PATH = path.join(__dirname,'themes','design_engine.css');
+
 async function resolveTheme(quiz) {
   const base    = await fs.readFile(path.join(THEMES_DIR,'_base.css'),'utf8');
   const themeId = quiz.visual_theme_id || DEFAULT_THEME;
   let themeFile = path.join(THEMES_DIR,`${themeId}.css`);
-  if (!(await fileExists(themeFile))) { console.warn(`[THEME] '${themeId}' not found`); themeFile = path.join(THEMES_DIR,`${DEFAULT_THEME}.css`); }
+  if (!(await fileExists(themeFile))) { console.warn(`[THEME] '${themeId}' not found — using ${DEFAULT_THEME}`); themeFile = path.join(THEMES_DIR,`${DEFAULT_THEME}.css`); }
   let css = base + '\n' + (await fs.readFile(themeFile,'utf8'));
   const a1=quiz.theme_accent_primary||'#00e0ff', a2=quiz.theme_accent_secondary||'#7b2ff7', a3=quiz.theme_accent_tertiary||'#ff2ec4';
   css = css.split('{{accent_primary}}').join(a1).split('{{accent_secondary}}').join(a2).split('{{accent_tertiary}}').join(a3);
@@ -538,7 +540,15 @@ async function resolveTheme(quiz) {
   } else {
     console.log('[THEME] No quiz_background_css set — using theme default');
   }
-  return { themeCss: css, decoHtml: buildDecoHtml(themeId) };
+  // Load design engine CSS (layout variants, countdown styles, transitions)
+  let designEngineCss = '';
+  try {
+    designEngineCss = await fs.readFile(DESIGN_ENGINE_CSS_PATH,'utf8');
+    console.log(`[DESIGN] theme=${themeId} layout=${quiz.layout_variant||'standard'} countdown=${quiz.countdown_style||'ring'} transition=${quiz.transition_style||'fade'}`);
+  } catch(e) {
+    console.warn(`[DESIGN] design_engine.css not found — skipping (${e.message})`);
+  }
+  return { themeCss: css, decoHtml: buildDecoHtml(themeId), designEngineCss };
 }
 function buildDecoHtml(id) {
   if (id === 'particle_field') {
@@ -591,45 +601,67 @@ async function processJobs() {
     for (const r of stuckRows) await fetchSupabase(`quiz?id=eq.${r.id}`,{method:'PATCH',body:JSON.stringify({video_status:'pending',updated_at:new Date().toISOString()})}).catch(()=>{});
   }
 
-  // ── Topic fairness / round-robin ─────────────────────────────────────
-  // PROBLEM: Worker 8 inserts multiple quiz rows per topic (one per question,
-  // often 3-5 rows with nearly identical created_at). A plain
-  // "ORDER BY created_at ASC LIMIT 1" query would render ALL of one topic's
-  // questions back-to-back before any other topic gets a turn — starving
-  // every other trending topic in the queue.
+  // ── Topic fairness / round-robin (v2 — fixes monopoly bug) ────────────
+  // PROBLEM (original v1 bug): pulling only the 50 OLDEST pending rows meant
+  // that if one topic had a large backlog (e.g. 5 rows for "germany vs
+  // paraguay") sitting among the oldest rows, and every OTHER topic's rows
+  // had already been consumed in prior runs, the 50-row window could
+  // degrade to containing ONLY that one topic — making "round-robin" a
+  // no-op since there was nothing else in the window to compare against.
+  // Result: that single topic rendered 5 videos in a row while fresh
+  // topics queued up later were invisible to this query entirely.
   //
-  // FIX: pull a batch of pending rows, group by topic_slug, and pick the
-  // OLDEST row belonging to the topic that currently has the FEWEST
-  // already-rendered-or-in-progress videos. This round-robins across topics
-  // so topic A's 2nd/3rd/4th question only renders after every OTHER
-  // pending topic has had at least one turn.
-  const pendingBatch = await fetchSupabase(
+  // FIX: first fetch the small set of DISTINCT topic_slugs that currently
+  // have at least one pending row (cheap, capped query), independent of
+  // any single topic's row count. Pick the topic with the fewest total
+  // renders system-wide. THEN fetch that topic's oldest pending row.
+  // This guarantees a topic with a 5-row backlog can never crowd out a
+  // brand-new topic that only just got its first row inserted.
+  const distinctTopicRows = await fetchSupabase(
     'quiz?video_status=eq.pending&is_active=eq.true&quiz_enriched=eq.true' +
-    '&select=id,topic,topic_slug,niche,created_at&order=created_at.asc&limit=50'
+    '&select=topic_slug,topic,created_at&order=created_at.asc&limit=300'
   );
-  if (!pendingBatch?.length) { console.log('[WORKER] No pending quizzes.'); return; }
+  if (!distinctTopicRows?.length) { console.log('[WORKER] No pending quizzes.'); return; }
 
-  // Count how many videos already exist (any non-pending status) per topic_slug,
-  // so we know which topics have already had a turn vs which haven't.
-  const topicSlugs = [...new Set(pendingBatch.map(r => r.topic_slug).filter(Boolean))];
+  // Deduplicate to one entry per topic_slug, keeping the earliest created_at seen.
+  const topicFirstSeen = new Map(); // topic_slug -> {topic, created_at}
+  for (const r of distinctTopicRows) {
+    if (!r.topic_slug) continue;
+    if (!topicFirstSeen.has(r.topic_slug)) {
+      topicFirstSeen.set(r.topic_slug, { topic: r.topic, created_at: r.created_at });
+    }
+  }
+  const distinctSlugs = [...topicFirstSeen.keys()];
+  console.log(`[WORKER] ${distinctSlugs.length} distinct topics have pending rows (out of ${distinctTopicRows.length} pending rows scanned)`);
+
+  // Count how many videos already exist (any non-pending status) per topic_slug.
   const renderedCounts = {};
-  for (const slug of topicSlugs) {
+  for (const slug of distinctSlugs) {
     const rendered = await fetchSupabase(
       `quiz?topic_slug=eq.${encodeURIComponent(slug)}&video_status=neq.pending&select=id`
     ).catch(() => []);
     renderedCounts[slug] = rendered?.length || 0;
   }
 
-  // Pick the pending row whose topic has the fewest renders so far.
-  // Tie-break: oldest created_at first (pendingBatch is already sorted that way).
-  let bestRow = null, bestCount = Infinity;
-  for (const row of pendingBatch) {
-    const c = renderedCounts[row.topic_slug] ?? 0;
-    if (c < bestCount) { bestCount = c; bestRow = row; }
+  // Pick the topic with the fewest renders so far. Tie-break: earliest
+  // created_at (topicFirstSeen preserves insertion order from the
+  // already-ASC-sorted query, so Map iteration order is oldest-first).
+  let bestSlug = null, bestCount = Infinity;
+  for (const slug of distinctSlugs) {
+    const c = renderedCounts[slug] ?? 0;
+    if (c < bestCount) { bestCount = c; bestSlug = slug; }
   }
-  console.log(`[WORKER] Round-robin pick: topic="${bestRow.topic}" (slug=${bestRow.topic_slug}) — ${bestCount} already rendered for this topic`);
+  const bestTopic = topicFirstSeen.get(bestSlug);
+  console.log(`[WORKER] Round-robin pick: topic="${bestTopic.topic}" (slug=${bestSlug}) — ${bestCount} already rendered for this topic`);
 
-  const rows = await fetchSupabase(`quiz?id=eq.${bestRow.id}&select=*`);
+  // Fetch the OLDEST pending row specifically for the chosen topic.
+  const candidateRows = await fetchSupabase(
+    `quiz?video_status=eq.pending&is_active=eq.true&quiz_enriched=eq.true` +
+    `&topic_slug=eq.${encodeURIComponent(bestSlug)}&select=id&order=created_at.asc&limit=1`
+  );
+  if (!candidateRows?.length) { console.log('[WORKER] Picked topic vanished — will retry next run.'); return; }
+
+  const rows = await fetchSupabase(`quiz?id=eq.${candidateRows[0].id}&select=*`);
   if (!rows?.length) { console.log('[WORKER] Picked row vanished — will retry next run.'); return; }
 
   const quiz = rows[0];
@@ -763,7 +795,7 @@ async function buildVideo(quiz, workDir) {
   }
   console.log(`[BGMUSIC] resolved bgFile=${resolvedBgFile || 'NULL (music will be skipped)'}`);
 
-  const { themeCss, decoHtml } = await resolveTheme(quiz);
+  const { themeCss, decoHtml, designEngineCss } = await resolveTheme(quiz);
   const confettiSet = pickConfettiSet(niche, quiz.topic);
   const thumbTitle  = (quiz.youtube_title && quiz.youtube_title.trim())
                       ? thumbTitleStyle(quiz.youtube_title.trim())
@@ -827,6 +859,10 @@ async function buildVideo(quiz, workDir) {
   let html = await fs.readFile(path.join(__dirname,'quiz_template.html'),'utf8');
   const R = {
     '{{theme_css}}':themeCss, '{{theme_deco_html}}':decoHtml, '{{LOGO_DATA_URI}}':logoDataUri,
+    '{{design_engine_css}}': designEngineCss || '',
+    '{{transition_style}}': quiz.transition_style || 'fade',
+    '{{countdown_style}}':  quiz.countdown_style  || 'ring',
+    '{{layout_variant}}':   quiz.layout_variant   || 'standard',
     '{{hook_phrase}}':quiz.hook_phrase||'Stop scrolling! Can you beat this?',
     '{{quiz_no}}': challengeIdLabel,
     '{{question}}':question,
@@ -1060,7 +1096,7 @@ async function buildVideo(quiz, workDir) {
     console.log(`[CTA-COMBINED] cta4AudioFile=${cta4AudioFile||'NULL'}`);
 
     // ── REQ: Hardcoded SFX for like/share/subscribe (no DB fetch) ──
-    const PILL_SFX_URL = 'https://pub-3578d297d3904e1d8ffedfc9dd4102f2.r2.dev/audio/sfx/soundreality-pop-sound-423716.wav';
+    const PILL_SFX_URL = 'https://pub-3578d297d3904e1d8ffedfc9dd4102f2.r2.dev/audio/hint_reveal/sound10_sharp.wav';
     const pillSfx = await downloadAudio(PILL_SFX_URL, `pillsfx_${quiz.id}`);
     console.log(`[CTA-COMBINED] pillSfx (hardcoded URL) = ${pillSfx || 'DOWNLOAD FAILED'}`);
 
