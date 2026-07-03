@@ -135,7 +135,7 @@ function buildPrompt(job, quizRows) {
 
   const systemPrompt = `You are an expert SEO content writer creating trending quiz companion blog posts for jaasblog.online. 
 Write engaging, factual, well-structured HTML blog posts about trending US topics.
-Always write in clear US English. Be factual, engaging, and cite the research provided. Don't invent any data. use data from inputs table only.
+Always write in clear US English. Be factual, engaging, and cite the research provided.
 Return ONLY valid JSON — no markdown fences, no preamble, no explanation outside the JSON.`;
 
   const userPrompt = `Write a 1000-word SEO blog post about: "${topic}" (niche: ${niche})
@@ -170,8 +170,20 @@ Return a JSON object with EXACTLY these fields (all HTML values use proper HTML 
   "table_caption": "Key Statistics: ${topic}",
   "table_html": "<table><thead><tr><th>Fact</th><th>Detail</th></tr></thead><tbody><tr><td>...</td><td>...</td></tr><!-- 5-6 rows of real data from the research --></tbody></table>",
   "faq_html": "<div class='quiz-faq'><h3>Test Your Knowledge: ${topic}</h3>IMPORTANT: You MUST include ALL ${quizCount} questions below as separate faq-item divs. Do NOT skip any question. Each question gets its own div. Format EXACTLY like this repeated ${quizCount} times:\n<div class='faq-item'><p class='faq-question'><strong>Q1: [exact question text from QUESTION_1]</strong><br>Options: A) [opt] | B) [opt] | C) [opt] | D) [opt]</p><p class='faq-answer'>✅ <strong>Answer:</strong> [correct answer]. [explanation text]</p></div><div class='faq-item'><p class='faq-question'><strong>Q2: [exact question text from QUESTION_2]</strong>...</p><p class='faq-answer'>✅ <strong>Answer:</strong> ...</p></div><!-- continue for ALL ${quizCount} questions --></div>",
-  "conclusion_html": "<p>100-word conclusion summarising key points and encouraging the reader to play the interactive quiz.</p><p>🎯 <a href='https://jaasblog.online/quiz/${niche}'>Play the full ${niche} challenge on JaasX →</a></p>"
-}`;
+  "conclusion_html": "<p>100-word conclusion summarising key points and encouraging the reader to play the interactive quiz.</p><p>🎯 <a href='https://jaasblog.online/quiz/${niche}'>Play the full ${niche} challenge on JaasX →</a></p>",
+  "chart_data": null
+}
+
+CHART_DATA RULES (very important — read carefully before filling chart_data):
+- Look at the research data for the MOST visually interesting numeric comparison (scores, stats, counts, percentages).
+- If you find suitable numbers: output a chart object. If no real numbers exist in the research, output null.
+- Use "bar" type for raw counts/stats (scores, goals, points, years, quantities between entities).
+- Use "donut" type for percentages or proportions that add up to ~100.
+- 2 to 6 data points maximum. Every value MUST be a real number — never a string, never null.
+- Title must describe what is charted in under 6 words.
+- ONLY use numbers from the research — never invent values.
+- Bar chart example: {"type":"bar","title":"Shots on Target","unit":"","data":[{"label":"Team A","value":6},{"label":"Team B","value":4}]}
+- Donut chart example: {"type":"donut","title":"Ball Possession","unit":"%","data":[{"label":"Team A","value":58},{"label":"Team B","value":42}]}`;
 
   return { systemPrompt, userPrompt };
 }
@@ -323,6 +335,12 @@ async function run() {
         table_caption:        blog.table_caption        || null,
         faq_html:             blog.faq_html             || null,
         conclusion_html:      blog.conclusion_html      || null,
+        // chart_data: raw JSONB object (bar or donut) or null — renderer handles null gracefully
+        chart_data:           (blog.chart_data && typeof blog.chart_data === 'object' &&
+                               blog.chart_data.type && Array.isArray(blog.chart_data.data) &&
+                               blog.chart_data.data.length >= 2 &&
+                               blog.chart_data.data.every(d => typeof d.value === 'number' && d.label))
+                               ? blog.chart_data : null,
 
         // Sources and images — JSONB columns, no JSON.stringify needed
         data_sources:         job?.payload?.tavily_sources || [],
