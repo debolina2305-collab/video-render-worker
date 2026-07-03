@@ -135,7 +135,7 @@ function buildPrompt(job, quizRows) {
 
   const systemPrompt = `You are an expert SEO content writer creating trending quiz companion blog posts for jaasblog.online. 
 Write engaging, factual, well-structured HTML blog posts about trending US topics.
-Always write in clear US English. Be factual, engaging, and cite the research provided.
+Always write in clear US English. Be factual, engaging, and cite the research provided. Don't invent any data. use data from inputs table only.
 Return ONLY valid JSON — no markdown fences, no preamble, no explanation outside the JSON.`;
 
   const userPrompt = `Write a 1000-word SEO blog post about: "${topic}" (niche: ${niche})
