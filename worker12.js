@@ -211,34 +211,38 @@ async function run() {
   // Load LLM config from quiz_generation_settings (same table as Worker 8)
   const llmConfig = await loadLLMConfig();
 
-  // Find quiz_queue jobs that have a completed quiz but no blog yet.
-  // Join via quiz.topic_slug matching quiz_queue.trnding_topic (approximate).
-  // Simpler: find quiz rows with quiz_enriched=true that have no blog_post yet.
-  const pendingQuizzes = await supabase(
-    'quiz?quiz_enriched=eq.true&is_active=eq.true' +
+  // Get ALL quiz rows that have NO blog yet — Supabase filters server-side.
+  // No limit needed — only rows genuinely missing a blog are returned.
+  // Strategy: get all quiz_ids that already have a blog, then fetch quiz rows NOT in that set.
+  const existingBlogQuizIds = await supabase(
+    'quiz_blog_posts?select=quiz_id'
+  ).then(rows => (rows || []).filter(r => r.quiz_id).map(r => r.quiz_id));
+  console.log(`[W12] ${existingBlogQuizIds.length} quiz_ids already have blogs`);
+
+  // Build NOT IN filter — if no blogs exist yet, fetch all enriched quizzes
+  let quizFilter = 'quiz?quiz_enriched=eq.true&is_active=eq.true' +
     '&select=id,topic,topic_slug,niche,quiz_no,niche_challenge_no,' +
     'question_1,options_1,correct_answer_1,explanation_1,blog_slug,' +
-    'created_at&order=created_at.asc&limit=20'
-  );
+    'created_at&order=created_at.asc';
+
+  if (existingBlogQuizIds.length > 0) {
+    // PostgREST NOT IN filter: id=not.in.(uuid1,uuid2,...)
+    quizFilter += `&id=not.in.(${existingBlogQuizIds.join(',')})`;
+  }
+
+  const pendingQuizzes = await supabase(quizFilter);
 
   if (!pendingQuizzes?.length) {
     console.log('[W12] No enriched quizzes found.');
     return;
   }
+  console.log(`[W12] Found ${pendingQuizzes.length} quiz rows without blogs`);
 
-  // Find which slugs already have blogs
-  const existingSlugs = await supabase(
-    'quiz_blog_posts?select=slug'
-  ).then(rows => new Set((rows || []).map(r => r.slug)));
-  console.log(`[W12] ${existingSlugs.size} blogs already exist`);
-
-  // Group by topic_slug — process one blog per topic
+  // Group by topic_slug — one blog per unique topic
   const topicMap = new Map();
   for (const q of pendingQuizzes) {
-    const blogSlug = makeSlug(q.topic, q.quiz_no);
-    if (existingSlugs.has(blogSlug) || existingSlugs.has(q.blog_slug)) continue;
     if (!topicMap.has(q.topic_slug)) topicMap.set(q.topic_slug, { quiz: q, rows: [] });
-    topicMap.get(q.topic_slug).rows.push(q);
+    else topicMap.get(q.topic_slug).rows.push(q);
   }
 
   if (!topicMap.size) {
@@ -246,11 +250,15 @@ async function run() {
     return;
   }
 
-  console.log(`[W12] ${topicMap.size} topics need blogs`);
+  // Cap at 5 per run to stay within GitHub Actions 20-min timeout
+  // Remaining topics will be picked up in the next scheduled run
+  const MAX_PER_RUN = 5;
+  const topicsToProcess = [...topicMap.entries()].slice(0, MAX_PER_RUN);
+  console.log(`[W12] ${topicMap.size} topics need blogs — processing ${topicsToProcess.length} this run`);
 
   let generated = 0;
 
-  for (const [topicSlug, { quiz: primaryQuiz, rows: allRows }] of topicMap) {
+  for (const [topicSlug, { quiz: primaryQuiz, rows: allRows }] of topicsToProcess) {
     console.log(`\n[W12] Generating blog for: "${primaryQuiz.topic}" (${allRows.length} quiz rows)`);
 
     try {
