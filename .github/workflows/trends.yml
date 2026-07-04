@@ -21,15 +21,15 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Mode: all | trends | rss | fallback'
+        description: 'Mode: trends (only option now — RSS/fallback removed)'
         required: true
-        default: 'all'
+        default: 'trends'
         type: choice
-        options: [all, trends, rss, fallback]
+        options: [trends]
 
 jobs:
   fetch:
-    name: Waterfall (trendspyg → RSS gap → fallback gap)
+    name: Trendspyg (Google Trends only — RSS/fallback removed)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -44,11 +44,11 @@ jobs:
         uses: browser-actions/setup-chrome@v1
 
       - name: Install dependencies
-        run: pip install trendspyg feedparser requests tavily-python selenium
+        run: pip install trendspyg requests tavily-python
 
       - name: Run
         env:
           SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TAVILY_API_KEY:       ${{ secrets.TAVILY_API_KEY }}
-        run: python fetch_trends.py --mode ${{ github.event.inputs.mode || 'all' }}
+        run: python fetch_trends.py --mode trends
