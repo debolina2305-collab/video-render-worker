@@ -455,6 +455,30 @@ async function processPublish() {
       })
     });
 
+    // 7. Promote the linked blog post to published if it exists and is still draft.
+    // Worker 12 now publishes immediately on creation, but this handles edge cases:
+    // blogs generated before that fix, or cases where blog creation raced ahead
+    // of video publishing and was left in draft.
+    if (quiz.blog_slug) {
+      try {
+        await fetchSupabase(
+          `quiz_blog_posts?slug=eq.${encodeURIComponent(quiz.blog_slug)}&is_published=eq.false`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify({
+              status:       'published',
+              is_published: true,
+              published_at: new Date().toISOString(),
+              updated_at:   new Date().toISOString(),
+            })
+          }
+        );
+        console.log(`[PUBLISHER] ✓ Blog promoted: slug=${quiz.blog_slug}`);
+      } catch (blogErr) {
+        console.warn(`[PUBLISHER] Could not promote blog (non-fatal): ${blogErr.message}`);
+      }
+    }
+
     console.log(`[PUBLISHER] ✓ Published: ${youtubeUrl}`);
     console.log(`[PUBLISHER] ✓ quiz.youtube_video_id = ${videoId}`);
 
