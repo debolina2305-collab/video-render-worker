@@ -917,16 +917,30 @@ def run_trendspyg(channels, override_target=None):
         # Walk the volume-sorted list from the TOP. Insert quiz-ready topics
         # until we reach max_topics_per_run, or until we've processed
         # max_process_per_run raw trends (Tavily-credit safety cap).
-        inserted  = 0
-        processed = 0
-        target    = override_target if override_target is not None else cfg['max_topics_per_run']
+        #
+        # BUG FIX: `processed` used to be incremented for EVERY candidate,
+        # including ones skipped for being an exact duplicate of something
+        # already queued today. When one viral story (e.g. "argentina match")
+        # dominates the top of the volume-sorted list across many near-identical
+        # entries, ALL of them got counted against max_process_per_run before
+        # the loop ever reached a genuinely new, still-unqueued topic further
+        # down — even with hundreds of fresh trends available. Duplicate-skips
+        # are now checked BEFORE incrementing `processed` and don't count
+        # against the cap at all (they cost zero Tavily credits, since
+        # already_queued() runs before any Tavily call), so the loop can walk
+        # arbitrarily deep past duplicates to find real, fresh candidates.
+        inserted   = 0
+        processed  = 0   # counts only REAL attempts (post-dedup, pre-Tavily)
+        skipped_dup = 0
+        target     = override_target if override_target is not None else cfg['max_topics_per_run']
         log.info(f'  Target for this run: {target} quiz-ready topics')
         for t in trends:
             if inserted >= target:
                 log.info(f'  Reached target of {target} quiz-ready topics -- stopping')
                 break
             if processed >= cfg['max_process_per_run']:
-                log.info(f'  Hit process cap ({cfg["max_process_per_run"]}) before target -- stopping')
+                log.info(f'  Hit process cap ({cfg["max_process_per_run"]}) before target -- stopping '
+                         f'(also skipped {skipped_dup} duplicates along the way, uncounted)')
                 break
             kw  = t['keyword']
             vol = t['volume']
@@ -939,6 +953,14 @@ def run_trendspyg(channels, override_target=None):
             ok_kw, reason = is_quizable_trend(kw)
             if not ok_kw:
                 log.info(f'  SKIP [{reason}]: {kw}'); continue
+            # Dedup check happens here, BEFORE the process cap counts it and
+            # BEFORE any Tavily call -- an unlimited number of same-story
+            # duplicates can be skipped for free without ever starving the
+            # loop of a chance to reach fresh topics further down the list.
+            if already_queued(kw, country):
+                log.info(f'  SKIP (dup, free -- not counted against process cap): {kw}')
+                skipped_dup += 1
+                continue
             priority  = volume_to_priority(vol)
             breakdown = t.get('breakdown', '')
             log.info(f'  Processing ({inserted+1}/{target}, vol={vol:,} p={priority}): {kw}')
@@ -949,7 +971,7 @@ def run_trendspyg(channels, override_target=None):
                 inserted += 1
 
         log.info(f'[{channel["channel_name"]}] trendspyg: {inserted}/{target} quiz-ready topics inserted '
-                 f'(processed {processed} raw trends)')
+                 f'(processed {processed} real attempts, skipped {skipped_dup} duplicates for free)')
         return inserted
 
     return 0
