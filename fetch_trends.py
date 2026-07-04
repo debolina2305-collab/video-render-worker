@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-fetch_trends.py -- Multi-source trending topic fetcher
-Modes: trends | rss | fallback | all
-Requirements: pip install trendspyg feedparser requests tavily-python
+fetch_trends.py -- Trending topic fetcher (trendspyg only)
+RSS and Tavily gap-filler fallback modes were removed by request --
+trendspyg (Google Trends) is now the sole topic source.
+Requirements: pip install trendspyg requests tavily-python
 Secrets: SUPABASE_URL, SUPABASE_SERVICE_KEY, TAVILY_API_KEY
 """
 
@@ -11,7 +12,6 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 import requests
-import feedparser
 from tavily import TavilyClient
 
 logging.basicConfig(
@@ -36,7 +36,6 @@ TRENDSPYG_MAX_PROCESS = 25    # fallback process cap if trend_config missing
 TAVILY_MIN_RESULTS   = 2
 TAVILY_MIN_WORDS     = 200    # default; overridden per-channel by trend_config.min_grounding_words
 TAVILY_DELAY_SEC     = 1.5
-RSS_MAX_PER_FEED     = 15
 
 # -- Trendspyg keyword blocklist -----------------------------------------------
 # Filter out generic/unquizable trending keywords before calling Tavily.
@@ -114,33 +113,6 @@ def classify_niche(topic):
             return niche
     return 'general'
 
-# -- Google News RSS feeds -----------------------------------------------------
-# FIX: Using stable named topic paths that 302-redirect to current hash URLs.
-# feedparser follows 302 redirects automatically.
-# Previous hash-encoded URLs for finance/tech/sports/politics/entertainment
-# were stale and returned 0 entries. Named paths are stable long-term.
-GOOGLE_NEWS_RSS = {
-    'US': {
-        'general':       'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en',
-        'finance':       'https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en',
-        'tech':          'https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en',
-        'health':        'https://news.google.com/rss/headlines/section/topic/HEALTH?hl=en-US&gl=US&ceid=US:en',
-        'sports':        'https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-US&gl=US&ceid=US:en',
-        'politics':      'https://news.google.com/rss/headlines/section/topic/POLITICS?hl=en-US&gl=US&ceid=US:en',
-        'entertainment': 'https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-US&gl=US&ceid=US:en',
-    },
-    'IN': {
-        'general':       'https://news.google.com/rss?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'finance':       'https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'tech':          'https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'health':        'https://news.google.com/rss/headlines/section/topic/HEALTH?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'sports':        'https://news.google.com/rss/headlines/section/topic/SPORTS?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'politics':      'https://news.google.com/rss/headlines/section/topic/POLITICS?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'entertainment': 'https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=hi-IN&gl=IN&ceid=IN:hi',
-        'cricket':       'https://news.google.com/rss/search?q=cricket+india&hl=hi-IN&gl=IN&ceid=IN:hi',
-    },
-}
-
 # -- Supabase helpers ----------------------------------------------------------
 def sb_headers():
     return {'apikey': SUPABASE_SERVICE_KEY,
@@ -158,35 +130,6 @@ def db_insert(table, data):
                       json=data, timeout=15)
     r.raise_for_status()
     return True
-
-def count_todays_topics(country_code):
-    """Count topics already inserted today for this channel using
-    Supabase's count=exact header -- returns integer directly, no row fetch."""
-    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    count_headers = {**sb_headers(), 'Prefer': 'count=exact', 'Range-Unit': 'items', 'Range': '0-0'}
-    try:
-        # With country_code filter (works after channel_setup.sql)
-        r = requests.get(
-            f'{SUPABASE_URL}/rest/v1/quiz_queue'
-            f'?country_code=eq.{country_code}'
-            f'&created_at=gte.{today}T00:00:00%2B00:00'
-            f'&status=neq.completed'
-            f'&select=id',
-            headers=count_headers, timeout=15
-        )
-        if r.status_code in (200, 206):
-            content_range = r.headers.get('Content-Range', '')
-            # Content-Range: 0-0/42  -- the number after / is the total count
-            if '/' in content_range:
-                total = int(content_range.split('/')[-1])
-                log.info(f'  count_todays_topics({country_code}): {total} via Content-Range')
-                return total
-        # Fallback: count the returned rows
-        rows = r.json() or []
-        return len(rows)
-    except Exception as e:
-        log.debug(f'count_todays_topics fallback: {e}')
-        return 0
 
 def ascii_normalize(s):
     """
@@ -941,9 +884,9 @@ def run_trendspyg(channels, override_target=None):
         source_used = None
 
         # CSV path: 480+ real trends with genuine volume buckets (200K+, 1M+).
-        # Requires Chrome. If it fails for any reason, we do NOT fall back to
-        # RSS (which only has ~10 coarse-bucket trends and wastes Tavily credits).
-        # Instead we skip and let the --mode fallback job fill any gap.
+        # Requires Chrome. If it fails for any reason, we skip this channel
+        # for this run rather than falling back to another source — trendspyg
+        # is now the only topic source by design.
         try:
             time.sleep(TRENDSPYG_DELAY_SEC)
             trends = _fetch_trends_csv(country, hours=cfg['time_window_hours'])
@@ -951,7 +894,7 @@ def run_trendspyg(channels, override_target=None):
         except Exception as e:
             log.warning(f'  CSV path failed: {e}')
             log.warning(f'  Skipping trendspyg for {channel["channel_name"]} this run.')
-            log.warning(f'  Run --mode fallback separately if needed, or check Chrome installation.')
+            log.warning(f'  Check Chrome installation on the runner.')
             continue
 
         # Enrich with related_queries from RSS (no Chrome, fast).
@@ -1007,153 +950,20 @@ def run_trendspyg(channels, override_target=None):
 
         log.info(f'[{channel["channel_name"]}] trendspyg: {inserted}/{target} quiz-ready topics inserted '
                  f'(processed {processed} raw trends)')
-        return inserted  # waterfall uses this to decide if RSS is needed
-
-    return 0
-
-# -- Mode 2: Google News RSS ---------------------------------------------------
-def run_rss(channels, override_target=None):
-    log.info('== MODE: GOOGLE NEWS RSS (daily volume, priority=5) ==')
-    for channel in channels:
-        country = channel.get('country_code', 'US')
-        niches  = channel.get('niches') or ['general']
-        feeds   = GOOGLE_NEWS_RSS.get(country, GOOGLE_NEWS_RSS['US'])
-        cfg     = load_trend_config(country)
-        target  = override_target if override_target is not None else cfg['max_topics_per_run']
-        min_w   = cfg['min_grounding_words']
-        log.info(f'[{channel["channel_name"]}] RSS: want {target} quiz-ready topics, '
-                 f'min_words={min_w}, across {len(niches)} niches')
-        inserted = 0
-        for niche in niches:
-            if inserted >= target:
-                log.info(f'  Reached target of {target} -- stopping RSS')
-                break
-            url = feeds.get(niche) or feeds.get('general')
-            if not url: continue
-            try:
-                feed    = feedparser.parse(url)
-                entries = feed.entries[:RSS_MAX_PER_FEED]
-                status  = feed.get('status', 'N/A')
-                log.info(f'  [{niche}] {len(entries)} entries (HTTP {status})')
-                if feed.bozo and len(entries) == 0:
-                    log.warning(f'  [{niche}] Feed error: {feed.bozo_exception}')
-                    continue
-            except Exception as e:
-                log.warning(f'  RSS failed {niche}: {e}'); continue
-            for entry in entries:
-                if inserted >= target:
-                    break
-                title = re.sub(r'\s*[--]\s*[^--]+$', '',
-                               entry.get('title','').strip()).strip()
-                if len(title) < 10: continue
-                if process_topic(title, channel, 'rss', 5, niche, min_words=min_w):
-                    inserted += 1
-        log.info(f'[{channel["channel_name"]}] RSS: {inserted}/{target} quiz-ready topics inserted')
         return inserted
 
     return 0
 
-# -- Mode 3: Tavily fallback ---------------------------------------------------
-def run_fallback(channels, target=50):
-    log.info('== MODE: TAVILY FALLBACK (gap filler, priority=1) ==')
-    for channel in channels:
-        country      = channel.get('country_code', 'US')
-        niches       = channel.get('niches') or ['general']
-        country_name = {'US': 'United States', 'IN': 'India'}.get(country, country)
-        # FIX: use count_todays_topics() which handles missing country_code column
-        have = count_todays_topics(country)
-        if have >= target:
-            log.info(f'[{channel["channel_name"]}] Already at target ({have}), skip fallback')
-            continue
-        needed = target - have
-        log.info(f'[{channel["channel_name"]}] Have {have} today, need {needed} more')
-        inserted = 0
-        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        for niche in niches:
-            if inserted >= needed: break
-            try:
-                time.sleep(TAVILY_DELAY_SEC)
-                result  = tavily.search(
-                    query                      = f'Top trending news in {niche} in {country_name} today {today}',
-                    search_depth               = 'advanced',
-                    max_results                = 5,
-                    include_images             = True,
-                    include_image_descriptions = True,
-                )
-                results = result.get('results', [])
-                raw_images = result.get('images') or []
-                fallback_images = []
-                for img in raw_images[:6]:
-                    if isinstance(img, dict) and img.get('url'):
-                        fallback_images.append({'url': img['url'], 'description': img.get('description') or niche})
-                    elif isinstance(img, str) and img:
-                        fallback_images.append({'url': img, 'description': niche})
-            except Exception as e:
-                log.warning(f'  Fallback search failed {niche}: {e}'); continue
-            for res in results:
-                title   = re.sub(r'\s*[--]\s*[^--]+$', '', (res.get('title') or '').strip()).strip()
-                content = (res.get('content') or res.get('snippet') or '').strip()
-                if len(title) < 10 or len(content.split()) < 50: continue
-                if already_queued(title, country): continue
-                fallback_sources = [{'title': r.get('title','').strip() or extract_domain(r.get('url','')),
-                                      'url': r.get('url',''), 'domain': extract_domain(r.get('url',''))}
-                                     for r in results if r.get('url')][:6]
-                ok = insert_topic(title, niche, trim(content, max_words=1500), channel, 'tavily_fallback', 1,
-                                   tavily_sources=fallback_sources, tavily_images=fallback_images)
-                if ok:
-                    inserted += 1
-                    log.info(f'  OK FALLBACK [{niche}]: {title[:70]}')
-        log.info(f'[{channel["channel_name"]}] Fallback: {inserted} inserted')
-
-# -- Waterfall orchestrator ----------------------------------------------------
-def run_waterfall(channels):
-    """
-    WATERFALL -- the correct daily flow:
-      Stage 1: trendspyg -> tries to reach full target (highest-volume viral topics)
-      Stage 2: RSS        -> fills ONLY THE GAP (target minus what trendspyg inserted)
-      Stage 3: fallback   -> fills any remaining gap
-
-    Uses INSERTION COUNTS returned by each stage (not DB re-queries which
-    would include rows from previous runs and trigger false "target reached").
-    """
-    log.info('== WATERFALL: trendspyg -> RSS (gap) -> fallback (gap) ==')
-    for channel in channels:
-        country = channel.get('country_code', 'US')
-        cfg     = load_trend_config(country)
-        target  = cfg['max_topics_per_run']
-        log.info(f'[{channel["channel_name"]}] Target this run: {target} new quiz-ready topics')
-
-        # Stage 1: trendspyg
-        inserted_trends = run_trendspyg([channel], override_target=target)
-        log.info(f'[{channel["channel_name"]}] Stage 1 result: {inserted_trends}/{target}')
-
-        if inserted_trends >= target:
-            log.info(f'  Target reached by trendspyg -- skipping RSS + fallback')
-            continue
-
-        # Stage 2: RSS fills the gap
-        gap = target - inserted_trends
-        log.info(f'  Gap = {gap} -> running RSS to fill')
-        inserted_rss = run_rss([channel], override_target=gap)
-        total = inserted_trends + inserted_rss
-        log.info(f'[{channel["channel_name"]}] Stage 2 result: {total}/{target} (trendspyg={inserted_trends} + rss={inserted_rss})')
-
-        if total >= target:
-            log.info(f'  Target reached by trendspyg + RSS -- skipping fallback')
-            continue
-
-        # Stage 3: Tavily fallback fills remaining gap
-        remaining = target - total
-        log.info(f'  Still need {remaining} more -> running fallback')
-        run_fallback([channel], target=remaining)
-
-    log.info('Waterfall complete.')
-
 # -- Main ----------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', required=True,
-                        choices=['trends','rss','fallback','all'])
+    # RSS ('rss') and Tavily-gap-filler ('fallback') modes, plus the
+    # 'all'/waterfall orchestrator that chained trendspyg -> RSS -> fallback,
+    # have been removed by request. trendspyg is now the only topic source.
+    # --mode is kept (rather than dropped) so existing workflow_dispatch
+    # calls / cron invocations that pass --mode trends keep working unchanged.
+    parser.add_argument('--mode', required=False, default='trends',
+                        choices=['trends'])
     args = parser.parse_args()
     log.info(f'fetch_trends.py | mode={args.mode} | {datetime.now(timezone.utc).isoformat()}')
 
@@ -1169,14 +979,7 @@ def main():
 
     log.info(f'Active channels: {[c["channel_name"] for c in channels]}')
 
-    if args.mode == 'trends':
-        run_trendspyg(channels)
-    elif args.mode == 'rss':
-        run_rss(channels)
-    elif args.mode == 'fallback':
-        run_fallback(channels)
-    elif args.mode == 'all':
-        run_waterfall(channels)   # trendspyg -> RSS gap -> fallback gap
+    run_trendspyg(channels)
 
     log.info('Done.')
 
