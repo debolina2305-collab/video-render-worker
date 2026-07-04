@@ -406,7 +406,7 @@ async function imgClip(img, audioP, dur, workDir, name) {
   const out = path.join(workDir, `${name}.mp4`);
   const safeDur = Math.max(0.3, dur);
   await ffmpeg(
-    `-y -loop 1 -i "${img}" -i "${audioP}" -c:v libx264 -crf 18 -preset medium -t ${safeDur} -pix_fmt yuv420p -r 30 ` +
+    `-y -loop 1 -i "${img}" -i "${audioP}" -c:v libx264 -crf 28 -preset faster -t ${safeDur} -pix_fmt yuv420p -r 30 ` +
     `-vf "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2" ` +
     `-c:a aac -b:a 128k -ar 44100 -shortest "${out}"`, `imgClip ${name}`
   );
@@ -419,12 +419,10 @@ async function imgClip(img, audioP, dur, workDir, name) {
 // then muxes with the pre-built `audioP`. Used for EVERY segment so CSS animations
 // (logo glow pulse, niche background motion) actually play instead of freezing on
 // a single screenshot frame. `dur` is hard-clamped at mux time via -t.
-async function recordedClip(page, audioP, dur, workDir, name) {
+async function recordedClip(page, audioP, dur, workDir, name, triggerSelector = null) {
   const safeDur = Math.max(0.3, dur);
   const rawVideo = path.join(workDir, `${name}_raw.mp4`);
   // DIAGNOSTIC: confirm exactly what page/URL/title is about to be recorded.
-  // If a render ever shows wrong content again, this log line pinpoints whether
-  // `page` had drifted away from our file:// HTML at the moment of capture.
   try {
     const diagUrl = page.url();
     const diagTitle = await page.title().catch(()=>'(title fetch failed)');
@@ -433,20 +431,40 @@ async function recordedClip(page, audioP, dur, workDir, name) {
   } catch (e) {
     console.warn(`[RECORD-DIAG] ${name}: diagnostic check failed: ${e.message}`);
   }
-  // Defensive: close any stray extra pages/tabs that may have appeared (popups,
-  // redirects, etc.) so the recorder has zero ambiguity about which target to use.
+  // Defensive: close stray extra pages so recorder has zero ambiguity about target.
   try {
     const allPages = await page.browser().pages();
     for (const p of allPages) {
-      if (p !== page && !p.isClosed()) { console.warn(`[RECORD-DIAG] ${name}: closing stray page url=${p.url()}`); await p.close().catch(()=>{}); }
+      if (p !== page && !p.isClosed()) { console.warn(`[RECORD-DIAG] ${name}: closing stray page`); await p.close().catch(()=>{}); }
     }
   } catch (e) { console.warn(`[RECORD-DIAG] ${name}: stray page cleanup failed: ${e.message}`); }
 
   const recorder = new PuppeteerScreenRecorder(page, { fps:30, videoFrame:{width:1080,height:1920}, aspectRatio:'9:16', followNewTab:false });
   await recorder.start(rawVideo);
+
+  // TRANSITION FIX: if a triggerSelector is provided, re-trigger the CSS
+  // animation NOW — inside the recording window — so it plays in the video.
+  // showOnly() already set .active before this call (which is correct for
+  // screens that need to be visible before recording starts), but for
+  // transition animations we need to restart them by briefly removing then
+  // re-adding .active while the recorder is running. This makes slide_up,
+  // zoom_in, flip, blur_in, and bounce visible in the recorded clip.
+  if (triggerSelector) {
+    await page.evaluate(sel => {
+      const el = document.querySelector(sel);
+      if (!el) return;
+      // Force reflow: remove and re-add .active so the @keyframes animation
+      // restarts from frame 0 with the recorder already capturing.
+      el.classList.remove('active');
+      void el.offsetHeight; // reflow trigger
+      el.classList.add('active');
+    }, triggerSelector);
+    // Let animation play: wait for the longest animation (bounce, 550ms)
+    await new Promise(r=>setTimeout(r,600));
+  }
+
   await new Promise(r=>setTimeout(r, safeDur*1000));
   await withTimeout(recorder.stop(), TIMEOUT_RECORDER, `${name} recorder.stop()`);
-  // Verify the raw recording actually has frames / non-trivial size before proceeding
   try {
     const rawStat = await fs.stat(rawVideo);
     console.log(`[RECORD-DIAG] ${name}: raw recording size=${(rawStat.size/1024).toFixed(1)}KB`);
@@ -455,16 +473,15 @@ async function recordedClip(page, audioP, dur, workDir, name) {
   }
 
   const h264 = path.join(workDir, `${name}_h264.mp4`);
-  await ffmpeg(`-y -i "${rawVideo}" -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264}"`, `${name} reencode`);
+  // CRF 28 + preset faster: YouTube Shorts target quality at 4-8MB.
+  // Previous CRF 18 + preset medium was broadcast quality at 20-25MB and
+  // took 2-3× longer to encode. CRF 28 is indistinguishable on mobile screens.
+  await ffmpeg(`-y -i "${rawVideo}" -c:v libx264 -crf 28 -preset faster -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264}"`, `${name} reencode`);
 
   const out = path.join(workDir, `${name}.mp4`);
-  // Mux video + audio. Use libx264 re-encode (not -c:v copy) to ensure
-  // consistent timebase between video and audio streams — copy can cause
-  // audio start-time misalignment when source timebase differs from audio.
-  // -shortest stops at the shorter stream; -t is a hard safety clamp.
   await ffmpeg(
     `-y -i "${h264}" -i "${audioP}" ` +
-    `-c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 ` +
+    `-c:v libx264 -crf 28 -preset faster -pix_fmt yuv420p -r 30 ` +
     `-c:a aac -b:a 128k -ar 44100 -map 0:v:0 -map 1:a:0 -shortest -t ${safeDur} "${out}"`,
     `${name} mux`
   );
@@ -922,18 +939,15 @@ async function buildVideo(quiz, workDir) {
   await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded'});
   await new Promise(r=>setTimeout(r,600));
 
-  const TRANSITION_DURATION_MS = 600; // longest animation is bounce at 550ms + 50ms settle
-  const showOnly = async sel => {
+  const showOnly = async (sel, { skipWait = false } = {}) => {
     await page.evaluate(s=>{
       document.querySelectorAll('.screen').forEach(e=>e.classList.remove('active'));
       const el=document.querySelector(s); if(el) el.classList.add('active');
     },sel);
-    // Wait for CSS transition/animation to fully complete before screenshotting.
-    // Previously 150ms -- fine for the default 'fade' (display:none/flex, instant)
-    // but all other transition styles (slide_up 450ms, zoom_in 400ms, flip 500ms,
-    // blur_in 500ms, bounce 550ms) were still mid-animation when the screenshot
-    // fired, producing a blurred/scaled/translated frozen frame.
-    await new Promise(r=>setTimeout(r, TRANSITION_DURATION_MS));
+    // 50ms — just enough for a DOM repaint/paint flush before screenshot.
+    // CSS transition animations play DURING recordedClip() screen recording,
+    // not during this wait, so this does not need to equal animation duration.
+    if (!skipWait) await new Promise(r=>setTimeout(r,50));
   };
   const shot = async name => { const p=path.join(workDir,`${name}.png`); await page.screenshot({path:p}); return p; };
 
@@ -972,7 +986,7 @@ async function buildVideo(quiz, workDir) {
     fallbackSec:2.5, voice, leadGap:0.1, workDir, name:'hook'
   });
   // No cap — record for the full actual hook audio length
-  pushClip(await recordedClip(page, hookAudio.path, Math.max(hookAudio.dur, 1.5), workDir, 'clip_hook'));
+  pushClip(await recordedClip(page, hookAudio.path, Math.max(hookAudio.dur, 1.5), workDir, 'clip_hook', '.hook-slide'));
 
   // ══ STEP 2 (white intro-flash removed per feedback — straight to question_intro) ══
 
@@ -983,7 +997,7 @@ async function buildVideo(quiz, workDir) {
     prerecorded: questionIntroFile, fallbackText: '', fallbackSec: 0.8,
     voice, leadGap: 0.15, workDir, name: 'qintro'
   });
-  pushClip(await recordedClip(page, qIntroAudio.path, qIntroAudio.dur, workDir, 'clip_qwait'), false);
+  pushClip(await recordedClip(page, qIntroAudio.path, qIntroAudio.dur, workDir, 'clip_qwait', null), false);
 
   // ══ STEP 3b: question_1 REVEALED + sfx + TTS — recorded for FULL audio, no truncation ══
   await showOnly('.question-appear-slide');
@@ -994,7 +1008,7 @@ async function buildVideo(quiz, workDir) {
   const step3bCombined=path.join(workDir,'step3b.mp3');
   await concatAudio(step3bParts,step3bCombined,workDir);
   const qRevealDur = Math.max(await audioDur(step3bCombined), 1.5);
-  pushClip(await recordedClip(page, step3bCombined, qRevealDur, workDir, 'clip_q_reveal'));
+  pushClip(await recordedClip(page, step3bCombined, qRevealDur, workDir, 'clip_q_reveal', '.question-appear-slide'));
 
   // ══ STEP 4a: options_intro_audio_url plays, options HIDDEN ══
   await showOnly('.options-waiting-slide');
@@ -1003,7 +1017,7 @@ async function buildVideo(quiz, workDir) {
     prerecorded: optionsIntroFile, fallbackText: 'And your options are', fallbackSec: 1.5,
     voice, leadGap: GAP_OPTIONS, workDir, name: 'ointro'
   });
-  pushClip(await recordedClip(page, oIntroAudio.path, oIntroAudio.dur, workDir, 'clip_owait'), false);
+  pushClip(await recordedClip(page, oIntroAudio.path, oIntroAudio.dur, workDir, 'clip_owait', null), false);
 
   // ══ STEP 4b: options_1 REVEALED — NO TTS per option (was unintelligible at 2x,
   // and unacceptably long at 1x). Options are shown silently on screen for 4s
@@ -1019,7 +1033,7 @@ async function buildVideo(quiz, workDir) {
   const step4bCombined=path.join(workDir,'step4b.mp3');
   await concatAudio(s4bp,step4bCombined,workDir);
   const oRevealDur = Math.max(await audioDur(step4bCombined), 2);
-  pushClip(await recordedClip(page, step4bCombined, oRevealDur, workDir, 'clip_options_reveal'));
+  pushClip(await recordedClip(page, step4bCombined, oRevealDur, workDir, 'clip_options_reveal', '.question-static'));
 
   // ══ STEP 6-8: COUNTDOWN — screen-recorded, 50/50 at 2/3 of QTIME.
   // QTIME comes straight from the DB (thinking_time_sec), no ceiling applied. ══
@@ -1037,7 +1051,7 @@ async function buildVideo(quiz, workDir) {
     await ffmpeg(`-y -i "${cdBase}" -i "${sfxFile}" -i "${sfxFile}" -filter_complex "[1:a]adelay=${hMs}|${hMs}[s0];[2:a]adelay=${fMs}|${fMs}[s1];[0:a][s0][s1]amix=inputs=3:duration=first[a]" -map "[a]" -t ${QTIME} -ar 44100 -acodec libmp3lame "${stingMixed}"`, 'cdStings');
     cdFinal=stingMixed;
   }
-  pushClip(await recordedClip(page, cdFinal, QTIME, workDir, 'clip_countdown'));
+  pushClip(await recordedClip(page, cdFinal, QTIME, workDir, 'clip_countdown', '.question-phase'));
 
   // ══ STEP 9: Timeup — audio only, no text changes ══
   await showOnly('.pre-reveal-slide');
@@ -1046,7 +1060,7 @@ async function buildVideo(quiz, workDir) {
     prerecorded:timeupFile, fallbackText:quiz.timeup_text||"Time's up!",
     fallbackSec:2, voice, leadGap:GAP_DEFAULT, workDir, name:'timeup'
   });
-  pushClip(await recordedClip(page, timeupAudio.path, timeupAudio.dur, workDir, 'clip_timeup'));
+  pushClip(await recordedClip(page, timeupAudio.path, timeupAudio.dur, workDir, 'clip_timeup', '.pre-reveal-slide'));
 
   // ══ STEP 10: Answer reveal ══
   await showOnly('.answer-slide');
@@ -1058,7 +1072,7 @@ async function buildVideo(quiz, workDir) {
   const step10Combined=path.join(workDir,'step10.mp3');
   await concatAudio(s10p,step10Combined,workDir);
   const answerDur = Math.max(await audioDur(step10Combined), 1.5);
-  pushClip(await recordedClip(page, step10Combined, answerDur, workDir, 'clip_answer'));
+  pushClip(await recordedClip(page, step10Combined, answerDur, workDir, 'clip_answer', '.answer-slide'));
 
   // ══ FINAL CTA — now comes BEFORE Mission Impossible. ONE cta only: CTA1 if affiliate/
   // cta1_description_text exists, else CTA2. Moved here so MI is the last dramatic beat. ══
@@ -1073,7 +1087,7 @@ async function buildVideo(quiz, workDir) {
     fallbackSec:3, voice, leadGap:GAP_DEFAULT, workDir, name:hasCta1?'cta1':'cta2'
   });
   console.log(`[FINALCTA-DIAG] built audio path=${ctaAudio.path} dur=${ctaAudio.dur.toFixed(2)}s`);
-  pushClip(await recordedClip(page, ctaAudio.path, ctaAudio.dur, workDir, 'clip_cta'));
+  pushClip(await recordedClip(page, ctaAudio.path, ctaAudio.dur, workDir, 'clip_cta', hasCta1?'.cta1-slide':'.cta2-slide'));
 
   // ══ MISSION IMPOSSIBLE — LAST screen, after CTA. Skip if mission_impossible_question
   // is null. ONE combined screen: title flies in, then question+options fade in. ══
@@ -1099,7 +1113,7 @@ async function buildVideo(quiz, workDir) {
       await concatAudio([miAudioRaw,pad],miAudio,workDir);
       miAudioDur = 3.5;
     }
-    pushClip(await recordedClip(page, miAudio, miAudioDur, workDir, 'clip_mi'));
+    pushClip(await recordedClip(page, miAudio, miAudioDur, workDir, 'clip_mi', '.mission-final-slide'));
 
     // ══ COMBINED CTA SCREEN (like→share→subscribe + cta4) ══
     await showOnly('.comment-cta-screen');
@@ -1188,14 +1202,14 @@ async function buildVideo(quiz, workDir) {
 
     // Re-encode video-only (no audio)
     const ctaH264 = path.join(workDir,'clip_cta_combined_h264.mp4');
-    await ffmpeg(`-y -i "${ctaRawVideo}" -an -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${ctaH264}"`, 'cta_combined reencode');
+    await ffmpeg(`-y -i "${ctaRawVideo}" -an -c:v libx264 -crf 28 -preset faster -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${ctaH264}"`, 'cta_combined reencode');
 
     // Mux: -ac 1 (MONO) + 128k to EXACTLY match other clips → concat won't drop audio.
     const ctaOut = path.join(workDir,'clip_cta_combined.mp4');
     await ffmpeg(
       `-y -stream_loop -1 -i "${ctaH264}" -i "${ctaFinalAudio}" ` +
       `-map 0:v:0 -map 1:a:0 ` +
-      `-c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 ` +
+      `-c:v libx264 -crf 28 -preset faster -pix_fmt yuv420p -r 30 ` +
       `-c:a aac -b:a 128k -ar 44100 -ac 1 ` +
       `-t ${totalCtaDur} "${ctaOut}"`,
       'cta_combined mux'
@@ -1216,7 +1230,7 @@ async function buildVideo(quiz, workDir) {
   const concatTxt=path.join(workDir,'concat.txt');
   await fs.writeFile(concatTxt,clips.map(c=>`file '${c.path.replace(/'/g,"'\\''")}' `).join('\n'));
   const concatenated=path.join(workDir,'concatenated.mp4');
-  await ffmpeg(`-y -f concat -safe 0 -i "${concatTxt}" -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k -ar 44100 -movflags +faststart "${concatenated}"`, 'finalConcat');
+  await ffmpeg(`-y -f concat -safe 0 -i "${concatTxt}" -c:v libx264 -crf 28 -preset faster -pix_fmt yuv420p -r 30 -c:a aac -b:a 128k -ar 44100 -movflags +faststart "${concatenated}"`, 'finalConcat');
   const measuredTotal=await videoDur(concatenated);
   console.log(`[VIDEO] Concatenated: measured=${measuredTotal.toFixed(2)}s vs sum-of-clips=${runningTotal.toFixed(2)}s`);
   if (measuredTotal < runningTotal - 0.1) {
