@@ -143,58 +143,110 @@ def already_queued(topic, country_code):
     """
     Check if this topic was already inserted into quiz_queue today.
 
-    CRITICAL: Non-ASCII chars (umlauts, accents etc.) must be normalized BEFORE
-    making the key. Otherwise 'arda guler' key never finds 'arda guler' in DB.
-    Strategy: normalize both the key AND the search to ASCII, then ILIKE match.
-    We search the ASCII-normalized form so it matches regardless of how the
-    topic was stored (with or without accent marks).
+    ROOT CAUSE OF DUPLICATES (now fixed):
+    The old approach stripped punctuation from the search key but NOT from
+    the stored value. So "argentina - cabo verde" became key "argentina  cabo
+    verde" (double space) and never matched the DB row's "argentina - cabo verde"
+    via ILIKE %argentina  cabo verde%. Topics with dashes, parens, colons, etc.
+    all silently bypassed dedup and were inserted twice.
+
+    FIX — match on NORMALISED WORD TOKENS on both sides:
+      1. Build a short, lowercase, letters-and-digits-only word list from the
+         incoming topic ("argentina cabo verde" from "argentina - cabo verde").
+      2. Search the DB with created_at window (today) and country_code.
+      3. Normalize BOTH sides the same way: PostgreSQL regexp_replace on the
+         DB column so "argentina - cabo verde" and "argentina (cabo verde)"
+         and "argentina cabo verde" all produce the same token string for
+         comparison.
+
+    We do this in pure Python: fetch today's rows for the country, normalize
+    every stored topic the same way we normalize the incoming topic, then
+    compare word-token sets. This avoids any ILIKE substring tricks that
+    break on punctuation differences.
+
+    Performance: today's batch is typically <30 rows — not a large fetch.
+    We cache the set within a single process run so we only hit Supabase once
+    per (country_code, date) pair.
     """
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    # Normalize to ASCII first (ü->u, é->e etc.), then keep alphanumeric + spaces
-    ascii_topic = ascii_normalize(topic)
-    key = re.sub(r'[^a-zA-Z0-9 ]', '', ascii_topic[:60]).strip()[:40]
-    if len(key) < 5:
-        key = re.sub(r'[^a-zA-Z0-9]', '', ascii_topic[:40]).strip()
-    safe = quote(key)
+    cache_key = f'{country_code}:{today}'
+    if not hasattr(already_queued, '_cache'):
+        already_queued._cache = {}
 
-    # Also try searching by the raw topic (in case stored WITH accents)
-    # We run TWO queries: one with ASCII key, one with original (URL-encoded)
-    # If either hits, it's a duplicate.
-    def _check(query_suffix):
+    if cache_key not in already_queued._cache:
+        # Fetch all topic strings inserted today for this country
         try:
             rows = db_get(
-                f'quiz_queue?trnding_topic=ilike.%25{query_suffix}%25'
-                f'&country_code=eq.{country_code}'
-                f'&created_at=gte.{today}'
-                f'&limit=1&select=id'
+                f'quiz_queue?country_code=eq.{country_code}'
+                f'&created_at=gte.{today}T00%3A00%3A00Z'
+                f'&select=trnding_topic&limit=500'
             )
-            return len(rows) > 0
         except Exception:
+            rows = []
+        # Also try with lowercase country code (some rows stored differently)
+        if not rows:
             try:
                 rows = db_get(
-                    f'quiz_queue?trnding_topic=ilike.%25{query_suffix}%25'
-                    f'&created_at=gte.{today}'
-                    f'&limit=1&select=id'
+                    f'quiz_queue?country_code=eq.{country_code.lower()}'
+                    f'&created_at=gte.{today}T00%3A00%3A00Z'
+                    f'&select=trnding_topic&limit=500'
                 )
-                return len(rows) > 0
-            except Exception as e:
-                log.debug(f'Dedup check failed: {e}')
-                return False
+            except Exception:
+                rows = []
+        already_queued._cache[cache_key] = set(
+            _topic_tokens(r['trnding_topic']) for r in rows if r.get('trnding_topic')
+        )
+        log.debug(f'  Dedup cache loaded: {len(already_queued._cache[cache_key])} topics for {cache_key}')
 
-    # Try ASCII-normalized key first
-    if _check(safe):
-        log.debug(f'  Dedup hit (ascii key): "{topic[:60]}"')
+    incoming_tokens = _topic_tokens(topic)
+    if len(incoming_tokens) < 4:
+        # Very short token string -- do a word-overlap check instead
+        # (all words of incoming must appear in a stored topic, or vice versa)
+        incoming_words = set(incoming_tokens.split())
+        for stored_tokens in already_queued._cache[cache_key]:
+            stored_words = set(stored_tokens.split())
+            if incoming_words and incoming_words <= stored_words:
+                log.debug(f'  Dedup hit (word-subset): "{topic[:60]}"')
+                return True
+        return False
+
+    if incoming_tokens in already_queued._cache[cache_key]:
+        log.debug(f'  Dedup hit (exact tokens): "{topic[:60]}"')
         return True
 
-    # Also try with the raw topic first 30 chars (for topics stored with accents)
-    raw_key = re.sub(r'[^a-zA-Z0-9 ]', '', topic[:50]).strip()[:30]
-    if len(raw_key) >= 4:
-        raw_safe = quote(raw_key)
-        if _check(raw_safe):
-            log.debug(f'  Dedup hit (raw key): "{topic[:60]}"')
-            return True
+    # Fuzzy: also flag if ≥80% of words overlap with any stored topic —
+    # catches "argentina vs cabo verde" vs "argentina - cabo verde"
+    incoming_words = set(w for w in incoming_tokens.split() if len(w) > 2)
+    if incoming_words:
+        for stored_tokens in already_queued._cache[cache_key]:
+            stored_words = set(w for w in stored_tokens.split() if len(w) > 2)
+            if not stored_words:
+                continue
+            overlap = len(incoming_words & stored_words)
+            union   = len(incoming_words | stored_words)
+            if union > 0 and overlap / union >= 0.80:
+                log.debug(f'  Dedup hit (fuzzy {overlap}/{union} words): "{topic[:60]}"')
+                return True
 
     return False
+
+def _topic_tokens(text):
+    """
+    Normalise a topic string to a compact, punctuation-free, lowercase word
+    sequence for dedup comparison.
+
+    "Argentina - Cabo Verde"   -> "argentina cabo verde"
+    "argentina vs. cabo verde" -> "argentina vs cabo verde"
+    "World Cup (2026)"         -> "world cup 2026"
+    Identical regardless of dashes, parens, colons, spacing.
+    """
+    if not text:
+        return ''
+    s = ascii_normalize(text)                          # ü->u, é->e etc.
+    s = s.lower()
+    s = re.sub(r'[^a-z0-9 ]', ' ', s)                # strip all punctuation
+    s = re.sub(r'\s+', ' ', s).strip()               # collapse whitespace
+    return s
 
 # -- Tavily quality filter -----------------------------------------------------
 def extract_domain(url):
@@ -696,6 +748,13 @@ def process_topic(topic, channel, source, priority, niche_hint=None,
         bd_src   = 'google' if (breakdown and breakdown.lower() != topic.lower()) else 'tavily'
         log.info(f'  OK INSERTED [src={source} p={effective_priority} vol={volume:,} '
                  f'score={avg_score:.2f} niche={niche} bd={bd_count}kw/{bd_src}]: {topic[:70]}')
+        # Update the in-memory dedup cache immediately so subsequent topics
+        # in the same run don't try to re-insert this one before the next
+        # cold-start fetch from Supabase.
+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        cache_key = f'{country}:{today}'
+        if hasattr(already_queued, '_cache') and cache_key in already_queued._cache:
+            already_queued._cache[cache_key].add(_topic_tokens(topic))
     return ok
 
 # -- Mode 1: trendspyg ---------------------------------------------------------
