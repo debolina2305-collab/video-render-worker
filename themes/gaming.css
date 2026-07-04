@@ -5,82 +5,47 @@
   --accent-1: #00ff88;
   --accent-2: #ff3c00;
   --accent-3: #ffdd00;
-  --bg-base:  #040404;
   --card-radius: 8px;
   --option-radius: 8px;
   --font-weight-q: 900;
 }
-html,body{ background:#040404; }
+html,body { background:#010a04; }
 .screen {
-  background: linear-gradient(180deg, #070707 0%, #0a0a0a 50%, #060606 100%);
+  background: linear-gradient(160deg, #011008 0%, #021506 30%, #010f05 60%, #001008 100%);
   font-family: 'Courier New', 'Segoe UI', monospace;
 }
 .bg-anim {
-  background: #040404;
+  background: linear-gradient(160deg, #011008 0%, #021506 30%, #010f05 60%, #001008 100%);
 }
 .bg-anim::before {
-  content: ''; position:absolute; inset:0;
+  content:''; position:absolute; inset:0;
   background:
-    repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,255,136,0.02) 3px, rgba(0,255,136,0.02) 4px),
+    radial-gradient(ellipse at 50% 0%, rgba(0,255,136,0.25) 0%, transparent 50%),
+    radial-gradient(ellipse at 20% 80%, rgba(0,255,136,0.12) 0%, transparent 40%),
+    repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,255,136,0.03) 3px, rgba(0,255,136,0.03) 4px),
     repeating-linear-gradient(90deg, transparent, transparent 3px, rgba(0,255,136,0.02) 3px, rgba(0,255,136,0.02) 4px);
   animation: scanLines 8s linear infinite;
 }
-@keyframes scanLines { from{background-position:0 0,0 0} to{background-position:0 80px,80px 0} }
 .bg-anim::after {
   content:''; position:absolute; inset:0;
-  background: radial-gradient(ellipse at 50% 0%, rgba(0,255,136,0.08) 0%, transparent 50%),
-              radial-gradient(ellipse at 50% 100%, rgba(255,60,0,0.06) 0%, transparent 50%);
+  background:
+    radial-gradient(ellipse at 80% 40%, rgba(255,60,0,0.18) 0%, transparent 40%),
+    radial-gradient(ellipse at 50% 100%, rgba(0,255,136,0.12) 0%, transparent 40%);
+  animation: gamingGlow 4s ease-in-out infinite alternate;
 }
-.bg-grid { display:none; }
-.orb1,.orb2,.orb3 { display:none; }
-
-/* HUD borders on cards */
+@keyframes scanLines { from{background-position:0 0,0 0,0 0,0 0} to{background-position:0 0,0 0,0 80px,80px 0} }
+@keyframes gamingGlow { from{opacity:0.5} to{opacity:1} }
 .qp-card-question {
-  background: rgba(0,255,136,0.04) !important;
+  background: rgba(0,255,136,0.05) !important;
   border: 2px solid #00ff88 !important;
-  border-radius: 8px !important;
-  box-shadow: 0 0 30px rgba(0,255,136,0.3), inset 0 0 20px rgba(0,255,136,0.05) !important;
-  position:relative;
-}
-.qp-card-question::before {
-  content:''; position:absolute; top:-2px; left:20px; right:20px; height:2px;
-  background: linear-gradient(90deg, transparent, #00ff88, transparent);
+  box-shadow: 0 0 30px rgba(0,255,136,0.35), inset 0 0 20px rgba(0,255,136,0.06) !important;
 }
 .qp-option {
-  background: rgba(0,0,0,0.8) !important;
-  border: 2px solid rgba(0,255,136,0.4) !important;
-  border-radius: 8px !important;
-  box-shadow: 0 0 20px rgba(0,255,136,0.15) !important;
+  background: rgba(0,0,0,0.80) !important;
+  border: 2px solid rgba(0,255,136,0.45) !important;
   font-family: 'Courier New', monospace !important;
-  backdrop-filter: none !important;
-  transition: all 0.2s ease !important;
+  box-shadow: 0 0 20px rgba(0,255,136,0.18) !important;
 }
-.qp-option:hover { border-color: #00ff88 !important; box-shadow: 0 0 30px rgba(0,255,136,0.4) !important; }
-.qp-option-badge {
-  background: #00ff88 !important;
-  border-radius: 4px !important;
-  color: #000 !important;
-  font-family: 'Courier New', monospace !important;
-}
-.niche-marquee {
-  background: #000 !important;
-  border-top: 2px solid #00ff88 !important;
-  border-bottom: 2px solid #00ff88 !important;
-  box-shadow: 0 0 30px rgba(0,255,136,0.5), inset 0 0 30px rgba(0,255,136,0.05) !important;
-}
-.niche-marquee .topic-word {
-  color: #00ff88 !important;
-  font-family: 'Courier New', monospace !important;
-  text-shadow: 0 0 10px #00ff88, 0 0 30px rgba(0,255,136,0.7) !important;
-  letter-spacing: 6px !important;
-}
-.mission-title-huge { color:#ff3c00 !important; text-shadow:0 0 40px rgba(255,60,0,0.9) !important; animation:glitch 0.3s step-end infinite alternate !important; }
-@keyframes glitch {
-  0%  { transform:translate(0,0) skew(0deg); }
-  20% { transform:translate(-3px,0) skew(1deg); }
-  40% { transform:translate(3px,0) skew(-1deg); }
-  60% { transform:translate(0,0) skew(0deg); }
-}
-.qp-hint { border-color:#ffdd00 !important; color:#ffdd00 !important; border-style:solid !important; border-radius:4px !important; font-family:'Courier New',monospace !important; }
+.qp-option-badge { background:#00ff88 !important; border-radius:4px !important; color:#000 !important; }
 .answer-badge { background: linear-gradient(135deg,#00ff88,#ffdd00) !important; }
 .hook-text { font-family:'Courier New',monospace !important; text-transform:uppercase !important; letter-spacing:4px !important; }

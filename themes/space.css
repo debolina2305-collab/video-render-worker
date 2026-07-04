@@ -1,72 +1,46 @@
 /* ═══════════════════════════════════════════
-   THEME: space — Deep Cosmos / Galactic
+   THEME: space — Deep Purple Cosmic Galaxy
    ═══════════════════════════════════════════ */
 :root {
   --accent-1: #a78bfa;
   --accent-2: #60a5fa;
   --accent-3: #f472b6;
-  --bg-base: #020010;
   --card-radius: 24px;
   --option-radius: 20px;
   --font-weight-q: 700;
 }
-html,body{ background:#020010; }
+html,body { background:#08002a; }
 .screen {
-  background: radial-gradient(ellipse at 50% 0%, #0d0030 0%, #020010 50%, #000208 100%);
+  background: radial-gradient(ellipse at 50% 0%, #1a0060 0%, #08002a 50%, #000520 100%);
 }
 .bg-anim {
-  background: radial-gradient(ellipse at 30% 20%, #0d0030 0%, #020010 70%);
+  background: radial-gradient(ellipse at 30% 20%, #1a0060 0%, #08002a 60%, #000520 100%);
 }
 .bg-anim::before {
   content:'✦ · ✧ ⋆ · ✦ · ⋆ ✧ · ✦ ⋆ · ✧ ✦ · ⋆ · ✧ ✦ · ✦ · ⋆ · ✧ ✦ ⋆ · ✦ ✧ · ⋆ ✦ · ✧ ⋆ ✦ ·';
   position:absolute; top:5%; left:-5%; right:-5%;
   font-size:28px; color:#fff; line-height:3.5; letter-spacing:28px;
-  opacity:0.2; word-break:break-all;
+  opacity:0.25; word-break:break-all;
   animation: starDrift 20s ease-in-out infinite alternate;
-}
-@keyframes starDrift {
-  from { transform:translate(0,0) rotate(0deg); }
-  to   { transform:translate(20px,40px) rotate(2deg); }
 }
 .bg-anim::after {
   content:''; position:absolute; inset:0;
-  background: radial-gradient(circle at 20% 80%, rgba(167,139,250,0.08) 0%, transparent 40%),
-              radial-gradient(circle at 80% 20%, rgba(244,114,182,0.06) 0%, transparent 40%),
-              radial-gradient(circle at 50% 50%, rgba(96,165,250,0.04) 0%, transparent 60%);
+  background:
+    radial-gradient(ellipse at 25% 40%, rgba(167,139,250,0.35) 0%, transparent 40%),
+    radial-gradient(ellipse at 75% 60%, rgba(96,165,250,0.30) 0%, transparent 40%),
+    radial-gradient(ellipse at 50% 20%, rgba(244,114,182,0.20) 0%, transparent 35%);
+  animation: nebulaFlow 10s ease-in-out infinite alternate;
 }
-.bg-grid { display:none; }
-.orb1 { background:radial-gradient(circle,#a78bfa,transparent) !important; opacity:0.3 !important; filter:blur(60px) !important; }
-.orb2 { background:radial-gradient(circle,#f472b6,transparent) !important; opacity:0.25 !important; filter:blur(60px) !important; }
-.orb3 { background:radial-gradient(circle,#60a5fa,transparent) !important; opacity:0.2 !important; filter:blur(60px) !important; }
-
+@keyframes starDrift { from{transform:translateY(0)} to{transform:translateY(-40px)} }
+@keyframes nebulaFlow { from{opacity:0.5} to{opacity:1} }
 .qp-card-question {
-  background: rgba(167,139,250,0.06) !important;
-  border: 1px solid rgba(167,139,250,0.3) !important;
-  border-radius: 24px !important;
-  box-shadow: 0 0 60px rgba(167,139,250,0.12), 0 0 120px rgba(96,165,250,0.06), inset 0 1px 0 rgba(255,255,255,0.1) !important;
-  backdrop-filter: blur(20px) !important;
+  background: rgba(167,139,250,0.10) !important;
+  border: 2px solid rgba(167,139,250,0.45) !important;
+  box-shadow: 0 8px 60px rgba(167,139,250,0.30), 0 0 80px rgba(96,165,250,0.15) !important;
 }
 .qp-option {
-  background: rgba(96,165,250,0.06) !important;
-  border: 1px solid rgba(167,139,250,0.25) !important;
-  border-radius: 20px !important;
-  box-shadow: 0 4px 30px rgba(167,139,250,0.1), inset 0 1px 0 rgba(255,255,255,0.08) !important;
-  backdrop-filter: blur(12px) !important;
+  background: rgba(30,10,80,0.70) !important;
+  border: 2px solid rgba(167,139,250,0.35) !important;
+  box-shadow: 0 0 20px rgba(167,139,250,0.20) !important;
 }
-.qp-option-badge {
-  background: linear-gradient(135deg,#a78bfa,#60a5fa) !important;
-  border-radius: 50% !important;
-}
-.niche-marquee {
-  background: rgba(2,0,16,0.9) !important;
-  border-top: 1px solid rgba(167,139,250,0.5) !important;
-  border-bottom: 1px solid rgba(167,139,250,0.5) !important;
-  box-shadow: 0 0 40px rgba(167,139,250,0.2) !important;
-}
-.niche-marquee .topic-word {
-  color: #a78bfa !important;
-  text-shadow: 0 0 20px #a78bfa, 0 0 60px rgba(167,139,250,0.5) !important;
-}
-.qp-hint { border-color:rgba(167,139,250,0.6) !important; color:#c4b5fd !important; box-shadow:0 0 30px rgba(167,139,250,0.3) !important; }
-.mission-title-huge { color:#f472b6 !important; text-shadow:0 0 40px rgba(244,114,182,0.9),0 0 80px rgba(244,114,182,0.4) !important; }
-.answer-badge { background:linear-gradient(135deg,#a78bfa,#f472b6) !important; }
+.answer-badge { background: linear-gradient(135deg,#a78bfa,#f472b6) !important; }

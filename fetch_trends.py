@@ -7,8 +7,8 @@ Requirements: pip install trendspyg requests tavily-python
 Secrets: SUPABASE_URL, SUPABASE_SERVICE_KEY, TAVILY_API_KEY
 """
 
-import os, re, sys, time, json, logging, argparse, unicodedata
-from datetime import datetime, timezone
+import os, re, sys, time, json, logging, argparse, unicodedata, hashlib, hmac
+from datetime import datetime, timezone, timedelta
 from urllib.parse import quote
 
 import requests
@@ -25,6 +25,95 @@ SUPABASE_URL         = os.environ['SUPABASE_URL'].rstrip('/')
 SUPABASE_SERVICE_KEY = os.environ['SUPABASE_SERVICE_KEY']
 TAVILY_API_KEY       = os.environ['TAVILY_API_KEY']
 tavily               = TavilyClient(api_key=TAVILY_API_KEY)
+
+# ── Cloudflare R2 — hero image uploads ────────────────────────────────────────
+# Reuses the same credentials already used by Worker 10 (thumbnail upload).
+# Images fetched by Tavily are downloaded then pushed to R2 so they're served
+# from your own CDN, not a third-party URL that can expire or be blocked.
+# Destination: quiz-sound-music-speech/Hero_image_by_tavily_for_blog/
+R2_ACCESS_KEY = os.getenv('R2_ACCESS_KEY', '')
+R2_SECRET_KEY = os.getenv('R2_SECRET_KEY', '')
+R2_ENDPOINT   = os.getenv('R2_ENDPOINT', '')          # e.g. https://<acct>.r2.cloudflarestorage.com
+R2_BUCKET     = os.getenv('R2_BUCKET', 'quiz-sound-music-speech')
+R2_PUBLIC_URL = os.getenv('R2_PUBLIC_URL', '')        # e.g. https://pub-xxx.r2.dev
+R2_IMG_PREFIX = 'Hero_image_by_tavily_for_blog'
+R2_CONFIGURED = bool(R2_ACCESS_KEY and R2_SECRET_KEY and R2_ENDPOINT and R2_PUBLIC_URL)
+
+def _r2_sign(key: bytes, msg: str) -> bytes:
+    return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+
+def upload_image_to_r2(image_url: str, slug: str, idx: int = 0) -> str | None:
+    """
+    Download an image from `image_url` and upload it to R2.
+    Returns the public CDN URL on success, None on any failure.
+    Upload path: R2_BUCKET/Hero_image_by_tavily_for_blog/<slug>_<idx>.<ext>
+    """
+    if not R2_CONFIGURED:
+        log.debug('[R2] Not configured — skipping image upload')
+        return None
+    try:
+        resp = requests.get(image_url, timeout=15, stream=True,
+                            headers={'User-Agent': 'Mozilla/5.0 (fetch_trends)'})
+        resp.raise_for_status()
+        data = resp.content
+        ct   = resp.headers.get('Content-Type', 'image/jpeg').split(';')[0].strip()
+        ext  = {'image/jpeg':'jpg','image/png':'png','image/webp':'webp',
+                'image/gif':'gif'}.get(ct, 'jpg')
+        safe_slug = re.sub(r'[^a-z0-9\-]', '', slug.lower())[:60]
+        key  = f'{R2_IMG_PREFIX}/{safe_slug}_{idx}.{ext}'
+
+        # AWS Signature V4 (Cloudflare R2 is S3-compatible)
+        now   = datetime.utcnow()
+        date  = now.strftime('%Y%m%d')
+        ts    = now.strftime('%Y%m%dT%H%M%SZ')
+        host  = R2_ENDPOINT.replace('https://','').replace('http://','').split('/')[0]
+        region= 'auto'
+        srv   = 's3'
+
+        payload_hash = hashlib.sha256(data).hexdigest()
+        canonical = (
+            f'PUT\n/{R2_BUCKET}/{key}\n\n'
+            f'content-type:{ct}\n'
+            f'host:{host}\n'
+            f'x-amz-content-sha256:{payload_hash}\n'
+            f'x-amz-date:{ts}\n\n'
+            f'content-type;host;x-amz-content-sha256;x-amz-date\n'
+            f'{payload_hash}'
+        )
+        cred_scope = f'{date}/{region}/{srv}/aws4_request'
+        str_to_sign = f'AWS4-HMAC-SHA256\n{ts}\n{cred_scope}\n{hashlib.sha256(canonical.encode()).hexdigest()}'
+
+        k_date    = _r2_sign(f'AWS4{R2_SECRET_KEY}'.encode(), date)
+        k_region  = _r2_sign(k_date, region)
+        k_service = _r2_sign(k_region, srv)
+        k_signing = _r2_sign(k_service, 'aws4_request')
+        sig = hmac.new(k_signing, str_to_sign.encode(), hashlib.sha256).hexdigest()
+
+        auth = (
+            f'AWS4-HMAC-SHA256 Credential={R2_ACCESS_KEY}/{cred_scope},'
+            f'SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date,'
+            f'Signature={sig}'
+        )
+        upload_resp = requests.put(
+            f'{R2_ENDPOINT}/{R2_BUCKET}/{key}',
+            data=data,
+            headers={
+                'Host':                 host,
+                'Content-Type':         ct,
+                'x-amz-date':           ts,
+                'x-amz-content-sha256': payload_hash,
+                'Authorization':        auth,
+                'Cache-Control':        'public, max-age=31536000',
+            },
+            timeout=30
+        )
+        upload_resp.raise_for_status()
+        public_url = f'{R2_PUBLIC_URL.rstrip("/")}/{key}'
+        log.info(f'[R2] Uploaded {image_url[:60]} → {public_url}')
+        return public_url
+    except Exception as e:
+        log.warning(f'[R2] Upload failed for {image_url[:60]}: {e}')
+        return None
 
 # NOTE: These trendspyg values are now FALLBACK DEFAULTS only. The live
 # settings come from the trend_config table (per-channel) via load_trend_config().
@@ -612,17 +701,21 @@ def quality_check(topic, tavily_data, min_words=TAVILY_MIN_WORDS):
         for r in results if r.get('url')
     ][:6]
 
-    # -- Images: Tavily's `images` field is only present when             --
-    # -- include_images=True is passed to tavily.search(). It's a list of  --
-    # -- either plain URL strings, or {url, description} dicts when        --
-    # -- include_image_descriptions=True is also set (which we now do).    --
+    # -- Images: uploaded to Cloudflare R2 and replaced with CDN URLs ----------
+    # Tavily image URLs are ephemeral third-party URLs that can expire or be
+    # blocked. Download and re-host on R2 so blog hero/inline images are served
+    # from our own CDN permanently.
     raw_images = tavily_data.get('images') or []
     tavily_images = []
-    for img in raw_images[:6]:
-        if isinstance(img, dict) and img.get('url'):
-            tavily_images.append({'url': img['url'], 'description': img.get('description') or topic})
-        elif isinstance(img, str) and img:
-            tavily_images.append({'url': img, 'description': topic})
+    safe_key_slug = re.sub(r'[^a-z0-9\-]', '-', topic.lower())[:50]
+    for img_idx, img in enumerate(raw_images[:6]):
+        raw_url = img['url'] if isinstance(img, dict) else (img if isinstance(img, str) else None)
+        desc    = img.get('description', topic) if isinstance(img, dict) else topic
+        if not raw_url:
+            continue
+        # Try to upload to R2; fall back to original URL if R2 not configured
+        cdn_url = upload_image_to_r2(raw_url, safe_key_slug, img_idx) or raw_url
+        tavily_images.append({'url': cdn_url, 'description': desc})
 
     return True, 'ok', combined, tavily_titles, avg_score, tavily_sources, tavily_images
 

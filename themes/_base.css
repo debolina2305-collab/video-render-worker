@@ -267,39 +267,48 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
 
 /* Explanation panel — shown below options on the answer slide.
    No TTS — text only, stays for the full duration of the slide.
-   Fades in after the answer badge animation completes (~0.7s). */
+   Fades in after the answer badge animation completes (~0.9s). */
 .answer-explanation{
-  margin-top:24px;
-  padding:22px 28px;
-  border-radius:22px;
-  background:linear-gradient(135deg, rgba(0,0,0,0.55), rgba(0,0,0,0.35));
-  border-left:5px solid var(--accent-1);
-  border-top:1px solid rgba(255,255,255,0.12);
-  border-right:1px solid rgba(255,255,255,0.06);
-  border-bottom:1px solid rgba(255,255,255,0.06);
-  backdrop-filter:blur(12px);
-  font-size:32px;
-  font-weight:600;
-  line-height:1.5;
-  color:#ffffff;
-  text-align:left;
+  margin-top:22px;
+  padding:0;
+  border-radius:24px;
+  background:linear-gradient(135deg, rgba(0,0,0,0.60), rgba(0,0,0,0.40));
+  border-left:6px solid var(--accent-1);
+  border-top:1px solid rgba(255,255,255,0.15);
+  border-right:1px solid rgba(255,255,255,0.08);
+  border-bottom:1px solid rgba(255,255,255,0.08);
+  backdrop-filter:blur(16px);
   width:100%;
   box-sizing:border-box;
+  overflow:hidden;
   opacity:0;
   animation:explanationReveal 0.6s ease forwards;
   animation-delay:0.9s;
   animation-fill-mode:forwards;
-  position:relative;
 }
-.answer-explanation::before{
-  content:'💡';
-  display:block;
+.answer-explanation-heading{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  background:rgba(255,255,255,0.07);
+  border-bottom:1px solid rgba(255,255,255,0.10);
+  padding:16px 26px;
+  font-size:32px;
+  font-weight:900;
+  color:var(--accent-1);
+  letter-spacing:0.04em;
+  text-transform:uppercase;
+}
+.answer-explanation-body{
+  padding:22px 26px;
   font-size:36px;
-  margin-bottom:10px;
-  line-height:1;
+  font-weight:600;
+  line-height:1.5;
+  color:#ffffff;
+  text-align:left;
 }
 @keyframes explanationReveal{
-  0%  { opacity:0; transform:translateY(20px); }
+  0%  { opacity:0; transform:translateY(24px); }
   100%{ opacity:1; transform:translateY(0); }
 }
 .confetti-piece{
