@@ -191,15 +191,21 @@ Return a JSON object with EXACTLY these fields (all HTML values use proper HTML 
 }
 
 CHART_DATA RULES (very important — read carefully before filling chart_data):
-- Look at the research data for the MOST visually interesting numeric comparison (scores, stats, counts, percentages).
+- Look at the research data for the MOST visually interesting numeric comparison (scores, stats, counts, percentages, trends over time).
 - If you find suitable numbers: output a chart object. If no real numbers exist in the research, output null.
-- Use "bar" type for raw counts/stats (scores, goals, points, years, quantities between entities).
-- Use "donut" type for percentages or proportions that add up to ~100.
+- CHART TYPE SELECTION — pick the type that best fits the data shape:
+  • "bar"   → comparing discrete entities side by side (scores, goals, counts between teams/countries/people)
+  • "line"  → showing change over time or sequence (growth trend, year-by-year, ranked progression). Use when labels are dates, years, or ordered stages.
+  • "donut" → parts of a whole that add up to ~100% (market share, possession %, vote share, category breakdown)
+  • "hbar"  → horizontal bar — use when labels are long text (player names, country names, team names with spaces) that would be cramped in a vertical bar
+- NEVER default to "bar" just because it's first. Choose the type that makes the data most readable.
 - 2 to 6 data points maximum. Every value MUST be a real number — never a string, never null.
 - Title must describe what is charted in under 6 words.
 - ONLY use numbers from the research — never invent values.
-- Bar chart example: {"type":"bar","title":"Shots on Target","unit":"","data":[{"label":"Team A","value":6},{"label":"Team B","value":4}]}
-- Donut chart example: {"type":"donut","title":"Ball Possession","unit":"%","data":[{"label":"Team A","value":58},{"label":"Team B","value":42}]}`;
+- Bar chart example:  {"type":"bar",  "title":"Shots on Target",      "unit":"",  "data":[{"label":"Argentina","value":8},{"label":"Cape Verde","value":3}]}
+- Line chart example: {"type":"line", "title":"Messi World Cup Goals", "unit":"goals", "data":[{"label":"2006","value":1},{"label":"2010","value":4},{"label":"2014","value":4},{"label":"2018","value":6},{"label":"2022","value":7}]}
+- Donut chart example:{"type":"donut","title":"Ball Possession",       "unit":"%", "data":[{"label":"Argentina","value":62},{"label":"Cape Verde","value":38}]}
+- Hbar chart example: {"type":"hbar", "title":"Top Goal Scorers",      "unit":"goals","data":[{"label":"Lionel Messi","value":7},{"label":"Kylian Mbappé","value":5},{"label":"Harry Kane","value":4}]}`;
 
   return { systemPrompt, userPrompt };
 }
