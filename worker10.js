@@ -878,6 +878,7 @@ async function buildVideo(quiz, workDir) {
     '{{rev0_class}}':revClass(0), '{{rev1_class}}':revClass(1),
     '{{rev2_class}}':revClass(2), '{{rev3_class}}':revClass(3),
     '{{hint}}':hint, '{{correct_answer}}':correct,
+    '{{explanation_1}}': quiz.explanation_1 || '',
     '{{cta1_description_text}}':cta1Desc||quiz.affiliate_text||'',
     '{{cta2_text}}':quiz.cta2_text||'Play real quiz and earn ONS tokens!',
     '{{cta3_text}}':quiz.cta3_text||'Like, Share & Challenge a friend! Subscribe!',
@@ -921,12 +922,18 @@ async function buildVideo(quiz, workDir) {
   await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded'});
   await new Promise(r=>setTimeout(r,600));
 
+  const TRANSITION_DURATION_MS = 600; // longest animation is bounce at 550ms + 50ms settle
   const showOnly = async sel => {
     await page.evaluate(s=>{
       document.querySelectorAll('.screen').forEach(e=>e.classList.remove('active'));
       const el=document.querySelector(s); if(el) el.classList.add('active');
     },sel);
-    await new Promise(r=>setTimeout(r,150));
+    // Wait for CSS transition/animation to fully complete before screenshotting.
+    // Previously 150ms -- fine for the default 'fade' (display:none/flex, instant)
+    // but all other transition styles (slide_up 450ms, zoom_in 400ms, flip 500ms,
+    // blur_in 500ms, bounce 550ms) were still mid-animation when the screenshot
+    // fired, producing a blurred/scaled/translated frozen frame.
+    await new Promise(r=>setTimeout(r, TRANSITION_DURATION_MS));
   };
   const shot = async name => { const p=path.join(workDir,`${name}.png`); await page.screenshot({path:p}); return p; };
 
