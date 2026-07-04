@@ -75,7 +75,11 @@ async function callLLM({ apiKey, model, endpoint }, systemPrompt, userPrompt) {
     },
     body: JSON.stringify({
       model,
-      max_tokens:  3500,
+      // Was 3500 — already tight for a 1000-word body + table_html + chart_data.
+      // With FAQ now required to be 5-6 items (previously only ever 1, due to
+      // the grouping bug), output length grows further. Raised with headroom
+      // so JSON doesn't get truncated mid-object (which would fail parseBlogJSON).
+      max_tokens:  6000,
       temperature: 0.7,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -124,11 +128,20 @@ function buildPrompt(job, quizRows) {
   const images   = (payload.tavily_images  || []).slice(0, 5);
 
   // Build quiz Q&A from the quiz rows — ALL questions included
-  const quizCount = Math.min(quizRows.length, 6);
-  const quizQA = quizRows.slice(0, quizCount).map((q, i) => {
+  const realQuizCount = Math.min(quizRows.length, 6);
+  const quizQA = quizRows.slice(0, realQuizCount).map((q, i) => {
     const opts = (q.options_1 || []).map((o, j) => `${['A','B','C','D'][j]}) ${o}`).join(' | ');
     return `QUESTION_${i+1}:\nQ: ${q.question_1}\nOptions: ${opts}\nCorrect Answer: ${q.correct_answer_1}\nExplanation: ${q.explanation_1 || 'Correct based on research.'}`;
   }).join('\n\n');
+
+  // Requirement: every blog needs 5-6 FAQ items total. Real quiz questions
+  // (with their exact options/answer) are used first; if the topic has
+  // fewer than 5 question variants, the LLM fills the remainder with
+  // general knowledge FAQs about the topic so the total always lands at 5-6.
+  const MIN_FAQ = 5;
+  const MAX_FAQ = 6;
+  const targetFaqCount = Math.max(MIN_FAQ, Math.min(realQuizCount, MAX_FAQ));
+  const extraFaqNeeded = Math.max(0, targetFaqCount - realQuizCount);
 
   const sourceList = sources.map(s => `- ${s.title || s.domain}: ${s.url}`).join('\n');
   const imageList  = images.map((img, i) => `Image ${i+1}: ${img.url} (${img.description || topic})`).join('\n');
@@ -143,8 +156,10 @@ Return ONLY valid JSON — no markdown fences, no preamble, no explanation outsi
 RESEARCH DATA (use this as your factual foundation — do not invent facts not supported here):
 ${research || 'Use general knowledge about this trending US topic.'}
 
-QUIZ QUESTIONS — CRITICAL: You MUST include ALL ${quizCount} questions in the faq_html field. Every single QUESTION_1 through QUESTION_${quizCount} must appear as a separate faq-item div. Do not combine, skip, or summarize any question.
+QUIZ QUESTIONS — CRITICAL: You MUST include ALL ${realQuizCount} questions in the faq_html field. Every single QUESTION_1 through QUESTION_${realQuizCount} must appear as a separate faq-item div. Do not combine, skip, or summarize any question.
 ${quizQA || 'No quiz data available.'}
+${extraFaqNeeded > 0 ? `
+FAQ TOP-UP — REQUIRED: This topic only has ${realQuizCount} quiz question(s), but every blog post needs ${MIN_FAQ}-${MAX_FAQ} FAQ items total. After the ${realQuizCount} quiz-recap FAQ item(s) above, you MUST write ${extraFaqNeeded} additional general-knowledge FAQ item(s) about "${topic}" (real questions a curious reader would ask, answered factually from the research data). Use the SAME faq-item HTML structure (question + answer), just without the A/B/C/D options line since these aren't quiz questions. Total faq-item divs in faq_html must be exactly ${targetFaqCount}.` : ''}
 
 AVAILABLE IMAGES (reference by URL in suggested_inline_image):
 ${imageList || 'No images available.'}
@@ -169,7 +184,7 @@ Return a JSON object with EXACTLY these fields (all HTML values use proper HTML 
   "section_3_html": "<p>200 words about why this matters to US audiences and what happens next...</p>",
   "table_caption": "Key Statistics: ${topic}",
   "table_html": "<table><thead><tr><th>Fact</th><th>Detail</th></tr></thead><tbody><tr><td>...</td><td>...</td></tr><!-- 5-6 rows of real data from the research --></tbody></table>",
-  "faq_html": "<div class='quiz-faq'><h3>Test Your Knowledge: ${topic}</h3>IMPORTANT: You MUST include ALL ${quizCount} questions below as separate faq-item divs. Do NOT skip any question. Each question gets its own div. Format EXACTLY like this repeated ${quizCount} times:\n<div class='faq-item'><p class='faq-question'><strong>Q1: [exact question text from QUESTION_1]</strong><br>Options: A) [opt] | B) [opt] | C) [opt] | D) [opt]</p><p class='faq-answer'>✅ <strong>Answer:</strong> [correct answer]. [explanation text]</p></div><div class='faq-item'><p class='faq-question'><strong>Q2: [exact question text from QUESTION_2]</strong>...</p><p class='faq-answer'>✅ <strong>Answer:</strong> ...</p></div><!-- continue for ALL ${quizCount} questions --></div>",
+  "faq_html": "<div class='quiz-faq'><h3>Test Your Knowledge: ${topic}</h3>IMPORTANT: Output EXACTLY ${targetFaqCount} faq-item divs total — ${realQuizCount} quiz-recap item(s) first, then ${extraFaqNeeded} general-knowledge item(s). Do NOT skip any. Format like this:\n<div class='faq-item'><p class='faq-question'><strong>Q1: [exact question text from QUESTION_1]</strong><br>Options: A) [opt] | B) [opt] | C) [opt] | D) [opt]</p><p class='faq-answer'>✅ <strong>Answer:</strong> [correct answer]. [explanation text]</p></div><!-- one such div per real quiz question --><div class='faq-item'><p class='faq-question'><strong>[General FAQ question about the topic]</strong></p><p class='faq-answer'>[Factual answer from research]</p></div><!-- one such div per top-up FAQ, no options line --></div>",
   "conclusion_html": "<p>100-word conclusion summarising key points and encouraging the reader to play the interactive quiz.</p><p>🎯 <a href='https://jaasblog.online/quiz/${niche}'>Play the full ${niche} challenge on JaasX →</a></p>",
   "chart_data": null
 }
@@ -238,11 +253,19 @@ async function run() {
   }
   console.log(`[W12] Found ${pendingQuizzes.length} quiz rows without blogs`);
 
-  // Group by topic_slug — one blog per unique topic
+  // Group by topic — one blog per unique topic.
+  //
+  // BUG FIX: this used to group by `q.topic_slug`, but Worker 8 gives every
+  // question its own unique topic_slug (`${baseSlug}-q1`, `-q2`, `-q3`...).
+  // That meant no two quiz rows ever shared a topic_slug, so `rows` stayed
+  // empty for every topic and buildPrompt() only ever saw ONE question —
+  // which is why faq_html only ever contained 1 Q&A instead of all of them.
+  // Grouping by the raw `topic` string (shared by every question variant
+  // for the same trending topic) fixes this.
   const topicMap = new Map();
   for (const q of pendingQuizzes) {
-    if (!topicMap.has(q.topic_slug)) topicMap.set(q.topic_slug, { quiz: q, rows: [] });
-    else topicMap.get(q.topic_slug).rows.push(q);
+    if (!topicMap.has(q.topic)) topicMap.set(q.topic, { quiz: q, rows: [] });
+    else topicMap.get(q.topic).rows.push(q);
   }
 
   if (!topicMap.size) {
@@ -258,7 +281,11 @@ async function run() {
 
   let generated = 0;
 
-  for (const [topicSlug, { quiz: primaryQuiz, rows: allRows }] of topicsToProcess) {
+  for (const [topicKey, { quiz: primaryQuiz, rows: extraRows }] of topicsToProcess) {
+    // primaryQuiz was previously excluded from the Q&A set passed to the
+    // LLM — only the (usually empty) `extraRows` array was used. Combine
+    // them so ALL question variants for this topic are available.
+    const allRows = [primaryQuiz, ...extraRows];
     console.log(`\n[W12] Generating blog for: "${primaryQuiz.topic}" (${allRows.length} quiz rows)`);
 
     try {
@@ -339,7 +366,11 @@ async function run() {
         section_2_html:       blog.section_2_html       || null,
         section_3_heading:    blog.section_3_heading    || null,
         section_3_html:       blog.section_3_html       || null,
-        table_html:           blog.table_html           || null,
+        // Wrapped so the frontend has a stable, scoped hook to style against
+        // (`.jx-table-wrap table`) — LLM-generated <table> markup has no
+        // classes of its own, so unstyled it renders as a bare, unreadable
+        // browser-default table. See jx-table.css for the matching styles.
+        table_html:           blog.table_html ? `<div class="jx-table-wrap">${blog.table_html}</div>` : null,
         table_caption:        blog.table_caption        || null,
         faq_html:             blog.faq_html             || null,
         conclusion_html:      blog.conclusion_html      || null,
