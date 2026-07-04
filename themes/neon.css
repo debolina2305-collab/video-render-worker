@@ -1,47 +1,11 @@
-/* ═══════════════════════════════════════════
-   THEME: neon — Electric Cityscape Night
-   ═══════════════════════════════════════════ */
-:root {
-  --accent-1: #ff00ff;
-  --accent-2: #00ffff;
-  --accent-3: #ffff00;
-  --card-radius: 16px;
-  --option-radius: 12px;
-  --font-weight-q: 800;
-}
-html,body { background:#001010; }
-.screen {
-  background: linear-gradient(160deg, #001020 0%, #100020 35%, #001520 65%, #001010 100%);
-}
-.bg-anim {
-  background: linear-gradient(160deg, #001020 0%, #100020 35%, #001520 65%, #001010 100%);
-}
-.bg-anim::before {
-  content:''; position:absolute; inset:0;
-  background:
-    radial-gradient(ellipse at 20% 50%, rgba(255,0,255,0.28) 0%, transparent 45%),
-    radial-gradient(ellipse at 80% 30%, rgba(0,255,255,0.25) 0%, transparent 45%),
-    radial-gradient(ellipse at 50% 80%, rgba(255,255,0,0.18) 0%, transparent 40%);
-  animation: neonPulse 3s ease-in-out infinite alternate;
-}
-.bg-anim::after {
-  content:''; position:absolute; bottom:0; left:0; right:0; height:40%;
-  background: linear-gradient(0deg,
-    rgba(255,0,255,0.12) 0%,
-    rgba(0,255,255,0.08) 40%,
-    transparent 100%);
-  animation: neonCity 6s ease-in-out infinite alternate;
-}
-@keyframes neonPulse { from{opacity:0.6} to{opacity:1} }
-@keyframes neonCity { from{opacity:0.5;transform:translateY(0)} to{opacity:1;transform:translateY(-10px)} }
-.qp-card-question {
-  background: rgba(0,0,0,0.60) !important;
-  border: 2px solid rgba(255,0,255,0.60) !important;
-  box-shadow: 0 0 40px rgba(255,0,255,0.40), 0 0 80px rgba(0,255,255,0.20) !important;
-}
-.qp-option {
-  background: rgba(0,0,0,0.70) !important;
-  border: 2px solid rgba(0,255,255,0.50) !important;
-  box-shadow: 0 0 20px rgba(0,255,255,0.30) !important;
-}
-.answer-badge { background: linear-gradient(135deg,#ff00ff,#00ffff) !important; }
+/* THEME: neon — Electric Teal Multi-Colour (brightness 55-80) */
+:root { --accent-1:#ff00ff; --accent-2:#00ffff; --accent-3:#ffff00; --card-radius:16px; --option-radius:12px; --font-weight-q:800; }
+html,body { background:#005060; }
+.screen { background:linear-gradient(160deg,#005060 0%,#400060 40%,#005060 70%,#004050 100%); }
+.bg-anim { background:linear-gradient(160deg,#005060 0%,#400060 40%,#005060 70%,#004050 100%); }
+.bg-anim::before { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at 20% 50%,rgba(255,0,255,0.60) 0%,transparent 45%),radial-gradient(ellipse at 80% 30%,rgba(0,255,255,0.55) 0%,transparent 45%),radial-gradient(ellipse at 50% 80%,rgba(255,255,0,0.40) 0%,transparent 40%); animation:neonPulse 3s ease-in-out infinite alternate; }
+.bg-anim::after { content:''; position:absolute; bottom:0; left:0; right:0; height:40%; background:linear-gradient(0deg,rgba(255,0,255,0.20) 0%,rgba(0,255,255,0.12) 40%,transparent 100%); }
+@keyframes neonPulse { from{opacity:0.65} to{opacity:1} }
+.qp-card-question { background:rgba(0,0,0,0.40) !important; border:2px solid rgba(255,0,255,0.75) !important; box-shadow:0 0 50px rgba(255,0,255,0.55),0 0 100px rgba(0,255,255,0.30) !important; }
+.qp-option { background:rgba(0,0,0,0.60) !important; border:2px solid rgba(0,255,255,0.65) !important; box-shadow:0 0 25px rgba(0,255,255,0.40) !important; }
+.answer-badge { background:linear-gradient(135deg,#ff00ff,#00ffff) !important; }

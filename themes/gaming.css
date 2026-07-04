@@ -1,51 +1,11 @@
-/* ═══════════════════════════════════════════
-   THEME: gaming — Dark Neon HUD / Esports
-   ═══════════════════════════════════════════ */
-:root {
-  --accent-1: #00ff88;
-  --accent-2: #ff3c00;
-  --accent-3: #ffdd00;
-  --card-radius: 8px;
-  --option-radius: 8px;
-  --font-weight-q: 900;
-}
-html,body { background:#010a04; }
-.screen {
-  background: linear-gradient(160deg, #011008 0%, #021506 30%, #010f05 60%, #001008 100%);
-  font-family: 'Courier New', 'Segoe UI', monospace;
-}
-.bg-anim {
-  background: linear-gradient(160deg, #011008 0%, #021506 30%, #010f05 60%, #001008 100%);
-}
-.bg-anim::before {
-  content:''; position:absolute; inset:0;
-  background:
-    radial-gradient(ellipse at 50% 0%, rgba(0,255,136,0.25) 0%, transparent 50%),
-    radial-gradient(ellipse at 20% 80%, rgba(0,255,136,0.12) 0%, transparent 40%),
-    repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,255,136,0.03) 3px, rgba(0,255,136,0.03) 4px),
-    repeating-linear-gradient(90deg, transparent, transparent 3px, rgba(0,255,136,0.02) 3px, rgba(0,255,136,0.02) 4px);
-  animation: scanLines 8s linear infinite;
-}
-.bg-anim::after {
-  content:''; position:absolute; inset:0;
-  background:
-    radial-gradient(ellipse at 80% 40%, rgba(255,60,0,0.18) 0%, transparent 40%),
-    radial-gradient(ellipse at 50% 100%, rgba(0,255,136,0.12) 0%, transparent 40%);
-  animation: gamingGlow 4s ease-in-out infinite alternate;
-}
-@keyframes scanLines { from{background-position:0 0,0 0,0 0,0 0} to{background-position:0 0,0 0,0 80px,80px 0} }
-@keyframes gamingGlow { from{opacity:0.5} to{opacity:1} }
-.qp-card-question {
-  background: rgba(0,255,136,0.05) !important;
-  border: 2px solid #00ff88 !important;
-  box-shadow: 0 0 30px rgba(0,255,136,0.35), inset 0 0 20px rgba(0,255,136,0.06) !important;
-}
-.qp-option {
-  background: rgba(0,0,0,0.80) !important;
-  border: 2px solid rgba(0,255,136,0.45) !important;
-  font-family: 'Courier New', monospace !important;
-  box-shadow: 0 0 20px rgba(0,255,136,0.18) !important;
-}
+/* THEME: gaming — Neon Green Esports (brightness 59-80) */
+:root { --accent-1:#00ff88; --accent-2:#ff3c00; --accent-3:#ffdd00; --card-radius:8px; --option-radius:8px; --font-weight-q:900; }
+html,body { background:#1a5c2a; }
+.screen { background:linear-gradient(160deg,#1a5c2a 0%,#22703a 35%,#1a5c2a 65%,#143d1c 100%); font-family:'Courier New','Segoe UI',monospace; }
+.bg-anim { background:linear-gradient(160deg,#1a5c2a 0%,#22703a 35%,#1a5c2a 65%,#143d1c 100%); }
+.bg-anim::before { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at 50% 0%,rgba(0,255,136,0.60) 0%,transparent 50%),radial-gradient(ellipse at 20% 80%,rgba(0,255,136,0.40) 0%,transparent 40%),radial-gradient(ellipse at 80% 50%,rgba(255,60,0,0.30) 0%,transparent 40%),repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,255,136,0.06) 3px,rgba(0,255,136,0.06) 4px); animation:scanLines 8s linear infinite; }
+@keyframes scanLines { from{background-position:0 0} to{background-position:0 80px} }
+.qp-card-question { background:rgba(0,0,0,0.35) !important; border:2px solid #00ff88 !important; box-shadow:0 0 40px rgba(0,255,136,0.55) !important; }
+.qp-option { background:rgba(0,0,0,0.55) !important; border:2px solid rgba(0,255,136,0.55) !important; font-family:'Courier New',monospace !important; box-shadow:0 0 20px rgba(0,255,136,0.30) !important; }
 .qp-option-badge { background:#00ff88 !important; border-radius:4px !important; color:#000 !important; }
-.answer-badge { background: linear-gradient(135deg,#00ff88,#ffdd00) !important; }
-.hook-text { font-family:'Courier New',monospace !important; text-transform:uppercase !important; letter-spacing:4px !important; }
+.answer-badge { background:linear-gradient(135deg,#00ff88,#ffdd00) !important; }

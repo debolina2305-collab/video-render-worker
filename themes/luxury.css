@@ -1,49 +1,10 @@
-/* ═══════════════════════════════════════════
-   THEME: luxury — Deep Burgundy Gold Premium
-   ═══════════════════════════════════════════ */
-:root {
-  --accent-1: #c9a227;
-  --accent-2: #e8c84a;
-  --accent-3: #f5e17a;
-  --card-radius: 4px;
-  --option-radius: 4px;
-  --font-weight-q: 300;
-}
-html,body { background:#1a0a00; }
-.screen {
-  background: linear-gradient(160deg, #1a0800 0%, #2d1200 30%, #1a0a00 60%, #0d0500 100%);
-  font-family: 'Georgia', 'Times New Roman', serif;
-}
-.bg-anim {
-  background: linear-gradient(160deg, #1a0800 0%, #2d1200 30%, #1a0a00 60%, #0d0500 100%);
-}
-.bg-anim::before {
-  content:''; position:absolute; inset:0;
-  background:
-    radial-gradient(ellipse at 50% 10%, rgba(201,162,39,0.25) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(201,162,39,0.15) 0%, transparent 40%),
-    radial-gradient(ellipse at 20% 60%, rgba(180,100,20,0.20) 0%, transparent 40%);
-  animation: luxuryGlow 6s ease-in-out infinite alternate;
-}
-.bg-anim::after {
-  content:''; position:absolute; inset:0;
-  background: repeating-linear-gradient(
-    90deg, transparent, transparent 120px,
-    rgba(201,162,39,0.04) 120px, rgba(201,162,39,0.04) 121px
-  );
-}
-@keyframes luxuryGlow {
-  from { opacity:0.6; }
-  to   { opacity:1; }
-}
-.qp-card-question {
-  background: rgba(201,162,39,0.06) !important;
-  border: 1px solid rgba(201,162,39,0.40) !important;
-  box-shadow: 0 8px 40px rgba(201,162,39,0.20) !important;
-}
-.qp-option {
-  background: rgba(201,162,39,0.05) !important;
-  border: 1px solid rgba(201,162,39,0.30) !important;
-  font-family: 'Georgia', serif !important;
-}
-.answer-badge { background: linear-gradient(135deg,#c9a227,#f5e17a) !important; -webkit-background-clip:text !important; background-clip:text !important; color:transparent !important; }
+/* THEME: luxury — Deep Amber Gold (brightness 63-85) */
+:root { --accent-1:#c9a227; --accent-2:#e8c84a; --accent-3:#f5e17a; --card-radius:4px; --option-radius:4px; --font-weight-q:300; }
+html,body { background:#6b3500; }
+.screen { background:linear-gradient(160deg,#7a3e00 0%,#6b3500 35%,#562a00 65%,#7a3e00 100%); font-family:'Georgia','Times New Roman',serif; }
+.bg-anim { background:linear-gradient(160deg,#7a3e00 0%,#6b3500 35%,#562a00 65%,#7a3e00 100%); }
+.bg-anim::before { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at 50% 10%,rgba(201,162,39,0.65) 0%,transparent 50%),radial-gradient(ellipse at 80% 80%,rgba(201,162,39,0.45) 0%,transparent 40%),radial-gradient(ellipse at 20% 60%,rgba(220,140,40,0.40) 0%,transparent 40%),repeating-linear-gradient(90deg,transparent,transparent 120px,rgba(201,162,39,0.07) 120px,rgba(201,162,39,0.07) 121px); animation:luxuryGlow 6s ease-in-out infinite alternate; }
+@keyframes luxuryGlow { from{opacity:0.7} to{opacity:1} }
+.qp-card-question { background:rgba(0,0,0,0.35) !important; border:1px solid rgba(201,162,39,0.65) !important; box-shadow:0 8px 40px rgba(201,162,39,0.40) !important; }
+.qp-option { background:rgba(0,0,0,0.55) !important; border:1px solid rgba(201,162,39,0.45) !important; font-family:'Georgia',serif !important; }
+.answer-badge { background:linear-gradient(135deg,#c9a227,#f5e17a) !important; -webkit-background-clip:text !important; background-clip:text !important; color:transparent !important; }

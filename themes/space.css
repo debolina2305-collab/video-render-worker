@@ -1,46 +1,12 @@
-/* ═══════════════════════════════════════════
-   THEME: space — Deep Purple Cosmic Galaxy
-   ═══════════════════════════════════════════ */
-:root {
-  --accent-1: #a78bfa;
-  --accent-2: #60a5fa;
-  --accent-3: #f472b6;
-  --card-radius: 24px;
-  --option-radius: 20px;
-  --font-weight-q: 700;
-}
-html,body { background:#08002a; }
-.screen {
-  background: radial-gradient(ellipse at 50% 0%, #1a0060 0%, #08002a 50%, #000520 100%);
-}
-.bg-anim {
-  background: radial-gradient(ellipse at 30% 20%, #1a0060 0%, #08002a 60%, #000520 100%);
-}
-.bg-anim::before {
-  content:'✦ · ✧ ⋆ · ✦ · ⋆ ✧ · ✦ ⋆ · ✧ ✦ · ⋆ · ✧ ✦ · ✦ · ⋆ · ✧ ✦ ⋆ · ✦ ✧ · ⋆ ✦ · ✧ ⋆ ✦ ·';
-  position:absolute; top:5%; left:-5%; right:-5%;
-  font-size:28px; color:#fff; line-height:3.5; letter-spacing:28px;
-  opacity:0.25; word-break:break-all;
-  animation: starDrift 20s ease-in-out infinite alternate;
-}
-.bg-anim::after {
-  content:''; position:absolute; inset:0;
-  background:
-    radial-gradient(ellipse at 25% 40%, rgba(167,139,250,0.35) 0%, transparent 40%),
-    radial-gradient(ellipse at 75% 60%, rgba(96,165,250,0.30) 0%, transparent 40%),
-    radial-gradient(ellipse at 50% 20%, rgba(244,114,182,0.20) 0%, transparent 35%);
-  animation: nebulaFlow 10s ease-in-out infinite alternate;
-}
+/* THEME: space — Vivid Violet Galaxy (brightness 53-80) */
+:root { --accent-1:#a78bfa; --accent-2:#60a5fa; --accent-3:#f472b6; --card-radius:24px; --option-radius:20px; --font-weight-q:700; }
+html,body { background:#5500ee; }
+.screen { background:radial-gradient(ellipse at 50% 0%,#7700ff 0%,#5500ee 45%,#3300bb 100%); }
+.bg-anim { background:radial-gradient(ellipse at 30% 20%,#7700ff 0%,#5500ee 50%,#3300bb 100%); }
+.bg-anim::before { content:'✦ · ✧ ⋆ · ✦ · ⋆ ✧ · ✦ ⋆ · ✧ ✦ · ⋆ · ✧ ✦ · ✦ · ⋆ · ✧ ✦ ⋆ · ✦ ✧ · ⋆ ✦ · ✧ ⋆ ✦ ·'; position:absolute; top:5%; left:-5%; right:-5%; font-size:28px; color:#fff; line-height:3.5; letter-spacing:28px; opacity:0.40; word-break:break-all; animation:starDrift 20s ease-in-out infinite alternate; }
+.bg-anim::after { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at 25% 40%,rgba(255,200,255,0.45) 0%,transparent 40%),radial-gradient(ellipse at 75% 60%,rgba(100,200,255,0.40) 0%,transparent 40%),radial-gradient(ellipse at 50% 20%,rgba(255,120,200,0.35) 0%,transparent 35%); animation:nebulaFlow 10s ease-in-out infinite alternate; }
 @keyframes starDrift { from{transform:translateY(0)} to{transform:translateY(-40px)} }
 @keyframes nebulaFlow { from{opacity:0.5} to{opacity:1} }
-.qp-card-question {
-  background: rgba(167,139,250,0.10) !important;
-  border: 2px solid rgba(167,139,250,0.45) !important;
-  box-shadow: 0 8px 60px rgba(167,139,250,0.30), 0 0 80px rgba(96,165,250,0.15) !important;
-}
-.qp-option {
-  background: rgba(30,10,80,0.70) !important;
-  border: 2px solid rgba(167,139,250,0.35) !important;
-  box-shadow: 0 0 20px rgba(167,139,250,0.20) !important;
-}
-.answer-badge { background: linear-gradient(135deg,#a78bfa,#f472b6) !important; }
+.qp-card-question { background:rgba(0,0,0,0.30) !important; border:2px solid rgba(200,160,255,0.60) !important; box-shadow:0 8px 60px rgba(167,139,250,0.50) !important; }
+.qp-option { background:rgba(0,0,0,0.50) !important; border:2px solid rgba(167,139,250,0.50) !important; box-shadow:0 0 25px rgba(167,139,250,0.30) !important; }
+.answer-badge { background:linear-gradient(135deg,#a78bfa,#f472b6) !important; }

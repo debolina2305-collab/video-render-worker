@@ -1,46 +1,10 @@
-/* ═══════════════════════════════════════════
-   THEME: retro — 80s Arcade Amber/Orange
-   ═══════════════════════════════════════════ */
-:root {
-  --accent-1: #ff6b00;
-  --accent-2: #ffd700;
-  --accent-3: #00e676;
-  --card-radius: 0px;
-  --option-radius: 0px;
-  --font-weight-q: 900;
-}
-html,body { background:#0d0500; }
-.screen {
-  background: linear-gradient(160deg, #1a0800 0%, #150500 35%, #0d0400 65%, #1a0800 100%);
-  font-family: 'Courier New', 'Lucida Console', monospace;
-}
-.bg-anim {
-  background: linear-gradient(160deg, #1a0800 0%, #150500 35%, #0d0400 65%, #1a0800 100%);
-}
-.bg-anim::before {
-  content:''; position:absolute; inset:0;
-  background:
-    radial-gradient(ellipse at 50% 0%, rgba(255,107,0,0.30) 0%, transparent 50%),
-    radial-gradient(ellipse at 20% 70%, rgba(255,107,0,0.15) 0%, transparent 40%),
-    repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255,107,0,0.04) 3px, rgba(255,107,0,0.04) 4px);
-  animation: retroScan 8s linear infinite;
-}
-.bg-anim::after {
-  content:''; position:absolute; inset:0;
-  background: radial-gradient(ellipse at 80% 30%, rgba(255,215,0,0.20) 0%, transparent 40%);
-  animation: retroGlow 4s ease-in-out infinite alternate;
-}
-@keyframes retroScan { from{background-position:0 0,0 0,0 0} to{background-position:0 0,0 0,0 200px} }
-@keyframes retroGlow { from{opacity:0.4} to{opacity:1} }
-.qp-card-question {
-  background: rgba(255,107,0,0.06) !important;
-  border: 3px solid rgba(255,107,0,0.70) !important;
-  box-shadow: 0 0 30px rgba(255,107,0,0.50) !important;
-}
-.qp-option {
-  background: rgba(13,5,0,0.85) !important;
-  border: 2px solid rgba(255,107,0,0.60) !important;
-  font-family: 'Courier New', monospace !important;
-  box-shadow: 0 0 15px rgba(255,107,0,0.30) !important;
-}
-.answer-badge { background: linear-gradient(135deg,#ff6b00,#ffd700) !important; }
+/* THEME: retro — 80s Arcade Vivid Amber (brightness 62-85) */
+:root { --accent-1:#ff6b00; --accent-2:#ffd700; --accent-3:#00e676; --card-radius:0px; --option-radius:0px; --font-weight-q:900; }
+html,body { background:#7a3500; }
+.screen { background:linear-gradient(160deg,#8a3d00 0%,#7a3500 35%,#602a00 65%,#8a3d00 100%); font-family:'Courier New','Lucida Console',monospace; }
+.bg-anim { background:linear-gradient(160deg,#8a3d00 0%,#7a3500 35%,#602a00 65%,#8a3d00 100%); }
+.bg-anim::before { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at 50% 0%,rgba(255,150,0,0.65) 0%,transparent 50%),radial-gradient(ellipse at 20% 70%,rgba(255,107,0,0.45) 0%,transparent 40%),radial-gradient(ellipse at 80% 30%,rgba(255,215,0,0.45) 0%,transparent 40%),repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,107,0,0.07) 3px,rgba(255,107,0,0.07) 4px); animation:retroScan 8s linear infinite; }
+@keyframes retroScan { from{background-position:0 0} to{background-position:0 200px} }
+.qp-card-question { background:rgba(0,0,0,0.35) !important; border:3px solid rgba(255,150,0,0.85) !important; box-shadow:0 0 40px rgba(255,107,0,0.65) !important; }
+.qp-option { background:rgba(0,0,0,0.60) !important; border:2px solid rgba(255,107,0,0.75) !important; font-family:'Courier New',monospace !important; box-shadow:0 0 20px rgba(255,107,0,0.40) !important; }
+.answer-badge { background:linear-gradient(135deg,#ff6b00,#ffd700) !important; }
