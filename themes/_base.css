@@ -269,26 +269,38 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
    No TTS — text only, stays for the full duration of the slide.
    Fades in after the answer badge animation completes (~0.7s). */
 .answer-explanation{
-  margin-top:28px;
-  padding:20px 28px;
-  border-radius:20px;
-  background:rgba(0,0,0,0.45);
-  border:2px solid color-mix(in srgb, var(--accent-1) 30%, transparent);
-  backdrop-filter:blur(8px);
-  font-size:34px;
+  margin-top:24px;
+  padding:22px 28px;
+  border-radius:22px;
+  background:linear-gradient(135deg, rgba(0,0,0,0.55), rgba(0,0,0,0.35));
+  border-left:5px solid var(--accent-1);
+  border-top:1px solid rgba(255,255,255,0.12);
+  border-right:1px solid rgba(255,255,255,0.06);
+  border-bottom:1px solid rgba(255,255,255,0.06);
+  backdrop-filter:blur(12px);
+  font-size:32px;
   font-weight:600;
-  line-height:1.45;
-  color:#f0f4ff;
+  line-height:1.5;
+  color:#ffffff;
   text-align:left;
-  opacity:0;
-  animation:_fadeSlideUp 0.5s ease forwards;
-  animation-delay:0.8s;
   width:100%;
   box-sizing:border-box;
+  opacity:0;
+  animation:explanationReveal 0.6s ease forwards;
+  animation-delay:0.9s;
+  animation-fill-mode:forwards;
+  position:relative;
 }
-@keyframes _fadeSlideUp{
-  from{ opacity:0; transform:translateY(16px); }
-  to  { opacity:1; transform:translateY(0); }
+.answer-explanation::before{
+  content:'💡';
+  display:block;
+  font-size:36px;
+  margin-bottom:10px;
+  line-height:1;
+}
+@keyframes explanationReveal{
+  0%  { opacity:0; transform:translateY(20px); }
+  100%{ opacity:1; transform:translateY(0); }
 }
 .confetti-piece{
   position:absolute; top:-60px; opacity:0.95;
