@@ -159,7 +159,8 @@ ${research || 'Use general knowledge about this trending US topic.'}
 QUIZ QUESTIONS — CRITICAL: You MUST include ALL ${realQuizCount} questions in the faq_html field. Every single QUESTION_1 through QUESTION_${realQuizCount} must appear as a separate faq-item div. Do not combine, skip, or summarize any question.
 ${quizQA || 'No quiz data available.'}
 ${extraFaqNeeded > 0 ? `
-FAQ TOP-UP — REQUIRED: This topic only has ${realQuizCount} quiz question(s), but every blog post needs ${MIN_FAQ}-${MAX_FAQ} FAQ items total. After the ${realQuizCount} quiz-recap FAQ item(s) above, you MUST write ${extraFaqNeeded} additional general-knowledge FAQ item(s) about "${topic}" (real questions a curious reader would ask, answered factually from the research data). Use the SAME faq-item HTML structure (question + answer), just without the A/B/C/D options line since these aren't quiz questions. Total faq-item divs in faq_html must be exactly ${targetFaqCount}.` : ''}
+FAQ TOP-UP — REQUIRED: This topic only has ${realQuizCount} quiz question(s), but every blog post needs ${MIN_FAQ}-${MAX_FAQ} FAQ items total. After the ${realQuizCount} quiz-recap FAQ item(s) above, you MUST write ${extraFaqNeeded} additional general-knowledge FAQ item(s) about "${topic}" (real questions a curious reader would ask, answered factually from the research data). Use the SAME faq-item HTML structure (question + answer), just without the A/B/C/D options line since these aren't quiz questions. CONTINUE THE SAME Q-NUMBERING — if there are ${realQuizCount} quiz items (Q1..Q${realQuizCount}), the top-up items are Q${realQuizCount + 1}..Q${targetFaqCount}. Every faq-item, quiz-recap or top-up, MUST start with "Q<N>: " in its question text — there is no unnumbered FAQ item anywhere in faq_html. Total faq-item divs in faq_html must be exactly ${targetFaqCount}.` : `
+Number every faq-item sequentially: Q1, Q2, ... Q${targetFaqCount}. No faq-item may be missing its "Q<N>: " prefix.`}
 
 AVAILABLE IMAGES (reference by URL in suggested_inline_image):
 ${imageList || 'No images available.'}
@@ -184,7 +185,7 @@ Return a JSON object with EXACTLY these fields (all HTML values use proper HTML 
   "section_3_html": "<p>200 words about why this matters to US audiences and what happens next...</p>",
   "table_caption": "Key Statistics: ${topic}",
   "table_html": "<table><thead><tr><th>Fact</th><th>Detail</th></tr></thead><tbody><tr><td>...</td><td>...</td></tr><!-- 5-6 rows of real data from the research --></tbody></table>",
-  "faq_html": "<div class='quiz-faq'><h3>Test Your Knowledge: ${topic}</h3>IMPORTANT: Output EXACTLY ${targetFaqCount} faq-item divs total — ${realQuizCount} quiz-recap item(s) first, then ${extraFaqNeeded} general-knowledge item(s). Do NOT skip any. Format like this:\n<div class='faq-item'><p class='faq-question'><strong>Q1: [exact question text from QUESTION_1]</strong><br>Options: A) [opt] | B) [opt] | C) [opt] | D) [opt]</p><p class='faq-answer'>✅ <strong>Answer:</strong> [correct answer]. [explanation text]</p></div><!-- one such div per real quiz question --><div class='faq-item'><p class='faq-question'><strong>[General FAQ question about the topic]</strong></p><p class='faq-answer'>[Factual answer from research]</p></div><!-- one such div per top-up FAQ, no options line --></div>",
+  "faq_html": "<div class='quiz-faq'><h3>Test Your Knowledge: ${topic}</h3>IMPORTANT: Output EXACTLY ${targetFaqCount} faq-item divs total — ${realQuizCount} quiz-recap item(s) first, then ${extraFaqNeeded} general-knowledge item(s). EVERY item's question text MUST start with 'Q<N>: ' where N runs 1 through ${targetFaqCount} with no gaps and no repeats — this applies to top-up items too, not just quiz-recap ones. Format like this:\n<div class='faq-item'><p class='faq-question'><strong>Q1: [exact question text from QUESTION_1]</strong><br>Options: A) [opt] | B) [opt] | C) [opt] | D) [opt]</p><p class='faq-answer'>✅ <strong>Answer:</strong> [correct answer]. [explanation text]</p></div><!-- one such div per real quiz question, Q1..Q${realQuizCount} --><div class='faq-item'><p class='faq-question'><strong>Q${realQuizCount + 1}: [General FAQ question about the topic]</strong></p><p class='faq-answer'>[Factual answer from research]</p></div><!-- one such div per top-up FAQ, continuing the numbering through Q${targetFaqCount}, no options line --></div>",
   "conclusion_html": "<p>100-word conclusion summarising key points and encouraging the reader to play the interactive quiz.</p><p>🎯 <a href='https://jaasblog.online/quiz/${niche}'>Play the full ${niche} challenge on JaasX →</a></p>",
   "chart_data": null
 }
@@ -366,11 +367,11 @@ async function run() {
         section_2_html:       blog.section_2_html       || null,
         section_3_heading:    blog.section_3_heading    || null,
         section_3_html:       blog.section_3_html       || null,
-        // Wrapped so the frontend has a stable, scoped hook to style against
-        // (`.jx-table-wrap table`) — LLM-generated <table> markup has no
-        // classes of its own, so unstyled it renders as a bare, unreadable
-        // browser-default table. See jx-table.css for the matching styles.
-        table_html:           blog.table_html ? `<div class="jx-table-wrap">${blog.table_html}</div>` : null,
+        // NOTE: no wrapper div added here. [slug].astro already wraps this
+        // in <div class="quiz-blog-table-wrap"> (with full matching CSS in
+        // global.css) — an earlier fix added a redundant <div class="jx-table-wrap">
+        // around this before the actual frontend source had been reviewed.
+        table_html:           blog.table_html           || null,
         table_caption:        blog.table_caption        || null,
         faq_html:             blog.faq_html             || null,
         conclusion_html:      blog.conclusion_html      || null,
