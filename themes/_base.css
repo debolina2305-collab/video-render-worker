@@ -264,6 +264,32 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
   opacity:0; animation:_scaleIn 0.7s cubic-bezier(.34,1.8,.64,1) forwards;
 }
 .answer-slide .qp-options{ opacity:1; animation:none; }
+
+/* Explanation panel — shown below options on the answer slide.
+   No TTS — text only, stays for the full duration of the slide.
+   Fades in after the answer badge animation completes (~0.7s). */
+.answer-explanation{
+  margin-top:28px;
+  padding:20px 28px;
+  border-radius:20px;
+  background:rgba(0,0,0,0.45);
+  border:2px solid color-mix(in srgb, var(--accent-1) 30%, transparent);
+  backdrop-filter:blur(8px);
+  font-size:34px;
+  font-weight:600;
+  line-height:1.45;
+  color:#f0f4ff;
+  text-align:left;
+  opacity:0;
+  animation:_fadeSlideUp 0.5s ease forwards;
+  animation-delay:0.8s;
+  width:100%;
+  box-sizing:border-box;
+}
+@keyframes _fadeSlideUp{
+  from{ opacity:0; transform:translateY(16px); }
+  to  { opacity:1; transform:translateY(0); }
+}
 .confetti-piece{
   position:absolute; top:-60px; opacity:0.95;
   animation-name:confettiFall; animation-timing-function:linear; animation-iteration-count:infinite;
