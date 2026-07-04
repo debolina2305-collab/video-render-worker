@@ -254,13 +254,19 @@ def already_queued(topic, country_code):
     return False
 
 # -- Tavily quality filter -----------------------------------------------------
+def extract_domain(url):
+    m = re.search(r'https?://(?:www\.)?([^/]+)', url or '')
+    return m.group(1) if m else ''
+
 def tavily_search(topic, country_code):
     try:
         country_name = {'US': 'United States', 'IN': 'India'}.get(country_code, country_code)
         result = tavily.search(
-            query        = f'{topic} {country_name}',
-            search_depth = 'basic',
-            max_results  = 8,
+            query                       = f'{topic} {country_name}',
+            search_depth                = 'advanced',   # was 'basic' -- richer per-source content
+            max_results                 = 8,
+            include_images              = True,         # was missing entirely -- no images were ever requested
+            include_image_descriptions  = True,
         )
         return result
     except Exception as e:
@@ -575,33 +581,57 @@ def fetch_wikipedia_image(topic):
     return None
 
 def quality_check(topic, tavily_data, min_words=TAVILY_MIN_WORDS):
+    EMPTY = ([], [])  # (tavily_sources, tavily_images) placeholder for early-reject paths
     if not tavily_data or not tavily_data.get('results'):
-        return False, 'no_results', '', [], 0.0
+        return False, 'no_results', '', [], 0.0, *EMPTY
     results    = tavily_data['results']
     if len(results) < TAVILY_MIN_RESULTS:
-        return False, f'too_few_results({len(results)})', '', [], 0.0
+        return False, f'too_few_results({len(results)})', '', [], 0.0, *EMPTY
     combined   = ' '.join((r.get('content') or r.get('snippet') or '') for r in results).strip()
     word_count = len(combined.split())
     if word_count < min_words:
-        return False, f'thin({word_count}w<{min_words}w)', '', [], 0.0
+        return False, f'thin({word_count}w<{min_words}w)', '', [], 0.0, *EMPTY
     domains = set()
     for r in results:
-        m = re.search(r'https?://(?:www\.)?([^/]+)', r.get('url',''))
-        if m: domains.add(m.group(1))
+        d = extract_domain(r.get('url', ''))
+        if d: domains.add(d)
     if len(domains) <= 1:
-        return False, 'single_domain', '', [], 0.0
+        return False, 'single_domain', '', [], 0.0, *EMPTY
     words = topic.strip().split()
     if len(words) <= 2:
         is_name = all(w[0].isupper() for w in words if w) and not any(c.isdigit() for c in topic)
         if is_name and results[0].get('score', 1.0) < 0.4:
-            return False, 'unknown_entity', '', [], 0.0
+            return False, 'unknown_entity', '', [], 0.0, *EMPTY
     tavily_titles = [r.get('title','').strip() for r in results if r.get('title','').strip()]
     # Average Tavily relevance score (0.0-1.0) -- used as RSS priority proxy
     scores = [r.get('score', 0.0) for r in results if r.get('score') is not None]
     avg_score = sum(scores) / len(scores) if scores else 0.0
-    return True, 'ok', combined, tavily_titles, avg_score
 
-def trim(text, max_words=200):
+    # -- Sources, for Worker 12's citation/data_sources column --------------
+    tavily_sources = [
+        {
+            'title':  r.get('title', '').strip() or extract_domain(r.get('url', '')),
+            'url':    r.get('url', ''),
+            'domain': extract_domain(r.get('url', '')),
+        }
+        for r in results if r.get('url')
+    ][:6]
+
+    # -- Images: Tavily's `images` field is only present when             --
+    # -- include_images=True is passed to tavily.search(). It's a list of  --
+    # -- either plain URL strings, or {url, description} dicts when        --
+    # -- include_image_descriptions=True is also set (which we now do).    --
+    raw_images = tavily_data.get('images') or []
+    tavily_images = []
+    for img in raw_images[:6]:
+        if isinstance(img, dict) and img.get('url'):
+            tavily_images.append({'url': img['url'], 'description': img.get('description') or topic})
+        elif isinstance(img, str) and img:
+            tavily_images.append({'url': img, 'description': topic})
+
+    return True, 'ok', combined, tavily_titles, avg_score, tavily_sources, tavily_images
+
+def trim(text, max_words=1500):
     w = text.split()
     return ' '.join(w[:max_words]) if len(w) > max_words else text
 
@@ -623,7 +653,7 @@ def volume_to_priority(volume):
     return max(int(volume), 0)
 
 # -- Insert into quiz_queue ----------------------------------------------------
-def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, breakdown='', tavily_score=0.0, topic_image_url=None):
+def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, breakdown='', tavily_score=0.0, topic_image_url=None, tavily_sources=None, tavily_images=None):
     # Normalize topic to ASCII — prevents dedup failures with accented chars.
     # 'arda guler' -> 'arda guler', 'türkiye vs usa' -> 'turkiye vs usa'.
     # The meaning is preserved; accents only matter for display, not quiz content.
@@ -660,6 +690,11 @@ def insert_topic(topic, niche, grounding, channel, source, priority, volume=0, b
                 'tavily_score':         round(avg_score, 3) if (avg_score := tavily_score) else 0,
                 'trend_breakdown':      breakdown_list,   # parsed list
                 'trend_breakdown_raw':  breakdown,        # original CSV string
+                # Consumed by Worker 12 for blog data_sources / hero+inline images.
+                # Previously never populated here -- tavily.search() wasn't even
+                # asked for images, and sources were never carried past quality_check().
+                'tavily_sources':       tavily_sources or [],
+                'tavily_images':        tavily_images or [],
             },
             'created_at': datetime.now(timezone.utc).isoformat(),
         })
@@ -695,7 +730,7 @@ def process_topic(topic, channel, source, priority, niche_hint=None,
         return False
     time.sleep(TAVILY_DELAY_SEC)
     data = tavily_search(topic, country)
-    passes, reason, grounding, tavily_titles, avg_score = quality_check(topic, data, min_words)
+    passes, reason, grounding, tavily_titles, avg_score, tavily_sources, tavily_images = quality_check(topic, data, min_words)
     if not passes:
         log.info(f'  REJECT [{reason}]: {topic[:70]}')
         return False
@@ -708,10 +743,11 @@ def process_topic(topic, channel, source, priority, niche_hint=None,
     # Fetch Wikipedia image for the thumbnail background (free, CC-licensed).
     topic_image_url = fetch_wikipedia_image(topic)
     effective_breakdown = breakdown if breakdown and breakdown.lower() != topic.lower() else ', '.join(tavily_titles[:8])
-    ok = insert_topic(topic, niche, trim(grounding, max_words=max(min_words+50, 250)),
+    ok = insert_topic(topic, niche, trim(grounding, max_words=max(min_words+50, 1500)),
                       channel, source, effective_priority, volume=volume,
                       breakdown=effective_breakdown, tavily_score=avg_score,
-                      topic_image_url=topic_image_url)
+                      topic_image_url=topic_image_url,
+                      tavily_sources=tavily_sources, tavily_images=tavily_images)
     if ok:
         bd_count = len(_parse_breakdown(effective_breakdown))
         bd_src   = 'google' if (breakdown and breakdown.lower() != topic.lower()) else 'tavily'
@@ -1038,11 +1074,20 @@ def run_fallback(channels, target=50):
             try:
                 time.sleep(TAVILY_DELAY_SEC)
                 result  = tavily.search(
-                    query        = f'Top trending news in {niche} in {country_name} today {today}',
-                    search_depth = 'basic',
-                    max_results  = 5,
+                    query                      = f'Top trending news in {niche} in {country_name} today {today}',
+                    search_depth               = 'advanced',
+                    max_results                = 5,
+                    include_images             = True,
+                    include_image_descriptions = True,
                 )
                 results = result.get('results', [])
+                raw_images = result.get('images') or []
+                fallback_images = []
+                for img in raw_images[:6]:
+                    if isinstance(img, dict) and img.get('url'):
+                        fallback_images.append({'url': img['url'], 'description': img.get('description') or niche})
+                    elif isinstance(img, str) and img:
+                        fallback_images.append({'url': img, 'description': niche})
             except Exception as e:
                 log.warning(f'  Fallback search failed {niche}: {e}'); continue
             for res in results:
@@ -1050,7 +1095,11 @@ def run_fallback(channels, target=50):
                 content = (res.get('content') or res.get('snippet') or '').strip()
                 if len(title) < 10 or len(content.split()) < 50: continue
                 if already_queued(title, country): continue
-                ok = insert_topic(title, niche, trim(content), channel, 'tavily_fallback', 1)
+                fallback_sources = [{'title': r.get('title','').strip() or extract_domain(r.get('url','')),
+                                      'url': r.get('url',''), 'domain': extract_domain(r.get('url',''))}
+                                     for r in results if r.get('url')][:6]
+                ok = insert_topic(title, niche, trim(content, max_words=1500), channel, 'tavily_fallback', 1,
+                                   tavily_sources=fallback_sources, tavily_images=fallback_images)
                 if ok:
                     inserted += 1
                     log.info(f'  OK FALLBACK [{niche}]: {title[:70]}')
