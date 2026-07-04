@@ -397,23 +397,62 @@ async function run() {
         tavily_word_count:    (job?.searched_text || '').split(/\s+/).filter(Boolean).length,
         llm_model:            llmConfig.model,
 
-        // Status — draft until manually published
-        status:               'draft',
-        is_published:         false,
+        // Status — published immediately after insert (see promotion step below)
+        status:               'published',
+        is_published:         true,
+        published_at:         new Date().toISOString(),
 
         created_at:           new Date().toISOString(),
         updated_at:           new Date().toISOString(),
       };
 
       // Insert into quiz_blog_posts
-      await supabase('quiz_blog_posts', {
+      const insertedRows = await supabase('quiz_blog_posts', {
         method:  'POST',
-        headers: { 'Prefer': 'return=minimal' },
+        headers: { 'Prefer': 'return=representation' },
         body:    JSON.stringify(blogRow),
       });
+      const insertedBlog = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows;
+      const blogId = insertedBlog?.id;
 
       console.log(`[W12] ✓ Blog created: slug="${blogSlug}" words=${totalWords}`);
       console.log(`[W12] ✓ Title: "${blog.title}"`);
+
+      // Promote from draft → published immediately.
+      // Previously status was set to 'draft'/is_published=false here and
+      // NOTHING ever promoted it — no Worker, no trigger, no cron.
+      // All blog posts sat permanently in draft and never appeared on the site.
+      if (blogId) {
+        await supabase(`quiz_blog_posts?id=eq.${blogId}`, {
+          method: 'PATCH',
+          headers: { 'Prefer': 'return=minimal' },
+          body: JSON.stringify({
+            status:       'published',
+            is_published: true,
+            published_at: new Date().toISOString(),
+            updated_at:   new Date().toISOString(),
+          }),
+        });
+        console.log(`[W12] ✓ Blog promoted to published: id=${blogId}`);
+      }
+
+      // Mark blog_linked=true on all quiz rows for this topic so the
+      // [slug].astro page can show a "read the blog" link and so we don't
+      // generate duplicate blogs for the same topic on the next run.
+      for (const qRow of allRows) {
+        await supabase(`quiz?id=eq.${qRow.id}`, {
+          method: 'PATCH',
+          headers: { 'Prefer': 'return=minimal' },
+          body: JSON.stringify({
+            blog_linked:  true,
+            blog_slug:    blogSlug,
+            blog_page_url: `jaasblog.online/quiz/${blogRow.niche}/us/${blogSlug}`,
+            updated_at:   new Date().toISOString(),
+          }),
+        }).catch(e => console.warn(`[W12] Could not set blog_linked on quiz ${qRow.id}: ${e.message}`));
+      }
+      console.log(`[W12] ✓ blog_linked=true set on ${allRows.length} quiz row(s)`);
+
       generated++;
 
     } catch (err) {
