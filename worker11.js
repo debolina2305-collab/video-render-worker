@@ -464,10 +464,10 @@ async function uploadToYouTube(accessToken, videoPath, metadata) {
 // ─────────────────────────────────────────────
 async function processPublish() {
   // Random startup delay: 1–8 minutes (human-like variance, anti-detection)
-  //const delayMs  = (60 + Math.floor(Math.random() * 420)) * 1000;
-  //const delayMin = (delayMs / 60000).toFixed(1);
-  //console.log(`[PUBLISHER] Random startup delay: ${delayMin} min (anti-detection)`);
-  //await new Promise(r => setTimeout(r, delayMs));
+  const delayMs  = (60 + Math.floor(Math.random() * 420)) * 1000;
+  const delayMin = (delayMs / 60000).toFixed(1);
+  console.log(`[PUBLISHER] Random startup delay: ${delayMin} min (anti-detection)`);
+  await new Promise(r => setTimeout(r, delayMs));
 
   console.log('[PUBLISHER] Checking for approved videos to publish...');
 
