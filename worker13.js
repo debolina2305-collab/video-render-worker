@@ -129,6 +129,19 @@ One question from today's trending health headline. 10 seconds.
 
 // ─────────────────────────────────────────────
 // BUILD Facebook post description
+//
+// FB ALGORITHM STRATEGY:
+//   Facebook uses keywords in Reels descriptions to categorise and
+//   distribute content to relevant audiences — exactly like YouTube.
+//   ALL trending keywords must appear in the description, not just a few.
+//
+//   FB description structure (optimised for reach):
+//     Line 1:   Hook question (stops the scroll)
+//     Line 2:   ALL trending keywords — FB reads first ~130 chars heavily
+//     Line 3:   CTA with link
+//     ...       Niche block, explanation, hashtags
+//
+//   FB Reels description limit: 2200 chars.
 // ─────────────────────────────────────────────
 function buildDescription(quiz) {
   const niche      = (quiz.niche || 'general').toLowerCase();
@@ -138,22 +151,40 @@ function buildDescription(quiz) {
   const nicheNo    = quiz.niche_challenge_no || '';
   const kwRaw      = (quiz.trend_keywords || '').split(',').map(t => t.trim()).filter(Boolean);
 
-  // Extra hashtags from trend keywords (top 5, cleaned)
-  const trendTags = kwRaw
-    .slice(0, 5)
+  // ALL trending keywords as bullet line — FB algorithm keyword signal
+  const trendingSentence = kwRaw.length
+    ? `🔍 Trending: ${kwRaw.join(' • ')}`
+    : '';
+
+  // ALL trending keywords as hashtags — FB hashtag distribution signal
+  // Use ALL keywords, not just top 5
+  const trendHashtags = kwRaw
     .map(k => '#' + k.replace(/[^a-zA-Z0-9]/g, '').slice(0, 25))
     .filter(h => h.length > 2)
     .join(' ');
 
   const lines = [
+    // ── Line 1: Hook (scroll-stopper) ──
     title ? `❓ ${title}` : '',
-    '',
+    ``,
+    // ── Line 2: ALL trending keywords (FB algorithm reads this first) ──
+    trendingSentence,
+    ``,
+    // ── Line 3: CTA with link ──
+    `💡 Play the full challenge → jaasblog.online/quiz/${niche}`,
+    ``,
+    // ── Niche block ──
     nicheFixed,
-    '',
-    trendTags,
-    '',
+    ``,
+    // ── Explanation (unique content per Reel — good for reach) ──
+    quiz.explanation_1 ? `📚 ${quiz.explanation_1}` : '',
+    ``,
+    // ── Identity + challenge number ──
     `Challenge ID: ${quizNo} | US Trending Challenge #${nicheNo}`,
-  ].filter(l => l !== undefined);
+    ``,
+    // ── ALL trending keywords as hashtags ──
+    trendHashtags,
+  ].filter(l => l !== null && l !== undefined && l !== false);
 
   return lines.join('\n').trim().slice(0, 2200); // FB Reels description limit
 }
@@ -259,15 +290,16 @@ async function processPublish() {
   //  - human approved
   //  - not yet posted to Facebook  (fb_video_id IS NULL)
   //  - is_active = true
-  // Note: we publish to Facebook regardless of YouTube publish status —
-  // FB and YT pipelines are independent. A video can go to FB before YT
-  // or after, whichever publishes first.
+  // order=created_at.desc → newest/most-trending quiz publishes first.
+  // Trending topics go stale fast — always publish the latest one.
+  // Note: FB and YT pipelines are independent — a video can go to FB
+  // before or after YouTube, whichever runs first.
   const rows = await fetchSupabase(
     'quiz?video_status=eq.rendered' +
     '&is_human_approved=eq.true' +
     '&is_active=eq.true' +
     '&fb_video_id=is.null' +
-    '&select=*&order=created_at.asc&limit=1'
+    '&select=*&order=created_at.desc&limit=1'
   );
 
   if (!rows?.length) {
