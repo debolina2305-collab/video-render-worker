@@ -278,10 +278,10 @@ async function uploadToFacebook(videoPath, description) {
 async function processPublish() {
 
   // Random startup delay: 1–6 minutes (same anti-detection pattern as worker11)
-  const delayMs  = (60 + Math.floor(Math.random() * 300)) * 1000;
-  const delayMin = (delayMs / 60000).toFixed(1);
-  console.log(`[FB-PUBLISHER] Random startup delay: ${delayMin} min (anti-detection)`);
-  await new Promise(r => setTimeout(r, delayMs));
+  //const delayMs  = (60 + Math.floor(Math.random() * 300)) * 1000;
+  //const delayMin = (delayMs / 60000).toFixed(1);
+  //console.log(`[FB-PUBLISHER] Random startup delay: ${delayMin} min (anti-detection)`);
+  //await new Promise(r => setTimeout(r, delayMs));
 
   console.log('[FB-PUBLISHER] Checking for approved videos to publish to Facebook...');
 
