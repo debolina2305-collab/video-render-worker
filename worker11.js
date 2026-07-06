@@ -10,9 +10,9 @@ const http        = require('http');
 // ─────────────────────────────────────────────
 // ENV
 // ─────────────────────────────────────────────
-const supabaseUrl    = process.env.SUPABASE_URL;
-const supabaseKey    = process.env.SUPABASE_SERVICE_KEY;
-const YT_CLIENT_ID  = process.env.YOUTUBE_CLIENT_ID;
+const supabaseUrl      = process.env.SUPABASE_URL;
+const supabaseKey      = process.env.SUPABASE_SERVICE_KEY;
+const YT_CLIENT_ID     = process.env.YOUTUBE_CLIENT_ID;
 const YT_CLIENT_SECRET = process.env.YOUTUBE_CLIENT_SECRET;
 const YT_REFRESH_TOKEN = process.env.YOUTUBE_REFRESH_TOKEN;
 
@@ -154,6 +154,20 @@ One question. Ten seconds. Could save your life — or at least win an argument.
 
 // ─────────────────────────────────────────────
 // BUILD YouTube metadata from quiz row
+//
+// SEO STRATEGY (v2):
+//   TITLE   — top trending keyword injected if it fits and isn't already there.
+//             YouTube title is the #1 search ranking signal.
+//
+//   DESC    — trending keywords NOW appear in lines 1-4 (above the fold /
+//             "Show more" cut-off). YouTube indexes the first ~150 chars most
+//             heavily, and Google Search shows the first 157 chars as the
+//             snippet. Explanation (unique per video) comes next for E-E-A-T.
+//             Niche block, CTAs, and hashtags follow below the fold.
+//
+//   TAGS    — top trending keywords added as first tags (tier-1), then base
+//             channel/niche/geo tags. Tags now primarily drive "suggested
+//             videos" sidebar placement rather than search ranking.
 // ─────────────────────────────────────────────
 function buildMetadata(quiz) {
   const niche = (quiz.niche || 'general').toLowerCase();
@@ -164,21 +178,51 @@ function buildMetadata(quiz) {
   };
   const categoryId = categoryMap[niche] || '22';
 
-  const title = (quiz.youtube_title || quiz.topic || 'Quiz Challenge').slice(0, 100);
   const nicheLabel = niche.charAt(0).toUpperCase() + niche.slice(1);
   const nicheNo    = quiz.niche_challenge_no || '';
   const quizNo     = quiz.quiz_no || '';
   const nicheFixed = NICHE_DESC[niche] || NICHE_DESC.general;
 
-  // Parse trending keywords — used in both description (raw) and tags (cleaned)
+  // ── Parse trending keywords ────────────────────────────────────────────────
   const kwRaw = (quiz.trend_keywords || '').split(',').map(t => t.trim()).filter(Boolean);
 
-  // Description: use RAW trend_keywords (full phrases, special chars OK in description)
+  // ── TITLE: inject top trending keyword if it fits and isn't already there ──
+  // The LLM-generated youtube_title already has the core hook. We append the
+  // single most-searched keyword phrase so the title matches live search intent.
+  // Example: "🔥 99% Can't Name Egypt's World Cup Record!" + " | Egypt World Cup"
+  let title = (quiz.youtube_title || quiz.topic || 'Quiz Challenge').trim();
+  if (kwRaw.length) {
+    const topKw = kwRaw[0]; // highest-volume keyword (first in list from fetch_trends)
+    if (!title.toLowerCase().includes(topKw.toLowerCase())) {
+      const candidate = `${title} | ${topKw}`;
+      // Only append if it stays under YouTube's 100-char title limit
+      if (candidate.length <= 100) {
+        title = candidate;
+        console.log(`[META] Title keyword injected: "${topKw}"`);
+      } else {
+        console.log(`[META] Title keyword skipped (too long): "${topKw}"`);
+      }
+    } else {
+      console.log(`[META] Title already contains top keyword: "${topKw}"`);
+    }
+  }
+  title = title.slice(0, 100);
+
+  // ── Trending keyword lines for description ─────────────────────────────────
+  // Top 3 keywords as a natural sentence — indexed heavily by YouTube + Google.
+  // Keep it readable, not hashtag soup.
+  const top3Kw = kwRaw.slice(0, 3);
+  const trendingSentence = top3Kw.length
+    ? `🔍 Trending now: ${top3Kw.join(' • ')}`
+    : '';
+
+  // Full trending line (all keywords) — appears below the fold for context signal
   const rawTrendingLine = kwRaw.length
     ? `🔥 TRENDING: ${kwRaw.slice(0, 20).join(', ')}`
     : '';
 
-  // Description hashtags: only short clean ones from top 5 keywords (visible + clickable)
+  // ── Hashtags ───────────────────────────────────────────────────────────────
+  // Top 5 trending keywords as hashtags (visible + clickable in description)
   const descHashtags = kwRaw
     .slice(0, 5)
     .map(k => '#' + k.replace(/[^a-zA-Z0-9]/g, '').slice(0, 20))
@@ -186,30 +230,49 @@ function buildMetadata(quiz) {
     .join(' ');
 
   const baseHashtags = [
-    // Channel
     '#quiz #trivia #challenge #shorts #youtubeshorts #quiztime',
     '#USATrendingChallenge #JaasX',
-    // Niche
     `#${niche}quiz #${niche}challenge #${niche}trivia`,
-    // US geo + quiz combinations
     '#USA #US #America #UnitedStates #American',
     '#USAQuiz #AmericaQuiz #USAChallenge #AmericaChallenge',
     '#USATrivia #TrendingUSA #USTrending #Trending #Viral',
   ].join(' ');
 
-  // Build description
+  // ── DESCRIPTION ────────────────────────────────────────────────────────────
+  // Structure (optimised for search ranking):
+  //
+  //  ABOVE THE FOLD (~first 150 chars — highest indexing weight):
+  //    Line 1: CTA with link (drives clicks, signals relevance)
+  //    Line 2: Top 3 trending keywords as natural sentence ← NEW
+  //    Line 3: US audience signal
+  //
+  //  ABOVE "SHOW MORE" (~first 300 chars — shown in search result snippet):
+  //    Challenge ID + niche number
+  //    Video title (question)
+  //    Engagement CTA
+  //
+  //  BELOW "SHOW MORE":
+  //    Explanation (unique E-E-A-T content per video)
+  //    Niche fixed block
+  //    Subscribe/bell CTA
+  //    Full trending keywords line (context signal)
+  //    Hashtags
+  //
   const description = [
+    // ── ABOVE THE FOLD ──
     `🎯 Play the REAL CHALLENGE: jaasblog.online/quiz/${niche} and earn real ONS tokens!`,
+    trendingSentence,                                          // ← top 3 keywords, line 2
     `🇺🇸 Trending right now in the United States of America`,
     ``,
+    // ── ABOVE SHOW MORE ──
     `Challenge ID: ${quizNo}`,
     `${nicheLabel} Challenge No #${nicheNo}`,
     ``,
-    `${title}`,
+    title,
     ``,
     `⚡ Can YOU answer this? Drop your answer in the comments below!`,
     ``,
-    // Answer explanation — gives SEO-rich unique content per video
+    // ── BELOW SHOW MORE ──
     quiz.explanation_1 ? `📚 EXPLANATION:\n${quiz.explanation_1}` : '',
     ``,
     `━━━━━━━━━━━━━━━━━━━━━━━━━`,
@@ -219,50 +282,70 @@ function buildMetadata(quiz) {
     `📌 Like • Share • Subscribe → New challenge every day!`,
     `🔔 Hit the bell so you never miss a challenge!`,
     ``,
-    rawTrendingLine,
+    rawTrendingLine,                                           // all keywords, below fold
     ``,
-    `${baseHashtags}`,
+    baseHashtags,
     descHashtags,
-  ].filter(line => line !== null && line !== undefined).join('\n').slice(0, 5000); // YT max 5000 chars
+  ].filter(line => line !== null && line !== undefined && line !== false)
+   .join('\n')
+   .slice(0, 5000); // YouTube max 5000 chars
 
-  // Tags: base + US geo tags + cleaned trending keywords
-  // YouTube rules: plain text only, no special chars, max 30 chars per tag, max 500 chars total
+  // ── TAGS ───────────────────────────────────────────────────────────────────
+  // YouTube tag rules: plain ASCII only, max 30 chars per tag, max 500 chars total.
+  //
+  // Priority order (v2):
+  //   TIER 1: cleaned trending keywords — these connect to currently-searched terms
+  //           and drive "suggested videos" placement on related content
+  //   TIER 2: channel identity tags
+  //   TIER 3: niche + US geo tags
+  //
+  // Putting trending tags FIRST means they get priority in YouTube's tag parsing
+  // (YouTube reads tags left-to-right for relevance weighting).
+  const cleanTag = t => t
+    .toLowerCase()
+    .replace(/[^\x00-\x7F]/g, '')   // strip non-ASCII (emojis, unicode)
+    .replace(/[^a-z0-9\s]/g, '')    // strip special chars
+    .replace(/\s+/g, '')            // collapse spaces → single word
+    .trim()
+    .slice(0, 30);                  // max 30 chars per tag
+
+  // TIER 1: trending keywords (up to 12, fitted within char budget)
+  const trendingTags = [];
+  let tagsCharCount = 0;
+  for (const kw of kwRaw) {
+    const cleaned = cleanTag(kw);
+    if (!cleaned || cleaned.length < 2) continue;
+    if (tagsCharCount + cleaned.length > 200) break; // reserve 300 chars for base tags
+    if (trendingTags.length >= 12) break;
+    trendingTags.push(cleaned);
+    tagsCharCount += cleaned.length;
+  }
+
+  // TIER 2 + 3: channel identity + niche + US geo
   const baseTags = [
-    // Channel identity
     'quiz', 'trivia', 'challenge', 'shorts', 'youtubeshorts', 'quiztime',
     'USATrendingChallenge', 'JaasX', 'ONStoken', 'jaasblog',
-    // Niche specific
     niche, `${niche}quiz`, `${niche}challenge`, `${niche}trivia`,
-    // US geo + quiz combinations
     'usa', 'us', 'america', 'unitedstates', 'american',
     'usaquiz', 'americaquiz', 'usachallenge', 'americachallenge',
     'ustrivia', 'americatrivia', 'trendingusa', 'ustrending',
     'trending', 'viral', 'usatrending'
   ];
-  const cleanTag = t => t
-    .toLowerCase()
-    .replace(/[^\x00-\x7F]/g, '')   // strip ALL non-ASCII (emojis, unicode)
-    .replace(/[^a-z0-9\s]/g, '')    // strip special chars
-    .replace(/\s+/g, '')            // remove ALL spaces → single word tag
-    .trim()
-    .slice(0, 30);                  // max 30 chars per tag
 
-  const extraTags = [];
-  let tagsCharCount = baseTags.join('').length;
-  for (const kw of kwRaw) {
-    const cleaned = cleanTag(kw);
-    if (!cleaned || cleaned.length < 2) continue;
-    if (tagsCharCount + cleaned.length > 480) break;
-    if (extraTags.length >= 17) break;
-    extraTags.push(cleaned);
-    tagsCharCount += cleaned.length;
+  // Merge: trending tags first, then base tags, deduplicated, max 30 total
+  const seen = new Set(trendingTags);
+  const finalTags = [...trendingTags];
+  for (const t of baseTags) {
+    if (!seen.has(t)) { seen.add(t); finalTags.push(t); }
+    if (finalTags.length >= 30) break;
   }
-  const tags = [...baseTags, ...extraTags].slice(0, 30);
-  console.log(`[META] tags sample: ${JSON.stringify(tags.slice(0,5))}`);
 
-  console.log(`[META] description length=${description.length} tags=${tags.length}`);
-  console.log(`[META] ALL TAGS: ${JSON.stringify(tags)}`);
-  return { title, description, tags, categoryId };
+  console.log(`[META] title="${title}"`);
+  console.log(`[META] description length=${description.length}`);
+  console.log(`[META] tags (${finalTags.length}): ${JSON.stringify(finalTags)}`);
+  console.log(`[META] top3 trending in desc: ${top3Kw.join(' | ')}`);
+
+  return { title, description, tags: finalTags, categoryId };
 }
 
 // ─────────────────────────────────────────────
@@ -292,7 +375,6 @@ async function setThumbnail(accessToken, videoId, thumbnailUrl) {
 
     if (!thumbRes.ok) {
       const err = await thumbRes.text();
-      // Thumbnail upload failure is non-fatal — video is already live
       console.warn(`[THUMB] Upload failed (non-fatal): HTTP ${thumbRes.status} — ${err.slice(0,200)}`);
       return;
     }
@@ -332,7 +414,7 @@ async function uploadToYouTube(accessToken, videoPath, metadata) {
           defaultAudioLanguage: 'en'
         },
         status: {
-          privacyStatus: 'public',   // publish immediately as public
+          privacyStatus: 'public',
           selfDeclaredMadeForKids: false,
           madeForKids: false
         }
@@ -381,21 +463,14 @@ async function uploadToYouTube(accessToken, videoPath, metadata) {
 // MAIN
 // ─────────────────────────────────────────────
 async function processPublish() {
-  // ── Random startup delay: 1–8 minutes ────────────────────────────────────
-  // Adds human-like variance so uploads don't happen at the exact same second
-  // every day even when cron fires at the same time.
-  const delayMs = (60 + Math.floor(Math.random() * 420)) * 1000; // 60–480 seconds
+  // Random startup delay: 1–8 minutes (human-like variance, anti-detection)
+  const delayMs  = (60 + Math.floor(Math.random() * 420)) * 1000;
   const delayMin = (delayMs / 60000).toFixed(1);
   console.log(`[PUBLISHER] Random startup delay: ${delayMin} min (anti-detection)`);
   await new Promise(r => setTimeout(r, delayMs));
-  // ─────────────────────────────────────────────────────────────────────────
 
   console.log('[PUBLISHER] Checking for approved videos to publish...');
 
-  // Poll for quiz rows that are:
-  // - rendered (video exists in R2)
-  // - human approved
-  // - not yet published
   const rows = await fetchSupabase(
     'quiz?video_status=eq.rendered&is_human_approved=eq.true&is_active=eq.true' +
     '&select=*&order=created_at.asc&limit=1'
@@ -414,12 +489,15 @@ async function processPublish() {
     console.error('[PUBLISHER] video_url is NULL — cannot publish without video file in R2');
     await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ generation_error: 'video_url is null — video not uploaded to R2', updated_at: new Date().toISOString() })
+      body: JSON.stringify({
+        generation_error: 'video_url is null — video not uploaded to R2',
+        updated_at: new Date().toISOString()
+      })
     });
     return;
   }
 
-  // Mark as processing to prevent duplicate runs
+  // Mark as publishing to prevent duplicate runs
   await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
     method: 'PATCH',
     body: JSON.stringify({ video_status: 'publishing', updated_at: new Date().toISOString() })
@@ -433,7 +511,7 @@ async function processPublish() {
     const videoPath = `/tmp/${quiz.id}.mp4`;
     await downloadVideo(quiz.video_url, videoPath);
 
-    // 3. Build metadata
+    // 3. Build metadata (SEO v2 — trending keywords in title + top of description)
     const metadata = buildMetadata(quiz);
     console.log(`[PUBLISHER] Title: "${metadata.title}"`);
     console.log(`[PUBLISHER] Category: ${metadata.categoryId}, Tags: ${metadata.tags.slice(0,5).join(', ')}...`);
@@ -448,17 +526,15 @@ async function processPublish() {
     await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
-        video_status: 'published',
+        video_status:     'published',
         youtube_video_id: videoId,
-        published_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        published_at:     new Date().toISOString(),
+        updated_at:       new Date().toISOString()
       })
     });
 
-    // 7. Promote the linked blog post to published if it exists and is still draft.
-    // Worker 12 now publishes immediately on creation, but this handles edge cases:
-    // blogs generated before that fix, or cases where blog creation raced ahead
-    // of video publishing and was left in draft.
+    // 7. Promote linked blog post if still draft
+    // Worker12 publishes on creation, but this handles edge cases / race conditions
     if (quiz.blog_slug) {
       try {
         await fetchSupabase(
@@ -482,18 +558,18 @@ async function processPublish() {
     console.log(`[PUBLISHER] ✓ Published: ${youtubeUrl}`);
     console.log(`[PUBLISHER] ✓ quiz.youtube_video_id = ${videoId}`);
 
-    // 7. Cleanup
+    // 8. Cleanup temp file
     await fs.unlink(videoPath).catch(() => {});
 
   } catch (e) {
     console.error(`[PUBLISHER] FAILED: ${e.message}`);
-    // Reset status so it can be retried
+    // Reset to rendered so it can be retried
     await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
-        video_status: 'rendered',   // back to rendered so it can be retried
+        video_status:     'rendered',
         generation_error: `publish failed: ${e.message}`,
-        updated_at: new Date().toISOString()
+        updated_at:       new Date().toISOString()
       })
     }).catch(() => {});
     process.exit(1);
