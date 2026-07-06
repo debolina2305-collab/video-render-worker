@@ -1107,11 +1107,14 @@ async function buildVideo(quiz, workDir) {
     await concatAudio(miParts,miAudioRaw,workDir);
     let miAudioDur = await audioDur(miAudioRaw);
     let miAudio = miAudioRaw;
-    if (miAudioDur < 3.5) {
-      const pad=path.join(workDir,'mi_pad.mp3'); await silence(3.5 - miAudioDur, pad);
+    // MI minimum screen time = 5.5s (audio duration + 2s extra so viewer
+    // can read the question and options before the screen moves on)
+    const MI_MIN_SEC = 5.5;
+    if (miAudioDur < MI_MIN_SEC) {
+      const pad=path.join(workDir,'mi_pad.mp3'); await silence(MI_MIN_SEC - miAudioDur, pad);
       miAudio=path.join(workDir,'mi_audio.mp3');
       await concatAudio([miAudioRaw,pad],miAudio,workDir);
-      miAudioDur = 3.5;
+      miAudioDur = MI_MIN_SEC;
     }
     pushClip(await recordedClip(page, miAudio, miAudioDur, workDir, 'clip_mi', '.mission-final-slide'));
 
