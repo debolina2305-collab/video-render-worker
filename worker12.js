@@ -130,7 +130,7 @@ async function pingIndexNow(urls) {
       body: JSON.stringify({
         host:        'jaasblog.online',
         key:         KEY,
-        keyLocation: `https://jaasblog.online/${KEY}.txt`,
+        keyLocation: `keyLocation: `https://jaasblog.online/quiz/${KEY}.txt`,
         urlList:     urls,
       }),
     });
