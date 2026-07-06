@@ -10,6 +10,7 @@
 // Calls DeepSeek V3 (config from quiz_generation_settings table,
 // same as Worker 8) to generate a 1000-word blog post as HTML.
 // Inserts into quiz_blog_posts table.
+// After publishing, pings Bing IndexNow for instant indexing.
 // ═══════════════════════════════════════════════════════════════
 
 const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
@@ -117,6 +118,33 @@ function countWords(html = '') {
 }
 
 // ─────────────────────────────────────────────
+// INDEXNOW — ping Bing after every blog publish
+// ─────────────────────────────────────────────
+async function pingIndexNow(urls) {
+  if (!urls || urls.length === 0) return;
+  const KEY = '6723e2112d2a4d87b629b37a8dfbfad7';
+  try {
+    const res = await fetch('https://api.indexnow.org/indexnow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({
+        host:        'jaasblog.online',
+        key:         KEY,
+        keyLocation: `https://jaasblog.online/${KEY}.txt`,
+        urlList:     urls,
+      }),
+    });
+    if (res.status === 200) {
+      console.log(`[W12] ✓ IndexNow pinged ${urls.length} URL(s) → Bing will index within 24h`);
+    } else {
+      console.warn(`[W12] IndexNow returned HTTP ${res.status} — URLs may not be submitted`);
+    }
+  } catch (e) {
+    console.warn(`[W12] IndexNow ping failed (non-fatal): ${e.message}`);
+  }
+}
+
+// ─────────────────────────────────────────────
 // BUILD BLOG PROMPT
 // ─────────────────────────────────────────────
 function buildPrompt(job, quizRows) {
@@ -134,10 +162,6 @@ function buildPrompt(job, quizRows) {
     return `QUESTION_${i+1}:\nQ: ${q.question_1}\nOptions: ${opts}\nCorrect Answer: ${q.correct_answer_1}\nExplanation: ${q.explanation_1 || 'Correct based on research.'}`;
   }).join('\n\n');
 
-  // Requirement: every blog needs 5-6 FAQ items total. Real quiz questions
-  // (with their exact options/answer) are used first; if the topic has
-  // fewer than 5 question variants, the LLM fills the remainder with
-  // general knowledge FAQs about the topic so the total always lands at 5-6.
   const MIN_FAQ = 5;
   const MAX_FAQ = 6;
   const targetFaqCount = Math.max(MIN_FAQ, Math.min(realQuizCount, MAX_FAQ));
@@ -214,10 +238,8 @@ CHART_DATA RULES (very important — read carefully before filling chart_data):
 // PARSE LLM RESPONSE
 // ─────────────────────────────────────────────
 function parseBlogJSON(raw) {
-  // Strip markdown fences if present
   let clean = raw.trim();
   clean = clean.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-  // Find first { to last }
   const start = clean.indexOf('{');
   const end   = clean.lastIndexOf('}');
   if (start === -1 || end === -1) throw new Error('No JSON object found in LLM response');
@@ -230,25 +252,19 @@ function parseBlogJSON(raw) {
 async function run() {
   console.log('[W12] Blog generator starting...');
 
-  // Load LLM config from quiz_generation_settings (same table as Worker 8)
   const llmConfig = await loadLLMConfig();
 
-  // Get ALL quiz rows that have NO blog yet — Supabase filters server-side.
-  // No limit needed — only rows genuinely missing a blog are returned.
-  // Strategy: get all quiz_ids that already have a blog, then fetch quiz rows NOT in that set.
   const existingBlogQuizIds = await supabase(
     'quiz_blog_posts?select=quiz_id'
   ).then(rows => (rows || []).filter(r => r.quiz_id).map(r => r.quiz_id));
   console.log(`[W12] ${existingBlogQuizIds.length} quiz_ids already have blogs`);
 
-  // Build NOT IN filter — if no blogs exist yet, fetch all enriched quizzes
   let quizFilter = 'quiz?quiz_enriched=eq.true&is_active=eq.true' +
     '&select=id,topic,topic_slug,niche,quiz_no,niche_challenge_no,' +
     'question_1,options_1,correct_answer_1,explanation_1,blog_slug,' +
     'created_at&order=created_at.asc';
 
   if (existingBlogQuizIds.length > 0) {
-    // PostgREST NOT IN filter: id=not.in.(uuid1,uuid2,...)
     quizFilter += `&id=not.in.(${existingBlogQuizIds.join(',')})`;
   }
 
@@ -296,7 +312,6 @@ async function run() {
     console.log(`\n[W12] Generating blog for: "${primaryQuiz.topic}" (${allRows.length} quiz rows)`);
 
     try {
-      // Find the matching quiz_queue job for this topic to get Tavily data
       const queueRows = await supabase(
         `quiz_queue?trnding_topic=ilike.${encodeURIComponent(primaryQuiz.topic)}` +
         `&select=id,trnding_topic,niche,searched_text,payload,topic_image_url&limit=1`
@@ -309,11 +324,10 @@ async function run() {
         const words = (job.searched_text || '').split(/\s+/).filter(Boolean).length;
         const imgs  = (job.payload?.tavily_images || []).length;
         const srcs  = (job.payload?.tavily_sources || []).length;
-        if (words < 400) console.warn(`[W12] ⚠️ Thin Tavily data: only ${words} words — blog quality may be lower. Newer queue rows should have 1500+ words.`);
+        if (words < 400) console.warn(`[W12] ⚠️ Thin Tavily data: only ${words} words — blog quality may be lower.`);
         else console.log(`[W12] Tavily data: ${words} words, ${imgs} images, ${srcs} sources ✓`);
       }
 
-      // Build prompt using job (Tavily data) + all quiz rows for this topic
       const fakeJob = job || {
         trnding_topic: primaryQuiz.topic,
         niche:         primaryQuiz.niche,
@@ -322,29 +336,25 @@ async function run() {
       };
       const { systemPrompt, userPrompt } = buildPrompt(fakeJob, allRows);
 
-      // Call DeepSeek
       console.log('[W12] Calling DeepSeek via quiz_generation_settings config...');
       const rawResponse = await callLLM(llmConfig, systemPrompt, userPrompt);
       console.log(`[W12] LLM response: ${rawResponse.length} chars`);
 
-      // Parse response
       const blog = parseBlogJSON(rawResponse);
 
-      // Pick best hero image
       const tavilyImages   = job?.payload?.tavily_images || [];
       const heroImageUrl   = tavilyImages[0]?.url || primaryQuiz.topic_image_url || null;
       const heroImageAlt   = blog.hero_image_alt || primaryQuiz.topic;
       const inlineImageUrl = blog.suggested_inline_image_url || tavilyImages[1]?.url || null;
       const inlineImageAlt = blog.suggested_inline_image_alt || primaryQuiz.topic;
 
-      // Calculate total word count
       const totalWords = [
         blog.introduction_html, blog.section_1_html, blog.section_2_html,
         blog.section_3_html, blog.faq_html, blog.conclusion_html
       ].reduce((sum, h) => sum + countWords(h), 0);
 
-      const blogSlug = makeSlug(primaryQuiz.topic, primaryQuiz.quiz_no);
-      const blogNiche = primaryQuiz.niche || 'general';
+      const blogSlug    = makeSlug(primaryQuiz.topic, primaryQuiz.quiz_no);
+      const blogNiche   = primaryQuiz.niche || 'general';
       const blogCountry = (primaryQuiz.country_code || 'US').toLowerCase();
 
       // Fix 3: Inject correct CTA link into conclusion_html.
@@ -354,13 +364,10 @@ async function run() {
       const challengeUrl = `https://jaasblog.online/quiz/${blogNiche}/${blogCountry}/${blogSlug}`;
       let conclusionHtml = blog.conclusion_html || null;
       if (conclusionHtml) {
-        // Strip any stray LLM-generated links in conclusion (safety net)
         conclusionHtml = conclusionHtml.replace(/<a [^>]*href=['"][^'"]*jaasblog[^'"]*['"][^>]*>.*?<\/a>/gi, '').trim();
-        // Append the correct CTA link
         conclusionHtml += `\n<p class="quiz-blog-cta-line">🎯 <a href="${challengeUrl}" class="quiz-blog-cta-link">▶ Play this challenge now on JaasX →</a></p>`;
       }
 
-      // Build the row to insert
       const blogRow = {
         quiz_id:              primaryQuiz.id,
         quiz_queue_id:        job?.id || null,
@@ -459,42 +466,44 @@ async function run() {
           method: 'PATCH',
           headers: { 'Prefer': 'return=minimal' },
           body: JSON.stringify({
-            blog_linked:  true,
-            blog_slug:    blogSlug,
+            blog_linked:   true,
+            blog_slug:     blogSlug,
             blog_page_url: `jaasblog.online/quiz/${blogRow.niche}/us/${blogSlug}`,
-            updated_at:   new Date().toISOString(),
+            updated_at:    new Date().toISOString(),
           }),
         }).catch(e => console.warn(`[W12] Could not set blog_linked on quiz ${qRow.id}: ${e.message}`));
       }
       console.log(`[W12] ✓ blog_linked=true set on ${allRows.length} quiz row(s)`);
+
+      // ── Ping Bing IndexNow for instant indexing ──
+      const blogUrl = `https://jaasblog.online/quiz/${blogNiche}/us/${blogSlug}`;
+      await pingIndexNow([blogUrl]);
 
       generated++;
 
     } catch (err) {
       console.error(`[W12] FAILED for "${primaryQuiz.topic}": ${err.message}`);
 
-      // Insert a draft row with error so we know it was attempted
+      // Insert an error row so we know it was attempted
       try {
         const errSlug = makeSlug(primaryQuiz.topic, primaryQuiz.quiz_no);
-        if (!existingSlugs.has(errSlug)) {
-          await supabase('quiz_blog_posts', {
-            method:  'POST',
-            headers: { 'Prefer': 'return=minimal' },
-            body:    JSON.stringify({
-              quiz_id:          primaryQuiz.id,
-              quiz_no:          primaryQuiz.quiz_no,
-              niche:            primaryQuiz.niche || 'general',
-              topic:            primaryQuiz.topic,
-              slug:             errSlug,
-              title:            primaryQuiz.topic,
-              generation_error: err.message.slice(0, 500),
-              status:           'error',
-              is_published:     false,
-              created_at:       new Date().toISOString(),
-              updated_at:       new Date().toISOString(),
-            }),
-          });
-        }
+        await supabase('quiz_blog_posts', {
+          method:  'POST',
+          headers: { 'Prefer': 'return=minimal' },
+          body:    JSON.stringify({
+            quiz_id:          primaryQuiz.id,
+            quiz_no:          primaryQuiz.quiz_no,
+            niche:            primaryQuiz.niche || 'general',
+            topic:            primaryQuiz.topic,
+            slug:             errSlug,
+            title:            primaryQuiz.topic,
+            generation_error: err.message.slice(0, 500),
+            status:           'error',
+            is_published:     false,
+            created_at:       new Date().toISOString(),
+            updated_at:       new Date().toISOString(),
+          }),
+        });
       } catch (e2) {
         console.warn(`[W12] Could not insert error row: ${e2.message}`);
       }
