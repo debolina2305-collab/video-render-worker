@@ -10,12 +10,12 @@ on:
     - cron: '05 12 * * *'    # → publish slot 2  (8:17 AM ET)
     - cron: '05 14 * * *'   # → publish slot 3  (10:43 AM ET)
     - cron: '5 16 * * *'   # → publish slot 4  (12:11 PM ET)
-    - cron: '23 17 * * *'   # → publish slot 5  (1:38 PM ET)
-    - cron: '7 19 * * *'    # → publish slot 6  (3:22 PM ET)
-    - cron: '52 20 * * *'   # → publish slot 7  (5:07 PM ET)
-    - cron: '18 23 * * *'   # → publish slot 8  (7:33 PM ET)
-    - cron: '56 0 * * *'    # → publish slot 9  (9:11 PM ET)
-    - cron: '32 2 * * *'    # → publish slot 10 (10:47 PM ET)
+    - cron: '05 17 * * *'   # → publish slot 5  (1:38 PM ET)
+    - cron: '5 19 * * *'    # → publish slot 6  (3:22 PM ET)
+    - cron: '05 21 * * *'   # → publish slot 7  (5:07 PM ET)
+    - cron: '05 23 * * *'   # → publish slot 8  (7:33 PM ET)
+    - cron: '5 1 * * *'    # → publish slot 9  (9:11 PM ET)
+    - cron: '5 3 * * *'    # → publish slot 10 (10:47 PM ET)
 
   workflow_dispatch:
 jobs:
