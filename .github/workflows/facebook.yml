@@ -2,34 +2,28 @@ name: Facebook Publisher
 
 on:
   schedule:
-    # ── 6 publish slots per day, targeted at US Eastern Time audience ──────
-    # IMPORTANT: GitHub Actions cron runs in UTC.
-    # These crons are set for EDT (UTC-4, summer 2026).
-    # When US clocks fall back to EST in November, ADD 1 HOUR to every cron.
-    #
-    # Facebook Reels peak times for US audience (slightly offset from YT
-    # slots so both platforms don't hammer R2/Supabase simultaneously):
-    #
-    # Slot 1:  8:30 AM ET  → 12:30 UTC  (EDT) — morning scroll
+    # Slot 1:  8:30 AM ET = 11:20 UTC
     - cron: '20 11 * * *'
-    # Slot 2: 11:15 AM ET  → 15:15 UTC  (EDT) — mid-morning
+    # Slot 2: 12:21 PM ET = 12:21 UTC
     - cron: '21 12 * * *'
-    # Slot 3:  1:00 PM ET  → 17:00 UTC  (EDT) — lunch peak
+    # Slot 3:  2:23 PM ET = 14:23 UTC
     - cron: '23 14 * * *'
-    # Slot 4:  4:45 PM ET  → 20:45 UTC  (EDT) — after school/work
+    # Slot 4:  4:22 PM ET = 16:22 UTC
     - cron: '22 16 * * *'
-     # Slot 5:  5:45 PM ET  → 21:45 UTC  (EDT) — after school/work
+    # Slot 5:  5:21 PM ET = 17:21 UTC
+    - cron: '21 17 * * *'
+    # Slot 6:  7:20 PM ET = 19:20 UTC
     - cron: '20 19 * * *'
-     # Slot 6: 6:30 PM ET  → 22:30 UTC  (EDT) — after school/work
+    # Slot 7:  9:22 PM ET = 21:22 UTC
     - cron: '22 21 * * *'
-    # Slot 7:  7:00 PM ET  → 23:00 UTC  (EDT) — prime time
-    - cron: 24 23 * * *'
-    # Slot 8:  9:30 PM ET  → 01:30 UTC next day (EDT) — late night
+    # Slot 8: 11:24 PM ET = 23:24 UTC
+    - cron: '24 23 * * *'
+    # Slot 9:  1:21 AM ET = 01:21 UTC
     - cron: '21 1 * * *'
-     Slot 8:  9:30 PM ET  → 01:30 UTC next day (EDT) — late night
+    # Slot 10: 3:25 AM ET = 03:25 UTC
     - cron: '25 3 * * *'
 
-  workflow_dispatch:   # keep manual trigger for testing
+  workflow_dispatch:
 
 jobs:
   facebook-publish:
@@ -53,4 +47,4 @@ jobs:
           SUPABASE_SERVICE_KEY:   ${{ secrets.SUPABASE_SERVICE_KEY }}
           FB_PAGE_ID:             ${{ secrets.FB_PAGE_ID }}
           FB_PAGE_ACCESS_TOKEN:   ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
-        run: node worker13.js
+        run: node facebook-auto-publish-worker13.js
