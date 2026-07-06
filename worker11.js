@@ -108,7 +108,7 @@ From World Cup drama to NBA finals, F1 pit stops to Wimbledon classics — USA T
 
 Answer today's challenge, drop your score in the comments, and challenge your friends!
 
-💡 Play the full interactive sports challenge and earn ONS tokens at jaasblog.online/quiz/sports`,
+💡 Play the full interactive sports challenge and earn ONS tokens at https://jaasblog.online/quiz?niche=sport`,
 
   finance: `💰 Your financial IQ is being tested — right now.
 
@@ -116,7 +116,7 @@ Markets crash, crypto spikes, companies rise and fall — do you understand what
 
 USA Trending Challenge makes finance fun, fast, and competitive. One question. Ten seconds. How smart is your money brain?
 
-💡 Play the full finance challenge and earn ONS tokens at jaasblog.online/quiz/finance`,
+💡 Play the full finance challenge and earn ONS tokens at https://jaasblog.online/quiz?niche=finance`,
 
   tech: `💻 The tech world moves fast — can you keep up?
 
@@ -124,7 +124,7 @@ AI breakthroughs, startup collapses, gadget launches, coding legends — if it's
 
 USA Trending Challenge keeps your tech knowledge razor-sharp with daily bite-sized challenges built from real headlines.
 
-💡 Play the full tech challenge and earn ONS tokens at jaasblog.online/quiz/tech`,
+💡 Play the full tech challenge and earn ONS tokens at https://jaasblog.online/quiz?niche=tech`,
 
   entertainment: `🎬 Pop culture. Movies. Music. TV. All trending. All quizzed.
 
@@ -132,7 +132,7 @@ Think you know your Oscars from your Grammys? Your Marvel from your DC? Your Bil
 
 USA Trending Challenge puts your entertainment knowledge on trial — daily, fast, and totally addictive.
 
-💡 Play the full entertainment challenge and earn ONS tokens at jaasblog.online/quiz/entertainment`,
+💡 Play the full entertainment challenge and earn ONS tokens at https://jaasblog.online/quiz?niche=entertainment`,
 
   news: `📰 The world is moving fast. Are you keeping up?
 
@@ -140,7 +140,7 @@ From geopolitics to viral moments, election results to breaking headlines — US
 
 Stay informed, stay sharp, and beat everyone else in the comments.
 
-💡 Play the full news challenge and earn ONS tokens at jaasblog.online/quiz/news`,
+💡 Play the full news challenge and earn ONS tokens at https://jaasblog.online/quiz?niche=news`,
 
   health: `🏥 How much do you really know about health and wellness?
 
@@ -148,7 +148,7 @@ From medical breakthroughs to nutrition myths, mental health to fitness trends �
 
 One question. Ten seconds. Could save your life — or at least win an argument.
 
-💡 Play the full health challenge and earn ONS tokens at jaasblog.online/quiz/health`,
+💡 Play the full health challenge and earn ONS tokens at https://jaasblog.online/quiz?niche=health`,
 
 };
 
@@ -260,7 +260,7 @@ function buildMetadata(quiz) {
   //
   const description = [
     // ── ABOVE THE FOLD ──
-    `🎯 Play the REAL CHALLENGE: jaasblog.online/quiz/${niche} and earn real ONS tokens!`,
+    `🎯 Play the REAL CHALLENGE: https://jaasblog.online/quiz?niche=${niche} and earn real ONS tokens!`,
     trendingSentence,                                          // ← top 3 keywords, line 2
     `🇺🇸 Trending right now in the United States of America`,
     ``,
