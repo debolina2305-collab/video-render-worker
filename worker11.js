@@ -108,7 +108,7 @@ From World Cup drama to NBA finals, F1 pit stops to Wimbledon classics — USA T
 
 Answer today's challenge, drop your score in the comments, and challenge your friends!
 
-💡 Play the full interactive sports challenge and earn ONS tokens at https://jaasblog.online/quiz?niche=sport`,
+💡 Play the full interactive sports challenge and earn ONS tokens at jaasblog.online/quiz/sports`,
 
   finance: `💰 Your financial IQ is being tested — right now.
 
@@ -116,7 +116,7 @@ Markets crash, crypto spikes, companies rise and fall — do you understand what
 
 USA Trending Challenge makes finance fun, fast, and competitive. One question. Ten seconds. How smart is your money brain?
 
-💡 Play the full finance challenge and earn ONS tokens at https://jaasblog.online/quiz?niche=finance`,
+💡 Play the full finance challenge and earn ONS tokens at jaasblog.online/quiz/finance`,
 
   tech: `💻 The tech world moves fast — can you keep up?
 
@@ -124,7 +124,7 @@ AI breakthroughs, startup collapses, gadget launches, coding legends — if it's
 
 USA Trending Challenge keeps your tech knowledge razor-sharp with daily bite-sized challenges built from real headlines.
 
-💡 Play the full tech challenge and earn ONS tokens at https://jaasblog.online/quiz?niche=tech`,
+💡 Play the full tech challenge and earn ONS tokens at jaasblog.online/quiz/tech`,
 
   entertainment: `🎬 Pop culture. Movies. Music. TV. All trending. All quizzed.
 
@@ -132,7 +132,7 @@ Think you know your Oscars from your Grammys? Your Marvel from your DC? Your Bil
 
 USA Trending Challenge puts your entertainment knowledge on trial — daily, fast, and totally addictive.
 
-💡 Play the full entertainment challenge and earn ONS tokens at https://jaasblog.online/quiz?niche=entertainment`,
+💡 Play the full entertainment challenge and earn ONS tokens at jaasblog.online/quiz/entertainment`,
 
   news: `📰 The world is moving fast. Are you keeping up?
 
@@ -140,7 +140,7 @@ From geopolitics to viral moments, election results to breaking headlines — US
 
 Stay informed, stay sharp, and beat everyone else in the comments.
 
-💡 Play the full news challenge and earn ONS tokens at https://jaasblog.online/quiz?niche=news`,
+💡 Play the full news challenge and earn ONS tokens at jaasblog.online/quiz/news`,
 
   health: `🏥 How much do you really know about health and wellness?
 
@@ -148,7 +148,7 @@ From medical breakthroughs to nutrition myths, mental health to fitness trends �
 
 One question. Ten seconds. Could save your life — or at least win an argument.
 
-💡 Play the full health challenge and earn ONS tokens at https://jaasblog.online/quiz?niche=health`,
+💡 Play the full health challenge and earn ONS tokens at jaasblog.online/quiz/health`,
 
 };
 
@@ -209,16 +209,16 @@ function buildMetadata(quiz) {
   title = title.slice(0, 100);
 
   // ── Trending keyword lines for description ─────────────────────────────────
-  // Top 3 keywords as a natural sentence — indexed heavily by YouTube + Google.
-  // Keep it readable, not hashtag soup.
-  const top3Kw = kwRaw.slice(0, 3);
-  const trendingSentence = top3Kw.length
-    ? `🔍 Trending now: ${top3Kw.join(' • ')}`
+  // ALL keywords as a natural bullet line — appears on line 2 of description
+  // so YouTube + Google index them at maximum weight (first ~150 chars).
+  // No reason to limit to 3 — more keywords = more search surface area.
+  const trendingSentence = kwRaw.length
+    ? `🔍 Trending now: ${kwRaw.join(' • ')}`
     : '';
 
-  // Full trending line (all keywords) — appears below the fold for context signal
+  // Full trending line also kept below fold — belt-and-suspenders for context signal
   const rawTrendingLine = kwRaw.length
-    ? `🔥 TRENDING: ${kwRaw.slice(0, 20).join(', ')}`
+    ? `🔥 TRENDING: ${kwRaw.join(', ')}`
     : '';
 
   // ── Hashtags ───────────────────────────────────────────────────────────────
@@ -260,7 +260,7 @@ function buildMetadata(quiz) {
   //
   const description = [
     // ── ABOVE THE FOLD ──
-    `🎯 Play the REAL CHALLENGE: https://jaasblog.online/quiz?niche=${niche} and earn real ONS tokens!`,
+    `🎯 Play the REAL CHALLENGE: jaasblog.online/quiz/${niche} and earn real ONS tokens!`,
     trendingSentence,                                          // ← top 3 keywords, line 2
     `🇺🇸 Trending right now in the United States of America`,
     ``,
@@ -343,7 +343,7 @@ function buildMetadata(quiz) {
   console.log(`[META] title="${title}"`);
   console.log(`[META] description length=${description.length}`);
   console.log(`[META] tags (${finalTags.length}): ${JSON.stringify(finalTags)}`);
-  console.log(`[META] top3 trending in desc: ${top3Kw.join(' | ')}`);
+  console.log(`[META] trending keywords in desc: ${kwRaw.slice(0,5).join(' | ')}${kwRaw.length > 5 ? ` ... +${kwRaw.length-5} more` : ''}`);
 
   return { title, description, tags: finalTags, categoryId };
 }
@@ -471,9 +471,11 @@ async function processPublish() {
 
   console.log('[PUBLISHER] Checking for approved videos to publish...');
 
+  // order=created_at.desc → newest/most-trending quiz publishes first.
+  // Trending topics have a short shelf life — always publish the latest one.
   const rows = await fetchSupabase(
     'quiz?video_status=eq.rendered&is_human_approved=eq.true&is_active=eq.true' +
-    '&select=*&order=created_at.asc&limit=1'
+    '&select=*&order=created_at.desc&limit=1'
   );
 
   if (!rows?.length) {
