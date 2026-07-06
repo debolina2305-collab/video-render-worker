@@ -186,7 +186,7 @@ Return a JSON object with EXACTLY these fields (all HTML values use proper HTML 
   "table_caption": "Key Statistics: ${topic}",
   "table_html": "<table><thead><tr><th>Fact</th><th>Detail</th></tr></thead><tbody><tr><td>...</td><td>...</td></tr><!-- 5-6 rows of real data from the research --></tbody></table>",
   "faq_html": "<div class='quiz-faq'><h3>Test Your Knowledge: ${topic}</h3>IMPORTANT: Output EXACTLY ${targetFaqCount} faq-item divs total — ${realQuizCount} quiz-recap item(s) first, then ${extraFaqNeeded} general-knowledge item(s). EVERY item's question text MUST start with 'Q<N>: ' where N runs 1 through ${targetFaqCount} with no gaps and no repeats — this applies to top-up items too, not just quiz-recap ones. Format like this:\n<div class='faq-item'><p class='faq-question'><strong>Q1: [exact question text from QUESTION_1]</strong><br>Options: A) [opt] | B) [opt] | C) [opt] | D) [opt]</p><p class='faq-answer'>✅ <strong>Answer:</strong> [correct answer]. [explanation text]</p></div><!-- one such div per real quiz question, Q1..Q${realQuizCount} --><div class='faq-item'><p class='faq-question'><strong>Q${realQuizCount + 1}: [General FAQ question about the topic]</strong></p><p class='faq-answer'>[Factual answer from research]</p></div><!-- one such div per top-up FAQ, continuing the numbering through Q${targetFaqCount}, no options line --></div>",
-  "conclusion_html": "<p>100-word conclusion summarising key points and encouraging the reader to play the interactive quiz.</p><p>🎯 <a href='https://jaasblog.online/quiz/${niche}'>Play the full ${niche} challenge on JaasX →</a></p>",
+  "conclusion_html": "<p>100-word conclusion summarising key points and encouraging the reader to play the interactive quiz. Do NOT include any links or anchor tags in the conclusion — a challenge link will be appended automatically.</p>",
   "chart_data": null
 }
 
@@ -344,6 +344,21 @@ async function run() {
       ].reduce((sum, h) => sum + countWords(h), 0);
 
       const blogSlug = makeSlug(primaryQuiz.topic, primaryQuiz.quiz_no);
+      const blogNiche = primaryQuiz.niche || 'general';
+      const blogCountry = (primaryQuiz.country_code || 'US').toLowerCase();
+
+      // Fix 3: Inject correct CTA link into conclusion_html.
+      // The LLM writes the conclusion paragraph text without a link.
+      // Here — where blogSlug, niche, country are in scope — we append
+      // the exact challenge URL so the reader lands on the quiz, not the niche listing.
+      const challengeUrl = `https://jaasblog.online/quiz/${blogNiche}/${blogCountry}/${blogSlug}`;
+      let conclusionHtml = blog.conclusion_html || null;
+      if (conclusionHtml) {
+        // Strip any stray LLM-generated links in conclusion (safety net)
+        conclusionHtml = conclusionHtml.replace(/<a [^>]*href=['"][^'"]*jaasblog[^'"]*['"][^>]*>.*?<\/a>/gi, '').trim();
+        // Append the correct CTA link
+        conclusionHtml += `\n<p class="quiz-blog-cta-line">🎯 <a href="${challengeUrl}" class="quiz-blog-cta-link">▶ Play this challenge now on JaasX →</a></p>`;
+      }
 
       // Build the row to insert
       const blogRow = {
@@ -380,7 +395,7 @@ async function run() {
         table_html:           blog.table_html           || null,
         table_caption:        blog.table_caption        || null,
         faq_html:             blog.faq_html             || null,
-        conclusion_html:      blog.conclusion_html      || null,
+        conclusion_html:      conclusionHtml,
         // chart_data: raw JSONB object (bar or donut) or null — renderer handles null gracefully
         chart_data:           (blog.chart_data && typeof blog.chart_data === 'object' &&
                                blog.chart_data.type && Array.isArray(blog.chart_data.data) &&
