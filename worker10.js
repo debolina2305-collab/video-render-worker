@@ -839,6 +839,15 @@ async function buildImageCard(quiz, mode, bgImageDataUri, logoDataUri, workDir, 
     ? `<div class="watermark">jaasblog.online</div>`
     : '';
 
+  // Play button — 9:16 thumbnail only (signals video/quiz content to viewers)
+  const playBtnHtml = is916 ? `<div class="play-btn"></div>` : '';
+
+  // Attribution — very subtle credit line, reduces copyright risk for news photos
+  // Position: bottom-right corner, above the hook stripe area
+  const attributionHtml = bgImageDataUri
+    ? `<div class="attribution">Image: via news sources</div>`
+    : '';
+
   // Build CSS variable substitutions
   const vars = {
     '{{WIDTH}}':         WIDTH,
@@ -881,6 +890,17 @@ async function buildImageCard(quiz, mode, bgImageDataUri, logoDataUri, workDir, 
     '{{BG_LAYER}}':      bgLayer,
     '{{SIDE_ACCENT}}':   sideAccent,
     '{{WATERMARK}}':     watermark,
+    '{{PLAY_BTN}}':      playBtnHtml,
+    '{{ATTRIBUTION}}':   attributionHtml,
+    // play button sizing
+    '{{PLAY_W}}':        Math.round(120 * S),
+    '{{PLAY_ARROW_T}}':  Math.round(28 * S),
+    '{{PLAY_ARROW_L}}':  Math.round(48 * S),
+    '{{PLAY_ARROW_OFFSET}}': Math.round(6 * S),
+    // attribution sizing
+    '{{ATTR_BOTTOM}}':   Math.round(10 * S),
+    '{{ATTR_RIGHT}}':    Math.round(12 * S),
+    '{{ATTR_FONT}}':     Math.round(16 * S),
     '{{NICHE_ICON}}':    nicheIcon,
     '{{NICHE_LABEL}}':   nicheLabel,
     '{{LOGO_DATA_URI}}': logoDataUri,
