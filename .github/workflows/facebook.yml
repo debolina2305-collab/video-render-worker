@@ -1,34 +1,18 @@
 name: Facebook Publisher
 
 on:
-  schedule:
-    # Slot 1:  8:30 AM ET = 11:20 UTC
-    - cron: '20 11 * * *'
-    # Slot 2: 12:21 PM ET = 12:21 UTC
-    - cron: '21 12 * * *'
-    # Slot 3:  2:23 PM ET = 14:23 UTC
-    - cron: '23 14 * * *'
-    # Slot 4:  4:22 PM ET = 16:22 UTC
-    - cron: '22 16 * * *'
-    # Slot 5:  5:21 PM ET = 17:21 UTC
-    - cron: '21 17 * * *'
-    # Slot 6:  7:20 PM ET = 19:20 UTC
-    - cron: '20 19 * * *'
-    # Slot 7:  9:22 PM ET = 21:22 UTC
-    - cron: '22 21 * * *'
-    # Slot 8: 11:24 PM ET = 23:24 UTC
-    - cron: '24 23 * * *'
-    # Slot 9:  1:21 AM ET = 01:21 UTC
-    - cron: '21 1 * * *'
-    # Slot 10: 3:25 AM ET = 03:25 UTC
-    - cron: '25 3 * * *'
+  # ── Event-driven trigger from render.yml ──────────────────────────────
+  repository_dispatch:
+    types: [trigger-facebook]
 
+  # ── Manual trigger for testing ────────────────────────────────────────
   workflow_dispatch:
 
 jobs:
   facebook-publish:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -41,10 +25,10 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run Facebook publisher
+      - name: Run Facebook publisher (Worker 13)
         env:
           SUPABASE_URL:           ${{ vars.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY:   ${{ secrets.SUPABASE_SERVICE_KEY }}
           FB_PAGE_ID:             ${{ secrets.FB_PAGE_ID }}
           FB_PAGE_ACCESS_TOKEN:   ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
-        run: node worker13.js
+        run: node facebook-auto-publish-worker13.js
