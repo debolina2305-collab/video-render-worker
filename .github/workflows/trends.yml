@@ -2,26 +2,30 @@ name: Fetch Trending Topics
 
 on:
   schedule:
-    # ── 10 fetch slots per day, each 25 min before the matching publish.yml
-    # slot (5 min before Worker 8 generates, 20 min before Worker 10 renders).
-    # Chain: trends(-25) → worker8(-20) → render.yml(-15) → publish.yml(0)
-    # Same EDT/EST caveat: set for EDT (summer). ADD 1 HOUR in November.
+    # ── 10 fetch slots per day ─────────────────────────────────────────────
+    # trends.yml is the ONLY cron in the pipeline now.
+    # All downstream workers (render, publish, blog, facebook) are triggered
+    # automatically via repository_dispatch events when each step succeeds.
+    # Chain: trends → [Worker 8 via HTTP] → render → publish + blog + facebook
+    #
+    # Times are US Eastern (EDT = UTC-4, summer 2026).
+    # In November when clocks fall back to EST, ADD 1 HOUR to every cron.
 
-    - cron: '55 10 * * *'   # → publish slot 1  (7:05 AM ET)
-    - cron: '52 11 * * *'   # → publish slot 2  (8:17 AM ET)
-    - cron: '54 13 * * *'   # → publish slot 3  (10:43 AM ET)
-    - cron: '56 15 * * *'   # → publish slot 4  (12:11 PM ET)
-    - cron: '50 16 * * *'   # → publish slot 5  (1:38 PM ET)
-    - cron: '57 18 * * *'   # → publish slot 6  (3:22 PM ET)
-    - cron: '55 20 * * *'   # → publish slot 7  (5:07 PM ET)
-    - cron: '56 22 * * *'   # → publish slot 8  (7:33 PM ET)
-    - cron: '53 0 * * *'    # → publish slot 9  (9:11 PM ET)
-    - cron: '52 2 * * *'    # → publish slot 10 (10:47 PM ET)
+    - cron: '0 11 * * *'    # 7:00 AM ET
+    - cron: '0 13 * * *'    # 9:00 AM ET
+    - cron: '0 15 * * *'    # 11:00 AM ET
+    - cron: '0 17 * * *'    # 1:00 PM ET
+    - cron: '0 19 * * *'    # 3:00 PM ET
+    - cron: '0 21 * * *'    # 5:00 PM ET
+    - cron: '0 23 * * *'    # 7:00 PM ET
+    - cron: '0 1 * * *'     # 9:00 PM ET
+    - cron: '0 3 * * *'     # 11:00 PM ET
+    - cron: '0 5 * * *'     # 1:00 AM ET
 
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Mode: trends (only option now — RSS/fallback removed)'
+        description: 'Mode'
         required: true
         default: 'trends'
         type: choice
@@ -29,7 +33,7 @@ on:
 
 jobs:
   fetch:
-    name: Trendspyg (Google Trends only — RSS/fallback removed)
+    name: Fetch Trending Topics
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -40,13 +44,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Chrome (for trendspyg CSV path)
+      - name: Install Chrome
         uses: browser-actions/setup-chrome@v1
 
       - name: Install dependencies
         run: pip install trendspyg requests tavily-python
 
-      - name: Run
+      - name: Run fetch_trends.py
         env:
           SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -57,3 +61,46 @@ jobs:
           R2_BUCKET:            ${{ secrets.R2_BUCKET }}
           R2_PUBLIC_URL:        ${{ secrets.R2_PUBLIC_URL }}
         run: python fetch_trends.py --mode trends
+
+      # ── Step 2: Trigger Worker 8 (Cloudflare) via HTTP ──────────────────
+      # Worker 8 runs on Cloudflare Workers with its own cron, but we also
+      # trigger it immediately after trends are fetched so the quiz is
+      # generated right away without waiting for the next Cloudflare cron tick.
+      # Worker 8 picks up the newest quiz_queue row automatically.
+      - name: Trigger Worker 8 (Quiz Generator on Cloudflare)
+        run: |
+          echo "Triggering Worker 8 to generate quiz from new trending topic..."
+          HTTP_STATUS=$(curl -s -o /tmp/w8_response.txt -w "%{http_code}" \
+            -X POST \
+            "${{ secrets.WORKER8_URL }}/generate-quiz" \
+            -H "Content-Type: application/json" \
+            --max-time 60)
+          echo "Worker 8 HTTP status: $HTTP_STATUS"
+          cat /tmp/w8_response.txt || true
+          # Non-200 is a warning not a failure — Worker 8 also runs on its own cron
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "WARNING: Worker 8 returned $HTTP_STATUS — it will retry on its own cron schedule"
+          fi
+
+      # ── Step 3: Wait briefly then trigger render pipeline ───────────────
+      # Give Worker 8 ~30s to finish inserting quiz rows into Supabase,
+      # then fire the render workflow via repository_dispatch.
+      # render.yml picks up the newest pending quiz row automatically.
+      - name: Wait for Worker 8 to complete
+        run: sleep 45
+
+      - name: Trigger Render Pipeline (Worker 10)
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PIPELINE_TOKEN }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              event_type: 'trigger-render',
+              client_payload: {
+                source: 'trends',
+                triggered_at: new Date().toISOString()
+              }
+            });
+            console.log('Render pipeline triggered via repository_dispatch');
