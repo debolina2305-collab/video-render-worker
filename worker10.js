@@ -636,52 +636,138 @@ async function uploadHeroImageToR2(localPngPath, quizId) {
 }
 
 // ─────────────────────────────────────────────
-// TAVILY IMAGE FETCH
-// Downloads the first usable Tavily image for a quiz.
-// The quiz_queue payload stores tavily_images as [{url, description}].
-// We join quiz_queue via quiz.id → quiz_queue.quiz_id relation isn't direct,
-// so we query quiz_queue by trnding_topic match instead.
-// Returns: { dataUri, mimeType, rawUrl } or null if unavailable.
+// IMAGE DIMENSION READER
+// Reads width/height from raw image bytes without any external library.
+// Supports JPEG, PNG, WebP — the three formats Tavily returns.
+// Returns { width, height } or null if format unrecognised.
 // ─────────────────────────────────────────────
-async function fetchTavilyImageForQuiz(quiz) {
+function readImageDimensions(buf) {
   try {
-    // Fetch the matching quiz_queue row to get payload.tavily_images
-    const queueRows = await fetchSupabase(
-      `quiz_queue?trnding_topic=ilike.${encodeURIComponent(quiz.topic)}&select=payload&limit=1`
-    ).catch(() => null);
-    const tavilyImages = queueRows?.[0]?.payload?.tavily_images || [];
-    if (!tavilyImages.length) {
-      console.log('[TAVILY-IMG] No Tavily images found in quiz_queue payload');
+    const b = Buffer.from(buf);
+    // PNG: bytes 0-3 = signature, IHDR at offset 8
+    if (b[0]===0x89&&b[1]===0x50&&b[2]===0x4E&&b[3]===0x47) {
+      return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+    }
+    // JPEG: scan for SOF markers
+    if (b[0]===0xFF&&b[1]===0xD8) {
+      let i=2;
+      while (i<b.length-8) {
+        if (b[i]!==0xFF){i++;continue;}
+        const m=b[i+1];
+        if (m===0xC0||m===0xC1||m===0xC2||m===0xC3||m===0xC5||m===0xC6||m===0xC7)
+          return { width: b.readUInt16BE(i+7), height: b.readUInt16BE(i+5) };
+        const segLen=b.readUInt16BE(i+2); i+=2+segLen;
+      }
       return null;
     }
-    // Try each image URL until one downloads successfully
-    for (const img of tavilyImages.slice(0, 4)) {
-      const rawUrl = typeof img === 'string' ? img : img?.url;
-      if (!rawUrl) continue;
-      try {
-        const res = await withTimeout(
-          fetch(rawUrl, { headers: { 'User-Agent': 'Mozilla/5.0 AutoQuiz/1.0' } }),
-          10000, 'Tavily image fetch'
-        );
-        if (!res.ok) continue;
-        const buf    = await res.arrayBuffer();
-        const mime   = (res.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
-        const b64    = Buffer.from(buf).toString('base64');
-        const dataUri = `data:${mime};base64,${b64}`;
-        console.log(`[TAVILY-IMG] Downloaded (${(buf.byteLength/1024).toFixed(0)}KB): ${rawUrl.slice(0,80)}`);
-        return { dataUri, mimeType: mime, rawUrl };
-      } catch (e) {
-        console.log(`[TAVILY-IMG] Failed for ${rawUrl.slice(0,60)}: ${e.message}`);
-      }
+    // WebP: RIFF header
+    if (b[0]===0x52&&b[1]===0x49&&b[2]===0x46&&b[3]===0x46&&
+        b[8]===0x57&&b[9]===0x45&&b[10]===0x42&&b[11]===0x50) {
+      const ct=b.slice(12,16).toString('ascii');
+      if (ct==='VP8 ') return { width:(b.readUInt16LE(26)&0x3FFF)+1, height:(b.readUInt16LE(28)&0x3FFF)+1 };
+      if (ct==='VP8L') { const bits=b.readUInt32LE(21); return { width:(bits&0x3FFF)+1, height:((bits>>14)&0x3FFF)+1 }; }
+      if (ct==='VP8X') return { width:b.readUIntLE(24,3)+1, height:b.readUIntLE(27,3)+1 };
     }
-    console.log('[TAVILY-IMG] All Tavily image URLs failed');
     return null;
-  } catch (e) {
-    console.warn(`[TAVILY-IMG] Fetch error (non-fatal): ${e.message}`);
-    return null;
-  }
+  } catch(e){ return null; }
 }
 
+// ─────────────────────────────────────────────
+// ASPECT RATIO CLASSIFIER
+// vertical : ratio < 0.85  → best for 9:16 thumbnail
+// wide     : ratio > 1.25  → best for 16:9 hero image
+// square   : 0.85–1.25     → best for inline blog image
+// ─────────────────────────────────────────────
+function classifyAspect(width, height) {
+  if (!width||!height) return 'unknown';
+  const r = width/height;
+  if (r < 0.85) return 'vertical';
+  if (r > 1.25) return 'wide';
+  return 'square';
+}
+
+// ─────────────────────────────────────────────
+// TAVILY IMAGE FETCH — dimension-aware
+// Downloads ALL available Tavily images (up to 5), reads their dimensions,
+// classifies each as vertical/wide/square, then returns the best match:
+//   thumbnail → vertical  (portrait  — 9:16)
+//   hero      → wide      (landscape — 16:9)
+//   inline    → square    (1:1 — blog body)
+// Falls back to first usable image for any unmatched slot.
+// Returns { thumbnail, hero, inline } — each slot is
+//   { dataUri, mimeType, rawUrl, width, height, aspect } or null
+// ─────────────────────────────────────────────
+async function fetchTavilyImagesForQuiz(quiz) {
+  const result = { thumbnail: null, hero: null, inline: null };
+  try {
+    const queueRows = await fetchSupabase(
+      `quiz_queue?trnding_topic=ilike.${encodeURIComponent(quiz.topic)}&select=payload&limit=1`
+    ).catch(()=>null);
+    const tavilyImages = queueRows?.[0]?.payload?.tavily_images || [];
+    if (!tavilyImages.length) {
+      console.log('[TAVILY-IMG] No Tavily images in quiz_queue payload');
+      return result;
+    }
+    console.log(`[TAVILY-IMG] Downloading ${Math.min(tavilyImages.length,5)} images to detect dimensions...`);
+
+    // Download all in parallel
+    const downloaded = await Promise.all(
+      tavilyImages.slice(0,5).map(async (img,idx) => {
+        const rawUrl = typeof img==='string' ? img : img?.url;
+        if (!rawUrl) return null;
+        try {
+          const res = await withTimeout(
+            fetch(rawUrl,{headers:{'User-Agent':'Mozilla/5.0 AutoQuiz/1.0'}}),
+            10000, `Tavily img[${idx}]`
+          );
+          if (!res.ok) return null;
+          const buf    = await res.arrayBuffer();
+          const mime   = (res.headers.get('content-type')||'image/jpeg').split(';')[0].trim();
+          const dims   = readImageDimensions(buf);
+          const aspect = dims ? classifyAspect(dims.width,dims.height) : 'unknown';
+          const b64    = Buffer.from(buf).toString('base64');
+          const dataUri = `data:${mime};base64,${b64}`;
+          console.log(`[TAVILY-IMG] [${idx}] ${aspect.padEnd(8)} ${dims?`${dims.width}x${dims.height}`:`dims?`} ${(buf.byteLength/1024).toFixed(0)}KB — ${rawUrl.slice(0,70)}`);
+          return { dataUri, mimeType:mime, rawUrl, width:dims?.width, height:dims?.height, aspect };
+        } catch(e) {
+          console.log(`[TAVILY-IMG] [${idx}] FAILED: ${e.message.slice(0,60)}`);
+          return null;
+        }
+      })
+    );
+
+    const usable = downloaded.filter(Boolean);
+    if (!usable.length) { console.log('[TAVILY-IMG] All downloads failed'); return result; }
+
+    // Assign best match per slot
+    result.thumbnail = usable.find(i=>i.aspect==='vertical')
+                    || usable.find(i=>i.aspect==='square')
+                    || usable[0];
+    result.hero      = usable.find(i=>i.aspect==='wide')
+                    || usable.find(i=>i.aspect==='square')
+                    || usable[0];
+    result.inline    = usable.find(i=>i.aspect==='square')
+                    || usable.find(i=>i.aspect==='wide')
+                    || usable[0];
+
+    // Avoid identical thumbnail + hero if alternatives exist
+    if (result.thumbnail===result.hero && usable.length>1) {
+      const alt = usable.find(i=>i!==result.thumbnail);
+      if (alt) result.hero = alt;
+    }
+    // Avoid identical hero + inline if alternatives exist
+    if (result.hero===result.inline && usable.length>2) {
+      const alt = usable.find(i=>i!==result.hero && i!==result.thumbnail);
+      if (alt) result.inline = alt;
+    }
+
+    console.log(`[TAVILY-IMG] Assigned: thumbnail=${result.thumbnail?.aspect}(${result.thumbnail?.width}x${result.thumbnail?.height}) hero=${result.hero?.aspect}(${result.hero?.width}x${result.hero?.height}) inline=${result.inline?.aspect}(${result.inline?.width}x${result.inline?.height})`);
+    return result;
+  } catch(e) {
+    console.warn(`[TAVILY-IMG] Fetch error (non-fatal): ${e.message}`);
+    return result;
+  }
+}
 // ─────────────────────────────────────────────
 // NICHE COLOR MAP — for image card accents
 // ─────────────────────────────────────────────
@@ -949,9 +1035,10 @@ async function processJobs() {
       file_size_mb:sizeMb,
       updated_at:new Date().toISOString()
     };
-    if (thumbnailUrl)  patchBody.thumbnail_url  = thumbnailUrl;
-    if (heroImageUrl)  patchBody.hero_image_url = heroImageUrl;
-    if (videoUrl)      patchBody.video_url      = videoUrl;
+    if (thumbnailUrl)        patchBody.thumbnail_url         = thumbnailUrl;
+    if (heroImageUrl)        patchBody.hero_image_url        = heroImageUrl;
+    if (videoUrl)            patchBody.video_url             = videoUrl;
+    if (quiz._inlineImageUrl) patchBody.inline_image_url     = quiz._inlineImageUrl;
     await fetchSupabase(`quiz?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(patchBody)});
 
     await fs.rm(workDir,{recursive:true,force:true});
@@ -1066,16 +1153,18 @@ async function buildVideo(quiz, workDir) {
   const floatIcons  = pickFloatIcons(niche, quiz.topic);
 
   // ── TAVILY IMAGE FETCH ───────────────────────────────────────────────────
-  // Fetch the Tavily news photo for this topic from quiz_queue payload.
-  // Used as background for BOTH the new news-style thumbnail AND the 16:9 hero image.
-  // Falls back gracefully — if no Tavily image available, gradient background is used.
-  console.log('[TAVILY-IMG] Fetching news photo from quiz_queue...');
-  const tavilyImageData = await fetchTavilyImageForQuiz(quiz);
-  const tavilyBgDataUri = tavilyImageData ? tavilyImageData.dataUri : null;
-  if (tavilyBgDataUri) {
-    console.log('[TAVILY-IMG] ✓ News photo ready for image cards');
+  // Fetch ALL Tavily images for this topic, classify by aspect ratio,
+  // then assign best-fit image to each slot: thumbnail/hero/inline.
+  // Falls back to gradient if no images available.
+  console.log('[TAVILY-IMG] Fetching and classifying news photos from quiz_queue...');
+  const tavilyImgs = await fetchTavilyImagesForQuiz(quiz);
+  const thumbImgData  = tavilyImgs.thumbnail;
+  const heroImgData   = tavilyImgs.hero;
+  const inlineImgData = tavilyImgs.inline;
+  if (thumbImgData || heroImgData) {
+    console.log('[TAVILY-IMG] ✓ Images ready for card generation');
   } else {
-    console.log('[TAVILY-IMG] No photo available — using gradient fallback for image cards');
+    console.log('[TAVILY-IMG] No photos available — gradient fallback will be used');
   }
 
   // Wikipedia thumbnail image — downloaded and base64-encoded, then injected
@@ -1202,13 +1291,20 @@ async function buildVideo(quiz, workDir) {
   try {
     console.log('[IMG-CARD] Generating news-style image cards...');
 
-    // Generate 9:16 thumbnail (1080×1920) — for YouTube Shorts, Reels, TikTok
-    const thumb916Path = await buildImageCard(quiz, '9:16', tavilyBgDataUri, logoDataUri, workDir, browser);
+    // Generate 9:16 thumbnail (1080×1920) — vertical photo preferred (portrait fills frame best)
+    const thumb916Path = await buildImageCard(quiz, '9:16', thumbImgData?.dataUri||null, logoDataUri, workDir, browser);
     if (R2_CONFIGURED) thumbnailUrl = await uploadThumbnailToR2(thumb916Path, quiz.id);
 
-    // Generate 16:9 hero image (1280×720) — for blog post hero, YouTube thumbnail
-    const hero169Path = await buildImageCard(quiz, '16:9', tavilyBgDataUri, logoDataUri, workDir, browser);
+    // Generate 16:9 hero image (1280×720) — wide photo preferred (fills landscape frame best)
+    const hero169Path = await buildImageCard(quiz, '16:9', heroImgData?.dataUri||null, logoDataUri, workDir, browser);
     if (R2_CONFIGURED) heroImageUrl = await uploadHeroImageToR2(hero169Path, quiz.id);
+
+    // Save inline image URL to Supabase for Worker 12 to use in blog body
+    // inline uses square photo — fits naturally between paragraphs
+    if (inlineImgData?.rawUrl) {
+      quiz._inlineImageUrl = inlineImgData.rawUrl;
+      console.log(`[IMG-CARD] inline image URL saved: ${inlineImgData.rawUrl.slice(0,80)}`);
+    }
 
     console.log(`[IMG-CARD] ✓ thumbnail=${thumbnailUrl||'not uploaded'} hero=${heroImageUrl||'not uploaded'}`);
   } catch (e) {
