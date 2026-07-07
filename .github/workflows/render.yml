@@ -1,31 +1,23 @@
 name: Video Render Worker
+
 on:
-  schedule:
-    # ── 10 render slots per day, each 15 min before the matching publish.yml
-    # slot, so a freshly rendered video is ready well before YouTube upload.
-    # Same EDT/EST caveat as publish.yml: these are set for EDT (summer).
-    # In November when US clocks fall back to EST, ADD 1 HOUR to every cron.
+  # ── Event-driven trigger from trends.yml ──────────────────────────────
+  repository_dispatch:
+    types: [trigger-render]
 
-    - cron: '05 11 * * *'   # → publish slot 1  (7:05 AM ET)
-    - cron: '05 12 * * *'    # → publish slot 2  (8:17 AM ET)
-    - cron: '05 14 * * *'   # → publish slot 3  (10:43 AM ET)
-    - cron: '5 16 * * *'   # → publish slot 4  (12:11 PM ET)
-    - cron: '05 17 * * *'   # → publish slot 5  (1:38 PM ET)
-    - cron: '5 19 * * *'    # → publish slot 6  (3:22 PM ET)
-    - cron: '05 21 * * *'   # → publish slot 7  (5:07 PM ET)
-    - cron: '05 23 * * *'   # → publish slot 8  (7:33 PM ET)
-    - cron: '5 1 * * *'    # → publish slot 9  (9:11 PM ET)
-    - cron: '5 3 * * *'    # → publish slot 10 (10:47 PM ET)
-
+  # ── Manual trigger for testing ────────────────────────────────────────
   workflow_dispatch:
+
 jobs:
   render:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Install FFmpeg, Python (for TTS) and Chromium runtime deps
+
+      - name: Install FFmpeg, Python and Chromium runtime deps
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg python3 python3-pip \
@@ -34,31 +26,75 @@ jobs:
             libx11-xcb1 libxcomposite1 libxdamage1 libxfixes3 \
             libxkbcommon0 libxrandr2 xdg-utils
           pip3 install --break-system-packages edge-tts
+
       - name: Test edge-tts
         run: |
           edge-tts --voice en-US-JennyNeural --text "Hello, this is a test." --write-media /tmp/test.mp3
           ls -la /tmp/test.mp3
-          file /tmp/test.mp3
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
       - name: Install dependencies
         run: npm install
-      - name: Run video worker
+
+      - name: Run video worker (Worker 10)
         id: render
         env:
-          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          # ── R2 thumbnail upload (uses existing repo secrets) ──
-          R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
-          R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY }}
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+          R2_ACCESS_KEY:        ${{ secrets.R2_ACCESS_KEY }}
+          R2_SECRET_KEY:        ${{ secrets.R2_SECRET_KEY }}
+          R2_ENDPOINT:          ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PUBLIC_URL:        ${{ secrets.R2_PUBLIC_URL }}
         run: node worker10.js
+
       - name: Upload video artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: rendered-video
+          name: rendered-video-${{ github.run_id }}
           path: /tmp/*.mp4
+          retention-days: 3
+
+      # ── On success: trigger YouTube publish + Blog + Facebook in parallel ─
+      # All three downstream workers are fired simultaneously so they run
+      # concurrently instead of sequentially — saves time.
+      - name: Trigger downstream workers (Publish + Blog + Facebook)
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PIPELINE_TOKEN }}
+          script: |
+            const payload = {
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              client_payload: {
+                source: 'render',
+                triggered_at: new Date().toISOString()
+              }
+            };
+
+            // Trigger YouTube publisher (Worker 11)
+            await github.rest.repos.createDispatchEvent({
+              ...payload,
+              event_type: 'trigger-publish'
+            });
+            console.log('YouTube publish triggered');
+
+            // Trigger Blog generator (Worker 12)
+            await github.rest.repos.createDispatchEvent({
+              ...payload,
+              event_type: 'trigger-blog'
+            });
+            console.log('Blog generator triggered');
+
+            // Trigger Facebook publisher (Worker 13)
+            await github.rest.repos.createDispatchEvent({
+              ...payload,
+              event_type: 'trigger-facebook'
+            });
+            console.log('Facebook publisher triggered');
