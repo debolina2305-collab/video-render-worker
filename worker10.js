@@ -919,6 +919,8 @@ async function buildImageCard(quiz, mode, bgImageDataUri, logoDataUri, workDir, 
 // ─────────────────────────────────────────────
 async function processJobs() {
   console.log('[WORKER] Checking...');
+
+  // ── Reset stuck rows (processing for >30 min) ─────────────────────────
   const stuckCutoff = new Date(Date.now()-30*60*1000).toISOString();
   const stuckRows = await fetchSupabase(`quiz?video_status=eq.processing&is_active=eq.true&updated_at=lt.${stuckCutoff}&select=id&limit=5`).catch(()=>null);
   if (stuckRows?.length) {
@@ -926,68 +928,115 @@ async function processJobs() {
     for (const r of stuckRows) await fetchSupabase(`quiz?id=eq.${r.id}`,{method:'PATCH',body:JSON.stringify({video_status:'pending',updated_at:new Date().toISOString()})}).catch(()=>{});
   }
 
-  // ── Topic fairness / round-robin (v2 — fixes monopoly bug) ────────────
-  // PROBLEM (original v1 bug): pulling only the 50 OLDEST pending rows meant
-  // that if one topic had a large backlog (e.g. 5 rows for "germany vs
-  // paraguay") sitting among the oldest rows, and every OTHER topic's rows
-  // had already been consumed in prior runs, the 50-row window could
-  // degrade to containing ONLY that one topic — making "round-robin" a
-  // no-op since there was nothing else in the window to compare against.
-  // Result: that single topic rendered 5 videos in a row while fresh
-  // topics queued up later were invisible to this query entirely.
+  // ── TOPIC-FIRST SELECTION (3-rule logic) ──────────────────────────────
   //
-  // FIX: first fetch the small set of DISTINCT topic_slugs that currently
-  // have at least one pending row (cheap, capped query), independent of
-  // any single topic's row count. Pick the topic with the fewest total
-  // renders system-wide. THEN fetch that topic's oldest pending row.
-  // This guarantees a topic with a 5-row backlog can never crowd out a
-  // brand-new topic that only just got its first row inserted.
-  const distinctTopicRows = await fetchSupabase(
-    'quiz?video_status=eq.pending&is_active=eq.true&quiz_enriched=eq.true' +
-    '&select=topic_slug,topic,created_at&order=created_at.asc&limit=300'
-  );
-  if (!distinctTopicRows?.length) { console.log('[WORKER] No pending quizzes.'); return; }
+  // Worker 8 creates 4 quiz rows per topic (q1, q2, q3, q4) with slugs like
+  // "argentina-vs-brazil-q1", "argentina-vs-brazil-q2" etc.
+  // These share the same raw `topic` string but have different topic_slugs.
+  //
+  // RULE 1: Always pick the NEWEST topic first (most recently enriched).
+  //         Fresh trending topics must be rendered before old ones.
+  //
+  // RULE 2: For each topic, render ONLY ONE video per run (the most recently
+  //         created quiz row for that topic). Skip all other rows for the
+  //         same topic — they will be considered in future runs only if no
+  //         fresher topic exists.
+  //
+  // RULE 3: Only render a second quiz row for the same topic if there are
+  //         NO other fresh topics with zero renders waiting. This prevents
+  //         Worker 10 from exhausting its run time on 4 rows of one topic
+  //         while newer topics pile up unrendered.
+  //
+  // Implementation:
+  //   Step A — fetch all pending rows, group by raw `topic` string.
+  //   Step B — for each unique topic, identify how many rows already have
+  //             a rendered video (video_status != pending/error).
+  //   Step C — sort topics: topics with 0 renders come first (newest first
+  //             within that group), then topics with 1 render, etc.
+  //   Step D — pick the single best row to render now:
+  //             → newest row for the highest-priority topic.
+  //   Step E — mark all OTHER pending rows for the SAME topic as 'skipped'
+  //             so they don't clog the pending queue, but keep them
+  //             recoverable (video_status='skipped' → re-queued next run
+  //             only if no fresh topics exist).
 
-  // Deduplicate to one entry per topic_slug, keeping the earliest created_at seen.
-  const topicFirstSeen = new Map(); // topic_slug -> {topic, created_at}
-  for (const r of distinctTopicRows) {
-    if (!r.topic_slug) continue;
-    if (!topicFirstSeen.has(r.topic_slug)) {
-      topicFirstSeen.set(r.topic_slug, { topic: r.topic, created_at: r.created_at });
+  // Fetch pending rows — newest first so we naturally find the freshest topic
+  const pendingRows = await fetchSupabase(
+    'quiz?video_status=eq.pending&is_active=eq.true&quiz_enriched=eq.true' +
+    '&select=id,topic,topic_slug,created_at&order=created_at.desc&limit=500'
+  );
+  if (!pendingRows?.length) {
+    // No fresh pending — check if any skipped rows can be revived
+    const skippedRows = await fetchSupabase(
+      'quiz?video_status=eq.skipped&is_active=eq.true&quiz_enriched=eq.true' +
+      '&select=id,topic,topic_slug,created_at&order=created_at.desc&limit=100'
+    ).catch(()=>null);
+    if (skippedRows?.length) {
+      // Revive the most recently skipped row — it's the next in line
+      const revive = skippedRows[0];
+      console.log(`[WORKER] No fresh topics — reviving skipped row: "${revive.topic}" (${revive.id})`);
+      await fetchSupabase(`quiz?id=eq.${revive.id}`,{method:'PATCH',body:JSON.stringify({video_status:'pending',updated_at:new Date().toISOString()})});
+      // Re-query so normal flow continues below
+      const revivedRows = await fetchSupabase(`quiz?id=eq.${revive.id}&select=id,topic,topic_slug,created_at`);
+      if (revivedRows?.length) pendingRows.push(revivedRows[0]);
+    }
+    if (!pendingRows?.length) { console.log('[WORKER] No pending quizzes.'); return; }
+  }
+
+  // Group by raw topic string (NOT topic_slug — slugs differ per question)
+  const topicMap = new Map(); // topic -> [rows sorted newest first]
+  for (const r of pendingRows) {
+    const key = (r.topic || '').trim().toLowerCase();
+    if (!key) continue;
+    if (!topicMap.has(key)) topicMap.set(key, []);
+    topicMap.get(key).push(r);
+  }
+  console.log(`[WORKER] ${topicMap.size} distinct topics with pending rows (${pendingRows.length} total pending rows)`);
+
+  // For each topic, count how many rows already have a rendered video
+  const renderCounts = {};
+  for (const [topicKey, rows] of topicMap) {
+    const sample = rows[0]; // use first row's topic string for the query
+    const rendered = await fetchSupabase(
+      `quiz?topic=eq.${encodeURIComponent(sample.topic)}&video_status=eq.rendered&select=id&limit=50`
+    ).catch(()=>null);
+    renderCounts[topicKey] = rendered?.length || 0;
+  }
+
+  // Sort topics: 0 renders first (fresh), then 1, 2, etc.
+  // Within same render count, newest topic wins (rows are already desc by created_at,
+  // so topicMap insertion order = newest topic first — Map preserves insertion order).
+  const sortedTopics = [...topicMap.entries()].sort((a, b) => {
+    const countDiff = (renderCounts[a[0]] ?? 0) - (renderCounts[b[0]] ?? 0);
+    if (countDiff !== 0) return countDiff;
+    // Same render count — prefer newer topic (first row = newest due to desc sort)
+    return new Date(b[1][0].created_at) - new Date(a[1][0].created_at);
+  });
+
+  // Pick the single best row: newest row for the top-priority topic
+  const [chosenTopicKey, chosenRows] = sortedTopics[0];
+  const chosenRow = chosenRows[0]; // newest row for this topic (desc sort)
+  const renderedSoFar = renderCounts[chosenTopicKey] ?? 0;
+
+  console.log(`[WORKER] Selected topic: "${chosenRow.topic}" (${renderedSoFar} already rendered, ${chosenRows.length} pending rows for this topic)`);
+  console.log(`[WORKER] Rendering: ${chosenRow.id} (slug=${chosenRow.topic_slug})`);
+
+  // RULE 2 + 3: Mark all OTHER pending rows for this same topic as 'skipped'
+  // so they don't get picked up in this run or the next fresh-topics run.
+  // They'll be revived (status → pending) only when no fresh topics remain.
+  const otherRows = chosenRows.slice(1); // everything except the chosen row
+  if (otherRows.length > 0) {
+    console.log(`[WORKER] Skipping ${otherRows.length} other pending row(s) for same topic (will revive when no fresh topics remain)`);
+    for (const r of otherRows) {
+      await fetchSupabase(`quiz?id=eq.${r.id}`,{
+        method:'PATCH',
+        body:JSON.stringify({video_status:'skipped', updated_at:new Date().toISOString()})
+      }).catch(()=>{});
     }
   }
-  const distinctSlugs = [...topicFirstSeen.keys()];
-  console.log(`[WORKER] ${distinctSlugs.length} distinct topics have pending rows (out of ${distinctTopicRows.length} pending rows scanned)`);
 
-  // Count how many videos already exist (any non-pending status) per topic_slug.
-  const renderedCounts = {};
-  for (const slug of distinctSlugs) {
-    const rendered = await fetchSupabase(
-      `quiz?topic_slug=eq.${encodeURIComponent(slug)}&video_status=neq.pending&select=id`
-    ).catch(() => []);
-    renderedCounts[slug] = rendered?.length || 0;
-  }
-
-  // Pick the topic with the fewest renders so far. Tie-break: earliest
-  // created_at (topicFirstSeen preserves insertion order from the
-  // already-ASC-sorted query, so Map iteration order is oldest-first).
-  let bestSlug = null, bestCount = Infinity;
-  for (const slug of distinctSlugs) {
-    const c = renderedCounts[slug] ?? 0;
-    if (c < bestCount) { bestCount = c; bestSlug = slug; }
-  }
-  const bestTopic = topicFirstSeen.get(bestSlug);
-  console.log(`[WORKER] Round-robin pick: topic="${bestTopic.topic}" (slug=${bestSlug}) — ${bestCount} already rendered for this topic`);
-
-  // Fetch the OLDEST pending row specifically for the chosen topic.
-  const candidateRows = await fetchSupabase(
-    `quiz?video_status=eq.pending&is_active=eq.true&quiz_enriched=eq.true` +
-    `&topic_slug=eq.${encodeURIComponent(bestSlug)}&select=id&order=created_at.asc&limit=1`
-  );
-  if (!candidateRows?.length) { console.log('[WORKER] Picked topic vanished — will retry next run.'); return; }
-
-  const rows = await fetchSupabase(`quiz?id=eq.${candidateRows[0].id}&select=*`);
-  if (!rows?.length) { console.log('[WORKER] Picked row vanished — will retry next run.'); return; }
+  const rows = await fetchSupabase(`quiz?id=eq.${chosenRow.id}&select=*`);
+  if (!rows?.length) { console.log('[WORKER] Chosen row vanished — will retry next run.'); return; }
 
   const quiz = rows[0];
   console.log(`[WORKER] Processing: ${quiz.id} — ${quiz.topic}`);
