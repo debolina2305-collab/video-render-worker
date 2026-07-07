@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{width:{{WIDTH}}px;height:{{HEIGHT}}px;overflow:hidden;background:#0a0a0a;}
+
+  /* ── BASE CONTAINER ─────────────────────────── */
+  .card{
+    position:relative;
+    width:{{WIDTH}}px;
+    height:{{HEIGHT}}px;
+    overflow:hidden;
+    font-family:'Arial Black','Impact',sans-serif;
+  }
+
+  /* ── BACKGROUND PHOTO ───────────────────────── */
+  .bg-photo{
+    position:absolute;inset:0;
+    background-image:url("{{BG_IMAGE_DATA_URI}}");
+    background-size:cover;
+    background-position:center center;
+    background-repeat:no-repeat;
+  }
+  /* dark vignette overlay — keeps text readable over any photo */
+  .bg-photo::after{
+    content:'';
+    position:absolute;inset:0;
+    background:
+      linear-gradient(to bottom,
+        rgba(0,0,0,0.55) 0%,
+        rgba(0,0,0,0.15) 40%,
+        rgba(0,0,0,0.20) 55%,
+        rgba(0,0,0,0.80) 80%,
+        rgba(0,0,0,0.95) 100%
+      );
+  }
+  /* fallback gradient when no photo */
+  .bg-fallback{
+    position:absolute;inset:0;
+    background:linear-gradient(135deg, {{NICHE_COLOR_DARK}} 0%, #0a0a12 60%, #1a0a2e 100%);
+  }
+
+  /* ── NICHE BADGE (top-left) ──────────────────── */
+  .niche-badge{
+    position:absolute;
+    top:{{BADGE_TOP}}px;
+    left:{{BADGE_LEFT}}px;
+    display:flex;align-items:center;gap:{{BADGE_GAP}}px;
+    background:{{NICHE_COLOR}};
+    color:#fff;
+    padding:{{BADGE_PAD_V}}px {{BADGE_PAD_H}}px;
+    border-radius:{{BADGE_RADIUS}}px;
+    font-size:{{BADGE_FONT}}px;
+    font-weight:900;
+    letter-spacing:0.05em;
+    text-transform:uppercase;
+    box-shadow:0 2px 12px rgba(0,0,0,0.5);
+    z-index:10;
+  }
+  .niche-badge .icon{font-size:{{BADGE_ICON}}px;line-height:1;}
+
+  /* ── JAAS X LOGO (top-right) ────────────────── */
+  .logo-wrap{
+    position:absolute;
+    top:{{LOGO_TOP}}px;
+    right:{{LOGO_RIGHT}}px;
+    z-index:10;
+  }
+  .logo-wrap img{
+    width:{{LOGO_W}}px;
+    height:auto;
+    filter:drop-shadow(0 2px 8px rgba(0,0,0,0.7));
+    opacity:0.92;
+  }
+
+  /* ── BOTTOM TEXT BLOCK ───────────────────────── */
+  .bottom-block{
+    position:absolute;
+    bottom:0;left:0;right:0;
+    padding:{{BLOCK_PAD}}px;
+    z-index:10;
+  }
+
+  /* challenge label */
+  .challenge-label{
+    font-size:{{LABEL_FONT}}px;
+    font-weight:700;
+    color:{{NICHE_COLOR}};
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    margin-bottom:{{LABEL_MB}}px;
+    text-shadow:0 1px 6px rgba(0,0,0,0.8);
+  }
+
+  /* main headline — the youtube_title or topic */
+  .headline{
+    font-size:{{HEADLINE_FONT}}px;
+    font-weight:900;
+    color:#ffffff;
+    line-height:1.12;
+    letter-spacing:-0.01em;
+    text-shadow:
+      0 2px 4px rgba(0,0,0,0.9),
+      0 0 30px rgba(0,0,0,0.6);
+    margin-bottom:{{HEADLINE_MB}}px;
+    /* clamp to 3 lines max */
+    display:-webkit-box;
+    -webkit-line-clamp:3;
+    -webkit-box-orient:vertical;
+    overflow:hidden;
+  }
+
+  /* hook stripe — bright accent bar */
+  .hook-stripe{
+    display:inline-flex;
+    align-items:center;
+    gap:{{STRIPE_GAP}}px;
+    background:{{NICHE_COLOR}};
+    color:#fff;
+    padding:{{STRIPE_PAD_V}}px {{STRIPE_PAD_H}}px;
+    border-radius:{{STRIPE_RADIUS}}px;
+    font-size:{{STRIPE_FONT}}px;
+    font-weight:900;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    box-shadow:0 2px 16px {{NICHE_COLOR}}88;
+  }
+
+  /* ── 9:16 SPECIFIC: side accent line ─────────── */
+  .side-accent{
+    position:absolute;
+    top:0;bottom:0;
+    left:0;
+    width:{{ACCENT_W}}px;
+    background:linear-gradient(to bottom, transparent 0%, {{NICHE_COLOR}} 30%, {{NICHE_COLOR}} 70%, transparent 100%);
+    opacity:0.7;
+    z-index:5;
+  }
+
+  /* ── WATERMARK STRIP (16:9 only) ─────────────── */
+  .watermark{
+    position:absolute;
+    top:{{WM_TOP}}px;
+    right:{{WM_RIGHT}}px;
+    font-size:{{WM_FONT}}px;
+    font-weight:700;
+    color:rgba(255,255,255,0.55);
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    z-index:10;
+    text-shadow:0 1px 4px rgba(0,0,0,0.8);
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <!-- Background: photo if available, gradient fallback -->
+  {{BG_LAYER}}
+
+  <!-- 9:16 side accent line -->
+  {{SIDE_ACCENT}}
+
+  <!-- Niche badge top-left -->
+  <div class="niche-badge">
+    <span class="icon">{{NICHE_ICON}}</span>
+    <span>{{NICHE_LABEL}}</span>
+  </div>
+
+  <!-- JaasX logo top-right -->
+  <div class="logo-wrap">
+    <img src="{{LOGO_DATA_URI}}" alt="JaasX"/>
+  </div>
+
+  <!-- Watermark (16:9 hero only) -->
+  {{WATERMARK}}
+
+  <!-- Bottom text block -->
+  <div class="bottom-block">
+    <div class="challenge-label">{{CHALLENGE_LABEL}}</div>
+    <div class="headline">{{HEADLINE_TEXT}}</div>
+    <div class="hook-stripe">
+      <span>{{HOOK_EMOJI}}</span>
+      <span>{{HOOK_TEXT}}</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>
