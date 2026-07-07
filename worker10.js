@@ -612,6 +612,223 @@ async function uploadThumbnailToR2(localPngPath, quizId) {
 }
 
 // ─────────────────────────────────────────────
+// R2 HERO IMAGE UPLOAD (16:9)
+// ─────────────────────────────────────────────
+async function uploadHeroImageToR2(localPngPath, quizId) {
+  if (!R2_CONFIGURED) { console.log('[R2] Not configured, skipping hero image upload.'); return null; }
+  try {
+    const buf = await fs.readFile(localPngPath);
+    const key = `hero_images/${quizId}.jpg`;
+    await withTimeout(
+      s3Client.send(new PutObjectCommand({
+        Bucket: R2_BUCKET, Key: key, Body: buf,
+        ContentType: 'image/jpeg', CacheControl: 'public, max-age=31536000'
+      })),
+      30_000, 'R2 hero image upload'
+    );
+    const publicUrl = `${R2_PUBLIC_URL.replace(/\/$/,'')}/${key}`;
+    console.log(`[R2] Hero image uploaded: ${publicUrl}`);
+    return publicUrl;
+  } catch (e) {
+    console.warn(`[R2] Hero image upload failed: ${e.message}`);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────
+// TAVILY IMAGE FETCH
+// Downloads the first usable Tavily image for a quiz.
+// The quiz_queue payload stores tavily_images as [{url, description}].
+// We join quiz_queue via quiz.id → quiz_queue.quiz_id relation isn't direct,
+// so we query quiz_queue by trnding_topic match instead.
+// Returns: { dataUri, mimeType, rawUrl } or null if unavailable.
+// ─────────────────────────────────────────────
+async function fetchTavilyImageForQuiz(quiz) {
+  try {
+    // Fetch the matching quiz_queue row to get payload.tavily_images
+    const queueRows = await fetchSupabase(
+      `quiz_queue?trnding_topic=ilike.${encodeURIComponent(quiz.topic)}&select=payload&limit=1`
+    ).catch(() => null);
+    const tavilyImages = queueRows?.[0]?.payload?.tavily_images || [];
+    if (!tavilyImages.length) {
+      console.log('[TAVILY-IMG] No Tavily images found in quiz_queue payload');
+      return null;
+    }
+    // Try each image URL until one downloads successfully
+    for (const img of tavilyImages.slice(0, 4)) {
+      const rawUrl = typeof img === 'string' ? img : img?.url;
+      if (!rawUrl) continue;
+      try {
+        const res = await withTimeout(
+          fetch(rawUrl, { headers: { 'User-Agent': 'Mozilla/5.0 AutoQuiz/1.0' } }),
+          10000, 'Tavily image fetch'
+        );
+        if (!res.ok) continue;
+        const buf    = await res.arrayBuffer();
+        const mime   = (res.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
+        const b64    = Buffer.from(buf).toString('base64');
+        const dataUri = `data:${mime};base64,${b64}`;
+        console.log(`[TAVILY-IMG] Downloaded (${(buf.byteLength/1024).toFixed(0)}KB): ${rawUrl.slice(0,80)}`);
+        return { dataUri, mimeType: mime, rawUrl };
+      } catch (e) {
+        console.log(`[TAVILY-IMG] Failed for ${rawUrl.slice(0,60)}: ${e.message}`);
+      }
+    }
+    console.log('[TAVILY-IMG] All Tavily image URLs failed');
+    return null;
+  } catch (e) {
+    console.warn(`[TAVILY-IMG] Fetch error (non-fatal): ${e.message}`);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────
+// NICHE COLOR MAP — for image card accents
+// ─────────────────────────────────────────────
+const NICHE_COLORS = {
+  sports:        '#f5c842',
+  finance:       '#00d4aa',
+  tech:          '#6c63ff',
+  health:        '#ff6b6b',
+  entertainment: '#ff4fc8',
+  politics:      '#4fc3f7',
+  general:       '#00cfff',
+};
+const NICHE_COLORS_DARK = {
+  sports:        '#7a6000',
+  finance:       '#004d3d',
+  tech:          '#1a1040',
+  health:        '#4d0000',
+  entertainment: '#4d0030',
+  politics:      '#00304d',
+  general:       '#003040',
+};
+const NICHE_HOOKS = {
+  sports:        { emoji: '🏆', text: 'Only 1% Know This!' },
+  finance:       { emoji: '💰', text: 'Can You Beat This?' },
+  tech:          { emoji: '⚡', text: '99% Get This Wrong!' },
+  health:        { emoji: '🧠', text: 'Test Your Knowledge!' },
+  entertainment: { emoji: '🎬', text: 'Most Fans Fail This!' },
+  politics:      { emoji: '🌍', text: 'Do You Know This?' },
+  general:       { emoji: '🔥', text: 'Only Genius Pass!' },
+};
+
+// ─────────────────────────────────────────────
+// BUILD IMAGE CARD via Puppeteer
+// mode: '9:16' (1080×1920 thumbnail) or '16:9' (1280×720 hero)
+// bgImageDataUri: base64 data URI of Tavily photo, or null for gradient fallback
+// Returns local file path of rendered PNG/JPG
+// ─────────────────────────────────────────────
+async function buildImageCard(quiz, mode, bgImageDataUri, logoDataUri, workDir, browser) {
+  const is916  = mode === '9:16';
+  const WIDTH  = is916 ? 1080 : 1280;
+  const HEIGHT = is916 ? 1920 : 720;
+
+  const niche      = (quiz.niche || 'general').toLowerCase();
+  const nicheColor = NICHE_COLORS[niche]     || NICHE_COLORS.general;
+  const nicheDark  = NICHE_COLORS_DARK[niche] || NICHE_COLORS_DARK.general;
+  const nicheIcon  = NICHE_ICON[niche]        || '❓';
+  const nicheLabel = niche.charAt(0).toUpperCase() + niche.slice(1);
+  const hook       = NICHE_HOOKS[niche]       || NICHE_HOOKS.general;
+
+  // Headline: youtube_title preferred (SEO-optimised), fallback to topic
+  const headlineRaw = (quiz.youtube_title || quiz.topic || '').trim();
+  // Clamp to ~80 chars for readability
+  const headline = headlineRaw.length > 80 ? headlineRaw.slice(0, 77) + '...' : headlineRaw;
+
+  const challengeLabel = quiz.niche_challenge_no
+    ? `${nicheLabel} Challenge #${quiz.niche_challenge_no}`
+    : `${nicheLabel} Quiz`;
+
+  // Scale factors so sizes look right at both resolutions
+  const S = is916 ? 1.0 : 0.52;
+
+  // Background layer HTML
+  const bgLayer = bgImageDataUri
+    ? `<div class="bg-photo"></div>`
+    : `<div class="bg-fallback"></div>`;
+
+  const sideAccent  = is916 ? `<div class="side-accent"></div>` : '';
+  const watermark   = !is916
+    ? `<div class="watermark">jaasblog.online</div>`
+    : '';
+
+  // Build CSS variable substitutions
+  const vars = {
+    '{{WIDTH}}':         WIDTH,
+    '{{HEIGHT}}':        HEIGHT,
+    '{{NICHE_COLOR}}':   nicheColor,
+    '{{NICHE_COLOR_DARK}}': nicheDark,
+    // badge
+    '{{BADGE_TOP}}':     Math.round(36 * S),
+    '{{BADGE_LEFT}}':    Math.round(32 * S),
+    '{{BADGE_GAP}}':     Math.round(8 * S),
+    '{{BADGE_PAD_V}}':   Math.round(10 * S),
+    '{{BADGE_PAD_H}}':   Math.round(18 * S),
+    '{{BADGE_RADIUS}}':  Math.round(8 * S),
+    '{{BADGE_FONT}}':    Math.round(28 * S),
+    '{{BADGE_ICON}}':    Math.round(26 * S),
+    // logo
+    '{{LOGO_TOP}}':      Math.round(28 * S),
+    '{{LOGO_RIGHT}}':    Math.round(28 * S),
+    '{{LOGO_W}}':        Math.round(120 * S),
+    // bottom block
+    '{{BLOCK_PAD}}':     Math.round(48 * S),
+    '{{LABEL_FONT}}':    Math.round(26 * S),
+    '{{LABEL_MB}}':      Math.round(12 * S),
+    '{{HEADLINE_FONT}}': Math.round((is916 ? 72 : 56) * S),
+    '{{HEADLINE_MB}}':   Math.round(24 * S),
+    // hook stripe
+    '{{STRIPE_GAP}}':    Math.round(10 * S),
+    '{{STRIPE_PAD_V}}':  Math.round(12 * S),
+    '{{STRIPE_PAD_H}}':  Math.round(24 * S),
+    '{{STRIPE_RADIUS}}': Math.round(8 * S),
+    '{{STRIPE_FONT}}':   Math.round(28 * S),
+    // side accent (9:16 only)
+    '{{ACCENT_W}}':      Math.round(8 * S),
+    // watermark (16:9 only)
+    '{{WM_TOP}}':        Math.round(40 * S),
+    '{{WM_RIGHT}}':      Math.round(180 * S),
+    '{{WM_FONT}}':       Math.round(18 * S),
+    // content
+    '{{BG_IMAGE_DATA_URI}}': bgImageDataUri || '',
+    '{{BG_LAYER}}':      bgLayer,
+    '{{SIDE_ACCENT}}':   sideAccent,
+    '{{WATERMARK}}':     watermark,
+    '{{NICHE_ICON}}':    nicheIcon,
+    '{{NICHE_LABEL}}':   nicheLabel,
+    '{{LOGO_DATA_URI}}': logoDataUri,
+    '{{CHALLENGE_LABEL}}': challengeLabel,
+    '{{HEADLINE_TEXT}}': headline,
+    '{{HOOK_EMOJI}}':    hook.emoji,
+    '{{HOOK_TEXT}}':     hook.text,
+  };
+
+  // Read template and substitute
+  let tmplPath = path.join(__dirname, 'thumbnail_template.html');
+  let html = await fs.readFile(tmplPath, 'utf8');
+  for (const [k, v] of Object.entries(vars)) {
+    html = html.split(k).join(String(v ?? ''));
+  }
+
+  const htmlPath = path.join(workDir, `imgcard_${mode.replace(':','x')}.html`);
+  await fs.writeFile(htmlPath, html);
+
+  // Render with Puppeteer
+  const page = await browser.newPage();
+  await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: 1 });
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0' });
+  await new Promise(r => setTimeout(r, 400)); // let fonts/images settle
+
+  const outPath = path.join(workDir, `imgcard_${mode.replace(':','x')}.png`);
+  await page.screenshot({ path: outPath, type: 'png', clip: { x:0, y:0, width: WIDTH, height: HEIGHT } });
+  await page.close();
+
+  console.log(`[IMG-CARD] Rendered ${mode} card → ${outPath}`);
+  return outPath;
+}
+
+// ─────────────────────────────────────────────
 // JOB PROCESSING
 // ─────────────────────────────────────────────
 async function processJobs() {
@@ -694,7 +911,7 @@ async function processJobs() {
   await ensureDir(workDir);
 
   try {
-    const { videoPath, thumbnailUrl } = await withTimeout(buildVideo(quiz,workDir), TIMEOUT_JOB, `buildVideo ${quiz.id}`);
+    const { videoPath, thumbnailUrl, heroImageUrl } = await withTimeout(buildVideo(quiz,workDir), TIMEOUT_JOB, `buildVideo ${quiz.id}`);
     const stats  = await fs.stat(videoPath);
     const sizeMb = parseFloat((stats.size/(1024*1024)).toFixed(2));
     const dur    = await videoDur(videoPath);
@@ -732,8 +949,9 @@ async function processJobs() {
       file_size_mb:sizeMb,
       updated_at:new Date().toISOString()
     };
-    if (thumbnailUrl) patchBody.thumbnail_url = thumbnailUrl;
-    if (videoUrl)     patchBody.video_url     = videoUrl;
+    if (thumbnailUrl)  patchBody.thumbnail_url  = thumbnailUrl;
+    if (heroImageUrl)  patchBody.hero_image_url = heroImageUrl;
+    if (videoUrl)      patchBody.video_url      = videoUrl;
     await fetchSupabase(`quiz?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(patchBody)});
 
     await fs.rm(workDir,{recursive:true,force:true});
@@ -847,16 +1065,33 @@ async function buildVideo(quiz, workDir) {
   const challengeIdLabel = quiz.quiz_no ? `Challenge ID ${quiz.quiz_no}` : '';
   const floatIcons  = pickFloatIcons(niche, quiz.topic);
 
+  // ── TAVILY IMAGE FETCH ───────────────────────────────────────────────────
+  // Fetch the Tavily news photo for this topic from quiz_queue payload.
+  // Used as background for BOTH the new news-style thumbnail AND the 16:9 hero image.
+  // Falls back gracefully — if no Tavily image available, gradient background is used.
+  console.log('[TAVILY-IMG] Fetching news photo from quiz_queue...');
+  const tavilyImageData = await fetchTavilyImageForQuiz(quiz);
+  const tavilyBgDataUri = tavilyImageData ? tavilyImageData.dataUri : null;
+  if (tavilyBgDataUri) {
+    console.log('[TAVILY-IMG] ✓ News photo ready for image cards');
+  } else {
+    console.log('[TAVILY-IMG] No photo available — using gradient fallback for image cards');
+  }
+
   // Wikipedia thumbnail image — downloaded and base64-encoded, then injected
   // as a <style> block into the HTML. We cannot use file:// URLs for sub-resources
   // from a file:// page in headless Chrome (blocked even with --allow-file-access).
   // We also cannot embed the data URI inline in the HTML body (bloats HTML → Chrome
   // renders as plain text). The safe approach: a dedicated <style> block appended
   // to <head> sets the background via CSS class, keeping the body HTML small.
+  // NOTE: Wikipedia image is still used for the quiz video background (blurred bg).
+  // Tavily image is used for the thumbnail/hero image cards only.
   let thumbBgStyleBlock = '';
-  if (quiz.topic_image_url) {
+  // Prefer Tavily image as video background if available and Wikipedia not found
+  const videoBgImageUrl = quiz.topic_image_url || null;
+  if (videoBgImageUrl) {
     try {
-      const imgRes = await fetch(quiz.topic_image_url, {
+      const imgRes = await fetch(videoBgImageUrl, {
         headers: { 'User-Agent': 'AutoQuiz/1.0 thumbnail renderer' }
       });
       if (imgRes.ok) {
@@ -865,7 +1100,7 @@ async function buildVideo(quiz, workDir) {
         const mime    = imgRes.headers.get('content-type') || 'image/jpeg';
         const dataUri = `data:${mime};base64,${imgB64}`;
         thumbBgStyleBlock = `<style>.thumb-photo-bg-img{background-image:url("${dataUri}") !important;}</style>`;
-        console.log(`[THUMB-IMG] Encoded Wikipedia image (${(imgBuf.byteLength/1024).toFixed(0)}KB): ${quiz.topic_image_url.slice(0,70)}`);
+        console.log(`[THUMB-IMG] Encoded Wikipedia image (${(imgBuf.byteLength/1024).toFixed(0)}KB): ${videoBgImageUrl.slice(0,70)}`);
       } else {
         console.log(`[THUMB-IMG] Fetch failed: HTTP ${imgRes.status}`);
       }
@@ -958,19 +1193,43 @@ async function buildVideo(quiz, workDir) {
     cursor+=clip.dur; clips.push(clip);
   }
 
-  // ══ DEDICATED THUMBNAIL — captured first (static is fine, it's a still image by design) ══
-  await showOnly('.thumb-screen');
-  const thumbVariant = pickThumbVariant(hasMI);
-  await page.evaluate((variant)=>{
-    document.querySelectorAll('.thumb-variant').forEach(el=>el.classList.remove('active'));
-    const el = document.querySelector(`.thumb-variant-${variant}`);
-    if (el) el.classList.add('active');
-  }, thumbVariant);
-  console.log(`[THUMBNAIL] variant=${thumbVariant}`);
-  await new Promise(r=>setTimeout(r,500));
-  const thumbImg = await shot('thumbnail_master');
-  let thumbnailUrl = null;
-  if (R2_CONFIGURED) thumbnailUrl = await uploadThumbnailToR2(thumbImg, quiz.id);
+  // ══ DEDICATED THUMBNAIL (9:16) — news-style image card ══════════════════
+  // Uses Tavily news photo as full background + text overlay + JaasX logo.
+  // Falls back to gradient if no Tavily image available.
+  // Also generates a 16:9 hero image for the blog post.
+  let thumbnailUrl  = null;
+  let heroImageUrl  = null;
+  try {
+    console.log('[IMG-CARD] Generating news-style image cards...');
+
+    // Generate 9:16 thumbnail (1080×1920) — for YouTube Shorts, Reels, TikTok
+    const thumb916Path = await buildImageCard(quiz, '9:16', tavilyBgDataUri, logoDataUri, workDir, browser);
+    if (R2_CONFIGURED) thumbnailUrl = await uploadThumbnailToR2(thumb916Path, quiz.id);
+
+    // Generate 16:9 hero image (1280×720) — for blog post hero, YouTube thumbnail
+    const hero169Path = await buildImageCard(quiz, '16:9', tavilyBgDataUri, logoDataUri, workDir, browser);
+    if (R2_CONFIGURED) heroImageUrl = await uploadHeroImageToR2(hero169Path, quiz.id);
+
+    console.log(`[IMG-CARD] ✓ thumbnail=${thumbnailUrl||'not uploaded'} hero=${heroImageUrl||'not uploaded'}`);
+  } catch (e) {
+    console.warn(`[IMG-CARD] Image card generation failed (non-fatal): ${e.message}`);
+    // Fall back to old quiz_template thumb-screen screenshot
+    try {
+      await showOnly('.thumb-screen');
+      const thumbVariant = pickThumbVariant(hasMI);
+      await page.evaluate((variant)=>{
+        document.querySelectorAll('.thumb-variant').forEach(el=>el.classList.remove('active'));
+        const el = document.querySelector(`.thumb-variant-${variant}`);
+        if (el) el.classList.add('active');
+      }, thumbVariant);
+      await new Promise(r=>setTimeout(r,500));
+      const thumbImg = await shot('thumbnail_master');
+      if (R2_CONFIGURED) thumbnailUrl = await uploadThumbnailToR2(thumbImg, quiz.id);
+      console.log('[IMG-CARD] Fell back to old quiz_template thumbnail');
+    } catch (e2) {
+      console.warn(`[IMG-CARD] Fallback thumbnail also failed: ${e2.message}`);
+    }
+  }
 
   // ══ STEP 1: HOOK — screen-recorded (logoPop + hook-text animations + glow) ══
   await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded'});
@@ -1254,7 +1513,7 @@ async function buildVideo(quiz, workDir) {
     console.error(`[BGMUSIC] applyBgMusic FAILED: ${e.message} — using video without bg music`);
     finalVideoPath = concatenated;
   }
-  return { videoPath: finalVideoPath, thumbnailUrl };
+  return { videoPath: finalVideoPath, thumbnailUrl, heroImageUrl };
 }
 
 processJobs()
