@@ -1,43 +1,18 @@
 name: YouTube Publisher
+
 on:
-  schedule:
-    # ── 10 publish slots per day, targeted at US Eastern Time audience ─────
-    # IMPORTANT: GitHub Actions cron always runs in UTC. US Eastern Time
-    # switches between EDT (UTC-4, March–November) and EST (UTC-5,
-    # November–March) due to Daylight Saving Time. The crons below are set
-    # for EDT (current: summer 2026). When US clocks change back to EST
-    # in November, ADD 1 HOUR to every cron below (e.g. '5 11' → '5 12').
-    #
-    # Each slot uses an irregular minute (not :00/:15/:30/:45) to avoid
-    # looking like automated/bot activity to YouTube's systems.
+  # ── Event-driven trigger from render.yml ──────────────────────────────
+  repository_dispatch:
+    types: [trigger-publish]
 
-    # Slot 1:  7:05 AM ET  → 11:05 UTC  (EDT)
-    - cron: '15 11 * * *'
-    # Slot 2:  8:17 AM ET  → 12:17 UTC  (EDT) — peak morning commute
-    - cron: '17 12 * * *'
-    # Slot 3: 10:43 AM ET  → 14:43 UTC  (EDT) — mid-morning break
-    - cron: '14 14 * * *'
-    # Slot 4: 12:11 PM ET  → 16:11 UTC  (EDT) — lunch peak
-    - cron: '13 16 * * *'
-    # Slot 5:  1:38 PM ET  → 17:38 UTC  (EDT) — post-lunch scroll
-    - cron: '15 17 * * *'
-    # Slot 6:  3:22 PM ET  → 19:22 UTC  (EDT) — school out, afternoon peak
-    - cron: '16 19 * * *'
-    # Slot 7:  5:07 PM ET  → 21:07 UTC  (EDT) — evening commute
-    - cron: '17 21 * * *'
-    # Slot 8:  7:33 PM ET  → 23:33 UTC  (EDT) — prime time starts
-    - cron: '13 23 * * *'
-    # Slot 9:  9:11 PM ET  → 01:11 UTC next day (EDT) — peak prime time
-    - cron: '16 1 * * *'
-    # Slot 10: 10:47 PM ET → 02:47 UTC next day (EDT) — late night scroll
-    - cron: '17 3 * * *'
-
-  workflow_dispatch:   # keep manual trigger for testing
+  # ── Manual trigger for testing ────────────────────────────────────────
+  workflow_dispatch:
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -50,11 +25,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run YouTube publisher
+      - name: Run YouTube publisher (Worker 11)
         env:
-          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          SUPABASE_URL:           ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:   ${{ secrets.SUPABASE_SERVICE_KEY }}
+          YOUTUBE_CLIENT_ID:      ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET:  ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN:  ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
         run: node worker11.js
