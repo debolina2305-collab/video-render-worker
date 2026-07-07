@@ -152,6 +152,50 @@
     z-index:10;
     text-shadow:0 1px 4px rgba(0,0,0,0.8);
   }
+
+  /* ── PLAY BUTTON OVERLAY (9:16 thumbnail only) ── */
+  /* Signals to viewers this is interactive/video content */
+  .play-btn{
+    position:absolute;
+    top:50%;
+    left:50%;
+    transform:translate(-50%, -50%);
+    width:{{PLAY_W}}px;
+    height:{{PLAY_W}}px;
+    background:rgba(0,0,0,0.55);
+    border:3px solid rgba(255,255,255,0.85);
+    border-radius:50%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:8;
+    backdrop-filter:blur(2px);
+  }
+  .play-btn::after{
+    content:'';
+    display:block;
+    width:0;height:0;
+    border-style:solid;
+    border-width:{{PLAY_ARROW_T}}px 0 {{PLAY_ARROW_T}}px {{PLAY_ARROW_L}}px;
+    border-color:transparent transparent transparent rgba(255,255,255,0.95);
+    margin-left:{{PLAY_ARROW_OFFSET}}px;
+  }
+
+  /* ── ATTRIBUTION (bottom-right, very subtle) ─── */
+  /* Reduces copyright risk by crediting the image source.
+     Tiny and unobtrusive — does not distract from the design. */
+  .attribution{
+    position:absolute;
+    bottom:{{ATTR_BOTTOM}}px;
+    right:{{ATTR_RIGHT}}px;
+    font-size:{{ATTR_FONT}}px;
+    font-weight:400;
+    font-family:Arial,sans-serif;
+    color:rgba(255,255,255,0.35);
+    letter-spacing:0.04em;
+    z-index:20;
+    text-shadow:0 1px 3px rgba(0,0,0,0.9);
+  }
 </style>
 </head>
 <body>
@@ -161,6 +205,9 @@
 
   <!-- 9:16 side accent line -->
   {{SIDE_ACCENT}}
+
+  <!-- Play button overlay (9:16 only) -->
+  {{PLAY_BTN}}
 
   <!-- Niche badge top-left -->
   <div class="niche-badge">
@@ -185,6 +232,9 @@
       <span>{{HOOK_TEXT}}</span>
     </div>
   </div>
+
+  <!-- Attribution — very subtle, reduces copyright risk -->
+  {{ATTRIBUTION}}
 </div>
 </body>
 </html>
