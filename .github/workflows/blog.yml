@@ -1,33 +1,12 @@
 name: Quiz Blog Generator
 
 on:
-  schedule:
-    # ── Runs 30 min after each render slot (gives Worker 10 time to finish) ──
-    # Times shown are US Eastern (EDT = UTC-4, summer 2026)
-    # In November when clocks fall back to EST, ADD 1 HOUR to every cron below.
+  # ── Event-driven trigger from render.yml ──────────────────────────────
+  repository_dispatch:
+    types: [trigger-blog]
 
-    # After slot 1 (7:05 AM ET → render at 6:50 ET):
-    - cron: '20 11 * * *'   # 7:20 AM ET
-    # After slot 2 (8:17 AM ET):
-    - cron: '47 12 * * *'   # 8:47 AM ET
-    # After slot 3 (10:43 AM ET):
-    - cron: '13 15 * * *'   # 11:13 AM ET
-    # After slot 4 (12:11 PM ET):
-    - cron: '41 16 * * *'   # 12:41 PM ET
-    # After slot 5 (1:38 PM ET):
-    - cron: '8 18 * * *'    # 2:08 PM ET
-    # After slot 6 (3:22 PM ET):
-    - cron: '52 19 * * *'   # 3:52 PM ET
-    # After slot 7 (5:07 PM ET):
-    - cron: '37 21 * * *'   # 5:37 PM ET
-    # After slot 8 (7:33 PM ET):
-    - cron: '3 0 * * *'     # 8:03 PM ET
-    # After slot 9 (9:11 PM ET):
-    - cron: '41 1 * * *'    # 9:41 PM ET
-    # After slot 10 (10:47 PM ET):
-    - cron: '17 3 * * *'    # 11:17 PM ET
-
-  workflow_dispatch:   # manual trigger for testing
+  # ── Manual trigger for testing ────────────────────────────────────────
+  workflow_dispatch:
 
 jobs:
   generate-blog:
@@ -46,11 +25,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run blog generator
+      - name: Run blog generator (Worker 12)
         env:
           SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          # LLM config (api key, model, endpoint) is read from
-          # quiz_generation_settings table in Supabase — same as Worker 8.
-          # No LLM env vars needed here.
         run: node worker12.js
