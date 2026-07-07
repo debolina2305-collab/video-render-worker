@@ -343,10 +343,41 @@ async function run() {
       const blog = parseBlogJSON(rawResponse);
 
       const tavilyImages   = job?.payload?.tavily_images || [];
-      const heroImageUrl   = tavilyImages[0]?.url || primaryQuiz.topic_image_url || null;
+
+      // IMAGE PRIORITY CHAIN:
+      // Hero    → Worker 10 generated 16:9 composite (best) → Wikipedia CC image → Tavily raw URL
+      // Inline  → Worker 10 generated square/wide image (best) → Tavily raw [1] → Tavily raw [0]
+      // Worker 10 saves dimension-sorted images to quiz.hero_image_url and quiz.inline_image_url.
+      // These are used first so blog always gets the best available image.
+      const heroImageUrl   = primaryQuiz.hero_image_url
+                          || primaryQuiz.topic_image_url
+                          || tavilyImages[0]?.url
+                          || null;
       const heroImageAlt   = blog.hero_image_alt || primaryQuiz.topic;
-      const inlineImageUrl = blog.suggested_inline_image_url || tavilyImages[1]?.url || null;
+
+      // Inline image: Worker 10 saves the best square/wide Tavily image to quiz.inline_image_url.
+      // Fallback chain: quiz.inline_image_url → LLM suggestion → Tavily[1] → Tavily[0]
+      const inlineImageUrl = primaryQuiz.inline_image_url
+                          || blog.suggested_inline_image_url
+                          || tavilyImages[1]?.url
+                          || tavilyImages[0]?.url
+                          || null;
       const inlineImageAlt = blog.suggested_inline_image_alt || primaryQuiz.topic;
+
+      // Inline image caption — derived from Tavily image description if available
+      // Used in the blog body below the inline image as a figure caption
+      const inlineImageCaption = (() => {
+        if (!inlineImageUrl) return null;
+        // Find the matching Tavily image description
+        const tavilyArr = Array.isArray(job?.payload?.tavily_images) ? job.payload.tavily_images : [];
+        const matched = tavilyArr.find(img => {
+          const url = typeof img === 'string' ? img : img?.url;
+          return url && inlineImageUrl.includes(url.split('/').pop()?.slice(0,20) || '');
+        });
+        const desc = typeof matched === 'object' ? matched?.description : null;
+        // Only use description if it's meaningful (>10 chars, not just a person name)
+        return desc && desc.length > 10 ? desc : null;
+      })();
 
       const totalWords = [
         blog.introduction_html, blog.section_1_html, blog.section_2_html,
@@ -386,6 +417,7 @@ async function run() {
         hero_image_alt:       heroImageAlt,
         inline_image_url:     inlineImageUrl,
         inline_image_alt:     inlineImageAlt,
+        inline_image_caption: inlineImageCaption || null,
 
         // Content
         introduction_html:    blog.introduction_html    || null,
