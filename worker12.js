@@ -145,6 +145,88 @@ async function pingIndexNow(urls) {
 }
 
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// SIMPLE HASH — picks layout mode from topic string
+// ─────────────────────────────────────────────
+function hashStr(s) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h;
+}
+
+// ─────────────────────────────────────────────
+// LAYOUT MODE DEFINITIONS
+// 5 structurally distinct blog formats
+// ─────────────────────────────────────────────
+const LAYOUT_MODES = {
+  1: {
+    name: 'news_report',
+    tone: 'Write like a professional US news journalist — factual, direct, inverted-pyramid structure. Short punchy paragraphs (2-3 sentences each). First sentence of each section must grab attention with the most important fact.',
+    wordTarget: 1150,
+    section1Label: 'What Happened: The Full Story',
+    section1Goal: '300-word blow-by-blow account of key events with specific names, dates, and places. Use the most important detail first, then context.',
+    section2Label: 'By The Numbers: Key Statistics',
+    section2Goal: '240-word data-rich breakdown. Open with the most surprising number. Use a bulleted list of at least 4 statistics from the research.',
+    section3Label: 'Reaction and What Comes Next',
+    section3Goal: '200-word forward-looking analysis. What are experts, fans, or officials saying? What happens next? Close with a concrete prediction.',
+    introGoal: '180-word punchy news lede. Answer who/what/when/where in the first 2 sentences, then explain why it matters to US readers.',
+    conclusionGoal: '100-word summary restating the 3 most important takeaways, then a call to action to play the quiz.',
+  },
+  2: {
+    name: 'deep_dive',
+    tone: 'Write like a senior analyst for The Atlantic or Vox — curious, thorough, willing to explain complexity. Use at least one analogy per section. Each paragraph must add new insight rather than restate the previous point.',
+    wordTarget: 1200,
+    section1Label: 'The Background: Why This Matters Now',
+    section1Goal: '310-word historical context and root-cause analysis. Connect this event to a broader trend or pattern. Include at least one analogy that makes it relatable.',
+    section2Label: 'Breaking It Down: What You Need to Know',
+    section2Goal: '280-word granular breakdown using bold sub-headings (<strong>) for each sub-point. Cover at least 3 distinct angles from the research.',
+    section3Label: 'The Bigger Picture: What This Means for Americans',
+    section3Goal: '220-word impact analysis. Be specific about which groups of Americans are affected and exactly how — economic, social, or cultural consequences.',
+    introGoal: '160-word thought-provoking hook. Open with a surprising fact or counter-intuitive question, then explain why this topic deserves more attention than it is getting.',
+    conclusionGoal: '110-word synthesis that ties the three sections together and leaves the reader with one memorable insight.',
+  },
+  3: {
+    name: 'feature_story',
+    tone: 'Write like a feature writer for ESPN Magazine or Rolling Stone — vivid, scene-setting, human-centred. Open each section with a concrete scene or dramatic detail from the research before zooming out. Stay factual but make it feel alive.',
+    wordTarget: 1150,
+    section1Label: 'Setting the Scene',
+    section1Goal: '290-word narrative scene-setter. Open with a specific moment, date, place, or dramatic detail from the research, then provide background context that explains how we got here.',
+    section2Label: 'The Key Players and What Is at Stake',
+    section2Goal: '260-word profile of the key people, teams, or organisations. What do they stand to gain or lose? Use 2-3 short character sketches (3-4 sentences each).',
+    section3Label: 'The Next Chapter: What Happens Now',
+    section3Goal: '210-word forward-looking narrative. What unresolved tension remains? What are the possible outcomes? End with an emotional or dramatic closing line.',
+    introGoal: '190-word cinematic opening. Drop the reader directly into the story — a moment, a quote, a striking image — before widening the lens to explain why this is a trending story.',
+    conclusionGoal: '100-word closing that brings the narrative full-circle and invites the reader to test their knowledge.',
+  },
+  4: {
+    name: 'listicle_guide',
+    tone: 'Write like a BuzzFeed senior editor meets Time magazine — punchy numbered insights, each with a bold headline and a paragraph of explanation. Every point must be distinct and surprising. No filler, no repetition.',
+    wordTarget: 1100,
+    section1Label: '5 Things You Need to Know About This Story',
+    section1Goal: '290-word numbered list using <ol><li> tags. Each of the 5 items gets a bold sub-heading (<strong>) and 2-3 sentences of explanation. Only include facts from the research.',
+    section2Label: 'The Numbers That Tell the Real Story',
+    section2Goal: '230-word section with a bulleted list (<ul><li>) of the 4 most striking statistics, each with 2 sentences of explanation. Follow with a short paragraph synthesising what the numbers mean.',
+    section3Label: '3 Reasons This Story Is Not Going Away',
+    section3Goal: '210-word forward section structured as 3 numbered reasons (<ol><li>) with bold sub-headings. Each reason must be distinct — one predictive, one economic, one human-interest.',
+    introGoal: '150-word hook that promises the reader something surprising. Start with the least-known fact about this story.',
+    conclusionGoal: '90-word punchy close. Summarise in 3 bullet points then invite readers to take the quiz.',
+  },
+  5: {
+    name: 'qa_authority',
+    tone: 'Write like a knowledgeable friend who happens to be an expert — warm, conversational, backed by facts. Use second-person ("you") occasionally. Define any jargon immediately when it appears. No waffle, no padding.',
+    wordTarget: 1150,
+    section1Label: 'The Quick Answer: Here Is What Actually Happened',
+    section1Goal: '260-word plain-English explanation as if answering a friend who just asked "wait, what is going on?" Define any technical terms, use one short analogy, and avoid jargon.',
+    section2Label: 'What Most People Get Wrong About This',
+    section2Goal: '275-word myth-busting section covering 2-3 common misconceptions or oversimplifications about this topic (based on the research), with clear corrections.',
+    section3Label: 'What You Should Actually Care About',
+    section3Goal: '210-word practical "so what?" section explaining why this story affects the reader personally — their money, health, entertainment, sport, or daily life depending on the niche.',
+    introGoal: '165-word conversational opener. Start with the most common question people have about this topic, answer it immediately in one sentence, then explain why the full story is more interesting.',
+    conclusionGoal: '100-word friendly close. Recap the 2-3 things the reader now knows that they did not before, and invite them to play the challenge.',
+  },
+};
+
+// ─────────────────────────────────────────────
 // BUILD BLOG PROMPT
 // ─────────────────────────────────────────────
 function buildPrompt(job, quizRows) {
@@ -154,6 +236,11 @@ function buildPrompt(job, quizRows) {
   const research = (job.searched_text || '').slice(0, 4000);
   const sources  = (payload.tavily_sources || []).slice(0, 6);
   const images   = (payload.tavily_images  || []).slice(0, 5);
+
+  // Pick layout deterministically from topic hash — same topic always gets same layout
+  const layoutMode = (hashStr(topic) % 5) + 1;
+  const layout = LAYOUT_MODES[layoutMode];
+  console.log(`[W12] Layout mode: ${layoutMode} (${layout.name}) for topic="${topic}"`);
 
   // Build quiz Q&A from the quiz rows — ALL questions included
   const realQuizCount = Math.min(quizRows.length, 6);
@@ -170,68 +257,102 @@ function buildPrompt(job, quizRows) {
   const sourceList = sources.map(s => `- ${s.title || s.domain}: ${s.url}`).join('\n');
   const imageList  = images.map((img, i) => `Image ${i+1}: ${img.url} (${img.description || topic})`).join('\n');
 
-  const systemPrompt = `You are an expert SEO content writer creating trending quiz companion blog posts for jaasblog.online. 
-Write engaging, factual, well-structured HTML blog posts about trending US topics.
-Always write in clear US English. Be factual, engaging, and cite the research provided.
-Return ONLY valid JSON — no markdown fences, no preamble, no explanation outside the JSON.`;
+  // Niche-specific tone booster
+  const nicheTone = {
+    sports:        'Focus on performance statistics, records, player/team storylines, fan impact, and competitive drama.',
+    finance:       'Focus on market movements, investor implications, economic data, and concrete effects on everyday Americans\' finances.',
+    tech:          'Focus on innovation impact, user adoption numbers, industry disruption, and what this means for consumers.',
+    entertainment: 'Focus on the cultural/celebrity angle, audience reaction, box office or streaming numbers, and broader pop-culture significance.',
+    health:        'Focus on health outcomes, medical evidence quality, what Americans should change in their behaviour, and credible expert guidance.',
+    general:       'Focus on the human-interest angle and the specific reasons this story is resonating across all demographics in the US right now.',
+  }[niche] || 'Focus on the aspects most relevant to a general US audience.';
 
-  const userPrompt = `Write a 1000-word SEO blog post about: "${topic}" (niche: ${niche})
+  const systemPrompt = `You are an expert SEO content writer creating trending quiz companion blog posts for jaasblog.online.
 
-RESEARCH DATA (use this as your factual foundation — do not invent facts not supported here):
+WRITING STYLE FOR THIS POST: ${layout.tone}
+
+NICHE FOCUS: ${nicheTone}
+
+WORD COUNT TARGET: ${layout.wordTarget} words across all HTML text fields combined. This is a minimum, not a maximum — write thoroughly.
+
+Every fact, statistic, name, and date must come from the RESEARCH DATA provided. Do not invent information.
+
+Return ONLY valid JSON with no markdown fences, no preamble, no explanation outside the JSON object.`;
+
+
+  const userPrompt = `Write a ${layout.wordTarget}-word SEO blog post about: "${topic}" (niche: ${niche})
+
+RESEARCH DATA — use ONLY these facts, do not invent anything:
 ${research || 'Use general knowledge about this trending US topic.'}
 
-QUIZ QUESTIONS — CRITICAL: You MUST include ALL ${realQuizCount} questions in the faq_html field. Every single QUESTION_1 through QUESTION_${realQuizCount} must appear as a separate faq-item div. Do not combine, skip, or summarize any question.
+QUIZ QUESTIONS — CRITICAL: You MUST include ALL ${realQuizCount} questions in the faq_html field. Every QUESTION_1 through QUESTION_${realQuizCount} must appear as a separate faq-item div. Do not combine, skip, or summarise any question.
 ${quizQA || 'No quiz data available.'}
 ${extraFaqNeeded > 0 ? `
-FAQ TOP-UP — REQUIRED: This topic only has ${realQuizCount} quiz question(s), but every blog post needs ${MIN_FAQ}-${MAX_FAQ} FAQ items total. After the ${realQuizCount} quiz-recap FAQ item(s) above, you MUST write ${extraFaqNeeded} additional general-knowledge FAQ item(s) about "${topic}" (real questions a curious reader would ask, answered factually from the research data). Use the SAME faq-item HTML structure (question + answer), just without the A/B/C/D options line since these aren't quiz questions. CONTINUE THE SAME Q-NUMBERING — if there are ${realQuizCount} quiz items (Q1..Q${realQuizCount}), the top-up items are Q${realQuizCount + 1}..Q${targetFaqCount}. Every faq-item, quiz-recap or top-up, MUST start with "Q<N>: " in its question text — there is no unnumbered FAQ item anywhere in faq_html. Total faq-item divs in faq_html must be exactly ${targetFaqCount}.` : `
-Number every faq-item sequentially: Q1, Q2, ... Q${targetFaqCount}. No faq-item may be missing its "Q<N>: " prefix.`}
+FAQ TOP-UP — REQUIRED: After the ${realQuizCount} quiz-recap FAQ items, write ${extraFaqNeeded} additional general-knowledge FAQ items about "${topic}" (questions a curious reader would ask, answered from the research). Use the SAME faq-item HTML structure but WITHOUT the A/B/C/D options line. Continue the Q-numbering: Q${realQuizCount + 1} through Q${targetFaqCount}. Total faq-item divs must be exactly ${targetFaqCount}.` : `
+Number every faq-item sequentially: Q1 through Q${targetFaqCount}. No item may be missing its "Q<N>: " prefix.`}
 
-AVAILABLE IMAGES (reference by URL in suggested_inline_image):
+AVAILABLE IMAGES (reference by URL in suggested_inline_image_url):
 ${imageList || 'No images available.'}
 
-DATA SOURCES (cite these at bottom):
+DATA SOURCES (cite these):
 ${sourceList || 'General knowledge sources.'}
 
-Return a JSON object with EXACTLY these fields (all HTML values use proper HTML tags — <p>, <strong>, <ul>, <li>, <h3>, <table>, <tr>, <th>, <td> etc.):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LAYOUT MODE ${layoutMode}: ${layout.name.toUpperCase()}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+introduction_html  → ${layout.introGoal}
+section_1_heading  → Use exactly: "${layout.section1Label}"
+section_1_html     → ${layout.section1Goal}
+section_2_heading  → Use exactly: "${layout.section2Label}"
+section_2_html     → ${layout.section2Goal}
+section_3_heading  → Use exactly: "${layout.section3Label}"
+section_3_html     → ${layout.section3Goal}
+conclusion_html    → ${layout.conclusionGoal} Do NOT include links — a challenge link is appended automatically.
+
+IMPORTANT WRITING RULES:
+- Every section must be substantively different from the others — no repeating the same points in different words
+- Use <strong> for emphasis on key terms and statistics
+- Use <ul><li> or <ol><li> where the content is list-like (do not force lists where prose is more natural)
+- introduction_html and all section_html fields must each be ≥ 120 words individually
+- section_1_html must be the longest section
+- Write for a reader who knows nothing about this topic beyond the headline
+
+Return a JSON object with EXACTLY these fields:
 {
-  "title": "Compelling SEO title under 65 characters",
-  "meta_description": "SEO meta description under 155 characters",
+  "title": "Compelling SEO title under 65 characters — unique angle not just the topic name",
+  "meta_description": "SEO meta description 140-155 characters with primary keyword",
   "meta_keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
-  "hero_image_alt": "Alt text for hero image describing the topic",
-  "suggested_inline_image_url": "URL of best image from the list above for inline use, or empty string",
+  "hero_image_alt": "Descriptive alt text for hero image",
+  "suggested_inline_image_url": "URL from the image list above best matching the section_2 content, or empty string",
   "suggested_inline_image_alt": "Alt text for the inline image",
-  "introduction_html": "<p>150-word engaging introduction that hooks the reader and explains why this topic is trending...</p>",
-  "section_1_heading": "Background: [descriptive heading about history/context]",
-  "section_1_html": "<p>250 words of background and context about ${topic}...</p>",
-  "section_2_heading": "Key Facts: [descriptive heading about main facts]",
-  "section_2_html": "<p>250 words covering the most important facts, statistics, and details...</p><ul><li>Key fact 1</li><li>Key fact 2</li></ul>",
-  "section_3_heading": "Impact and Significance: [descriptive heading]",
-  "section_3_html": "<p>200 words about why this matters to US audiences and what happens next...</p>",
+  "introduction_html": "<p>[${layout.introGoal}]</p>",
+  "section_1_heading": "${layout.section1Label}",
+  "section_1_html": "<p>[${layout.section1Goal}]</p>",
+  "section_2_heading": "${layout.section2Label}",
+  "section_2_html": "<p>[${layout.section2Goal}]</p>",
+  "section_3_heading": "${layout.section3Label}",
+  "section_3_html": "<p>[${layout.section3Goal}]</p>",
   "table_caption": "Key Statistics: ${topic}",
-  "table_html": "<table><thead><tr><th>Fact</th><th>Detail</th></tr></thead><tbody><tr><td>...</td><td>...</td></tr><!-- 5-6 rows of real data from the research --></tbody></table>",
-  "faq_html": "<div class='quiz-faq'><h3>Test Your Knowledge: ${topic}</h3>IMPORTANT: Output EXACTLY ${targetFaqCount} faq-item divs total — ${realQuizCount} quiz-recap item(s) first, then ${extraFaqNeeded} general-knowledge item(s). EVERY item's question text MUST start with 'Q<N>: ' where N runs 1 through ${targetFaqCount} with no gaps and no repeats — this applies to top-up items too, not just quiz-recap ones. Format like this:\n<div class='faq-item'><p class='faq-question'><strong>Q1: [exact question text from QUESTION_1]</strong><br>Options: A) [opt] | B) [opt] | C) [opt] | D) [opt]</p><p class='faq-answer'>✅ <strong>Answer:</strong> [correct answer]. [explanation text]</p></div><!-- one such div per real quiz question, Q1..Q${realQuizCount} --><div class='faq-item'><p class='faq-question'><strong>Q${realQuizCount + 1}: [General FAQ question about the topic]</strong></p><p class='faq-answer'>[Factual answer from research]</p></div><!-- one such div per top-up FAQ, continuing the numbering through Q${targetFaqCount}, no options line --></div>",
-  "conclusion_html": "<p>100-word conclusion summarising key points and encouraging the reader to play the interactive quiz. Do NOT include any links or anchor tags in the conclusion — a challenge link will be appended automatically.</p>",
+  "table_html": "<table><thead><tr><th>Fact</th><th>Detail</th></tr></thead><tbody><tr><td>...</td><td>...</td></tr></tbody></table>",
+  "faq_html": "<div class='quiz-faq'><h3>Test Your Knowledge: ${topic}</h3>EXACTLY ${targetFaqCount} faq-item divs. Every item question text starts with 'Q<N>: '. Quiz-recap items (Q1-Q${realQuizCount}) include the options line. Top-up items (Q${realQuizCount+1}-Q${targetFaqCount}) do NOT include options. Format: <div class='faq-item'><p class='faq-question'><strong>Q1: [question]</strong><br>Options: A) [opt] | B) [opt] | C) [opt] | D) [opt]</p><p class='faq-answer'>✅ <strong>Answer:</strong> [correct]. [explanation]</p></div></div>",
+  "conclusion_html": "<p>[${layout.conclusionGoal}]</p>",
   "chart_data": null
 }
 
-CHART_DATA RULES (very important — read carefully before filling chart_data):
-- Look at the research data for the MOST visually interesting numeric comparison (scores, stats, counts, percentages, trends over time).
-- If you find suitable numbers: output a chart object. If no real numbers exist in the research, output null.
-- CHART TYPE SELECTION — pick the type that best fits the data shape:
-  • "bar"   → comparing discrete entities side by side (scores, goals, counts between teams/countries/people)
-  • "line"  → showing change over time or sequence (growth trend, year-by-year, ranked progression). Use when labels are dates, years, or ordered stages.
-  • "donut" → parts of a whole that add up to ~100% (market share, possession %, vote share, category breakdown)
-  • "hbar"  → horizontal bar — use when labels are long text (player names, country names, team names with spaces) that would be cramped in a vertical bar
-- NEVER default to "bar" just because it's first. Choose the type that makes the data most readable.
-- 2 to 6 data points maximum. Every value MUST be a real number — never a string, never null.
-- Title must describe what is charted in under 6 words.
-- ONLY use numbers from the research — never invent values.
-- Bar chart example:  {"type":"bar",  "title":"Shots on Target",      "unit":"",  "data":[{"label":"Argentina","value":8},{"label":"Cape Verde","value":3}]}
-- Line chart example: {"type":"line", "title":"Messi World Cup Goals", "unit":"goals", "data":[{"label":"2006","value":1},{"label":"2010","value":4},{"label":"2014","value":4},{"label":"2018","value":6},{"label":"2022","value":7}]}
-- Donut chart example:{"type":"donut","title":"Ball Possession",       "unit":"%", "data":[{"label":"Argentina","value":62},{"label":"Cape Verde","value":38}]}
-- Hbar chart example: {"type":"hbar", "title":"Top Goal Scorers",      "unit":"goals","data":[{"label":"Lionel Messi","value":7},{"label":"Kylian Mbappé","value":5},{"label":"Harry Kane","value":4}]}`;
+CHART_DATA RULES — fill chart_data if and only if the research contains real numeric data worth visualising:
+- "bar"   → comparing discrete entities (scores, counts between teams/people)
+- "line"  → change over time or ranked sequence (year-by-year, growth trend)
+- "donut" → parts of a whole adding to ~100% (market share, possession %, vote %)
+- "hbar"  → horizontal bar for long text labels (player names, country names)
+- 2-6 data points. Every value MUST be a real number from the research — never null, never invented.
+- Bar:   {"type":"bar",  "title":"Shots on Target",   "unit":"",     "data":[{"label":"Argentina","value":8},{"label":"Cape Verde","value":3}]}
+- Line:  {"type":"line", "title":"Goals by Year",     "unit":"goals","data":[{"label":"2018","value":6},{"label":"2022","value":7}]}
+- Donut: {"type":"donut","title":"Ball Possession",   "unit":"%",    "data":[{"label":"Argentina","value":62},{"label":"Cape Verde","value":38}]}
+- Hbar:  {"type":"hbar", "title":"Top Goal Scorers",  "unit":"goals","data":[{"label":"Lionel Messi","value":7},{"label":"Harry Kane","value":4}]}
+If no suitable real numbers exist in the research, output null.`;
 
-  return { systemPrompt, userPrompt };
+  return { systemPrompt, userPrompt, layoutMode };
 }
 
 // ─────────────────────────────────────────────
@@ -334,7 +455,7 @@ async function run() {
         searched_text: '',
         payload:       {}
       };
-      const { systemPrompt, userPrompt } = buildPrompt(fakeJob, allRows);
+      const { systemPrompt, userPrompt, layoutMode } = buildPrompt(fakeJob, allRows);
 
       console.log('[W12] Calling DeepSeek via quiz_generation_settings config...');
       const rawResponse = await callLLM(llmConfig, systemPrompt, userPrompt);
@@ -450,6 +571,7 @@ async function run() {
         word_count:           totalWords,
         tavily_word_count:    (job?.searched_text || '').split(/\s+/).filter(Boolean).length,
         llm_model:            llmConfig.model,
+        blog_layout_mode:     layoutMode,
 
         // Status — published immediately after insert (see promotion step below)
         status:               'published',
