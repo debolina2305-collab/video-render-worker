@@ -736,8 +736,14 @@ async function fetchTavilyImagesForQuiz(quiz) {
       })
     );
 
-    const usable = downloaded.filter(Boolean);
-    if (!usable.length) { console.log('[TAVILY-IMG] All downloads failed'); return result; }
+    // Filter out failed downloads AND images with 0 bytes (corrupt/empty R2 files)
+    // A 0KB image produces a broken data URI that renders as blank background.
+    const usable = downloaded.filter(img => img && img.dataUri && img.dataUri.length > 500);
+    const zeroKb = downloaded.filter(img => img && (!img.dataUri || img.dataUri.length <= 500));
+    if (zeroKb.length > 0) {
+      console.log(`[TAVILY-IMG] Skipping ${zeroKb.length} empty/corrupt image(s) (0KB)`);
+    }
+    if (!usable.length) { console.log('[TAVILY-IMG] All downloads failed or returned empty'); return result; }
 
     // Assign best match per slot
     result.thumbnail = usable.find(i=>i.aspect==='vertical')
@@ -1279,28 +1285,57 @@ async function buildVideo(quiz, workDir) {
   let videoPhotoStyleBlock = '';
   let videoPhotoClass = 'no-photo'; // CSS class on the overlay div
 
-  const videoPhotoDataUri = thumbImgData?.dataUri   // Tavily vertical/portrait
-                         || heroImgData?.dataUri    // Tavily wide/landscape
-                         || null;                   // no photo → hidden
+  // Only use data URIs that are actually valid (>500 chars = real image data)
+  // 0KB images produce tiny broken data URIs that render as blank
+  const validDataUri = (d) => d && d.length > 500;
+  const videoPhotoDataUri = (validDataUri(thumbImgData?.dataUri) ? thumbImgData.dataUri : null)
+                         || (validDataUri(heroImgData?.dataUri)  ? heroImgData.dataUri  : null)
+                         || (validDataUri(inlineImgData?.dataUri)? inlineImgData.dataUri: null)
+                         || null;
 
   if (videoPhotoDataUri) {
-    // Inject as CSS custom property so the fixed div can use background-image.
-    // Using a <style> block (not inline style) keeps the HTML body small
-    // and avoids Puppeteer's inline-style character limit issues.
-    videoPhotoStyleBlock = `<style>
-:root { --topic-photo-url: url("${videoPhotoDataUri}"); }
+    // IMPORTANT: Chrome cannot use large data URIs (>32KB) as CSS custom properties.
+    // The CSS var(--topic-photo-url) silently fails for large images.
+    // Fix: write the image to a temp file and use a file:// URL instead.
+    // This is safe because Puppeteer already has --allow-file-access-from-files.
+    try {
+      const overlayImgPath = path.join(workDir, 'overlay_photo.jpg');
+      // Extract base64 data from the data URI and write as binary file
+      const b64 = videoPhotoDataUri.split(',')[1];
+      if (b64) {
+        await fs.writeFile(overlayImgPath, Buffer.from(b64, 'base64'));
+        const overlayFileUrl = `file://${overlayImgPath}`;
+        videoPhotoStyleBlock = `<style>
+:root { --topic-photo-url: url("${overlayFileUrl}"); }
 </style>`;
-    videoPhotoClass = ''; // no "no-photo" class → overlay is visible
-    console.log(`[VIDEO-OVERLAY] Tavily photo injected as 30% opacity overlay (${(videoPhotoDataUri.length/1024).toFixed(0)}KB data URI)`);
+        videoPhotoClass = ''; // no "no-photo" class → overlay is visible
+        console.log(`[VIDEO-OVERLAY] Photo written to temp file and injected as overlay (${(Buffer.from(b64,'base64').length/1024).toFixed(0)}KB)`);
+      } else {
+        console.log('[VIDEO-OVERLAY] Could not extract base64 from data URI');
+      }
+    } catch (e) {
+      console.warn(`[VIDEO-OVERLAY] Failed to write overlay file (non-fatal): ${e.message}`);
+    }
   } else if (videoBgImageUrl && thumbBgStyleBlock) {
-    // Fallback: use Wikipedia image for the overlay too if no Tavily image
+    // Fallback: use Wikipedia image for the overlay
+    // Wikipedia image is already downloaded — extract its data URI from the style block
     const wikiDataUri = thumbBgStyleBlock.match(/url\("([^"]+)"\)/)?.[1] || null;
     if (wikiDataUri) {
-      videoPhotoStyleBlock = `<style>
-:root { --topic-photo-url: url("${wikiDataUri}"); }
+      try {
+        const overlayImgPath = path.join(workDir, 'overlay_photo_wiki.jpg');
+        const b64 = wikiDataUri.split(',')[1];
+        if (b64) {
+          await fs.writeFile(overlayImgPath, Buffer.from(b64, 'base64'));
+          const overlayFileUrl = `file://${overlayImgPath}`;
+          videoPhotoStyleBlock = `<style>
+:root { --topic-photo-url: url("${overlayFileUrl}"); }
 </style>`;
-      videoPhotoClass = '';
-      console.log('[VIDEO-OVERLAY] Wikipedia image used as fallback overlay');
+          videoPhotoClass = '';
+          console.log('[VIDEO-OVERLAY] Wikipedia image used as fallback overlay (file://)');
+        }
+      } catch (e) {
+        console.warn(`[VIDEO-OVERLAY] Wikipedia fallback failed (non-fatal): ${e.message}`);
+      }
     }
   } else {
     console.log('[VIDEO-OVERLAY] No photo available — overlay hidden');
