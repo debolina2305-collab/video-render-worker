@@ -1405,8 +1405,26 @@ async function buildVideo(quiz, workDir) {
   });
   const page = await browser.newPage();
   await page.setViewport({width:1080,height:1920});
-  await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded'});
-  await new Promise(r=>setTimeout(r,600));
+  // Use networkidle0 so ALL resources including the overlay photo (file:// URL)
+  // are fully loaded before any screen recording starts.
+  // domcontentloaded fires too early — CSS background-image file:// URLs
+  // haven't been fetched yet, so the photo overlay renders as blank.
+  await page.goto(`file://${htmlPath}`,{waitUntil:'networkidle0', timeout:30000});
+  // Extra wait for CSS animations and background images to fully render
+  await new Promise(r=>setTimeout(r,800));
+  // Explicitly force-load the overlay photo by checking it rendered
+  if (videoPhotoClass !== 'no-photo') {
+    await page.evaluate(() => {
+      const overlays = document.querySelectorAll('.topic-photo-overlay:not(.no-photo)');
+      overlays.forEach(el => {
+        // Force a repaint so the background-image is actually applied
+        el.style.display = 'none';
+        el.offsetHeight; // trigger reflow
+        el.style.display = '';
+      });
+    }).catch(() => {});
+    await new Promise(r=>setTimeout(r,200));
+  }
 
   const showOnly = async (sel, { skipWait = false } = {}) => {
     await page.evaluate(s=>{
@@ -1488,7 +1506,8 @@ async function buildVideo(quiz, workDir) {
   }
 
   // ══ STEP 1: HOOK — screen-recorded (logoPop + hook-text animations + glow) ══
-  await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded'});
+  // networkidle0 ensures the overlay photo file:// URL is loaded before recording
+  await page.goto(`file://${htmlPath}`,{waitUntil:'networkidle0', timeout:30000});
   await new Promise(r=>setTimeout(r,300));
   await showOnly('.hook-slide');
   await page.evaluate(()=>{
