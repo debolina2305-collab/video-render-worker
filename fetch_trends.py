@@ -53,12 +53,36 @@ def upload_image_to_r2(image_url: str, slug: str, idx: int = 0) -> str | None:
         return None
     try:
         resp = requests.get(image_url, timeout=15, stream=True,
-                            headers={'User-Agent': 'Mozilla/5.0 (fetch_trends)'})
+                            headers={
+                                'User-Agent': 'Mozilla/5.0 (compatible; AutoQuiz/1.0)',
+                                'Accept': 'image/webp,image/jpeg,image/png,image/*,*/*'
+                            })
         resp.raise_for_status()
         data = resp.content
-        ct   = resp.headers.get('Content-Type', 'image/jpeg').split(';')[0].strip()
+        ct   = resp.headers.get('Content-Type', 'image/jpeg').split(';')[0].strip().lower()
+
+        # ── CRITICAL: reject HTML responses ──────────────────────────────
+        # Social media platforms (Instagram, Facebook, Threads, Twitter/X)
+        # return an HTML redirect page instead of the actual image when the
+        # URL is fetched by a bot. The HTML page is tiny (~200-500 bytes)
+        # and has Content-Type: text/html. Uploading it to R2 creates a
+        # fake "image" file that breaks thumbnails and video overlays.
+        # Skip any response that is not an image MIME type.
+        VALID_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/webp',
+                             'image/gif', 'image/avif', 'image/bmp',
+                             'image/tiff', 'image/svg+xml'}
+        if ct not in VALID_IMAGE_TYPES and not ct.startswith('image/'):
+            log.warning(f'[R2] Skipping {image_url[:80]} — response is {ct} not an image (social media redirect?)')
+            return None
+
+        # Also reject suspiciously small responses — real images are >1KB
+        # An HTML redirect page is typically 200-500 bytes
+        if len(data) < 1024:
+            log.warning(f'[R2] Skipping {image_url[:80]} — response too small ({len(data)} bytes), likely a redirect page')
+            return None
+
         ext  = {'image/jpeg':'jpg','image/png':'png','image/webp':'webp',
-                'image/gif':'gif'}.get(ct, 'jpg')
+                'image/gif':'gif','image/avif':'avif','image/bmp':'bmp'}.get(ct, 'jpg')
         safe_slug = re.sub(r'[^a-z0-9\-]', '', slug.lower())[:60]
         key  = f'{R2_IMG_PREFIX}/{safe_slug}_{idx}.{ext}'
 
@@ -351,6 +375,24 @@ def tavily_search(topic, country_code):
             max_results                 = 8,
             include_images              = True,         # was missing entirely -- no images were ever requested
             include_image_descriptions  = True,
+            # Exclude social media domains from image results.
+            # These platforms detect bot requests and return HTML redirect pages
+            # instead of actual images, producing corrupt files when uploaded to R2.
+            # News sites, Wikipedia, official sources are preferred instead.
+            exclude_domains             = [
+                'instagram.com',
+                'facebook.com',
+                'twitter.com',
+                'x.com',
+                'threads.net',
+                'tiktok.com',
+                'pinterest.com',
+                'linkedin.com',
+                'reddit.com',
+                'snapchat.com',
+                'youtube.com',    # video platform, no still images useful
+                'youtu.be',
+            ],
         )
         return result
     except Exception as e:
@@ -708,11 +750,39 @@ def quality_check(topic, tavily_data, min_words=TAVILY_MIN_WORDS):
     raw_images = tavily_data.get('images') or []
     tavily_images = []
     safe_key_slug = re.sub(r'[^a-z0-9\-]', '-', topic.lower())[:50]
+    # Social media domains that redirect bots instead of serving images directly.
+    # These platforms detect non-browser requests and return HTML redirect pages.
+    # Uploading such pages to R2 creates corrupt "image" files (text/html, ~284B).
+    BLOCKED_IMAGE_DOMAINS = {
+        'instagram.com', 'www.instagram.com',
+        'facebook.com', 'www.facebook.com', 'fb.com', 'fbcdn.net',
+        'twitter.com', 'www.twitter.com', 'x.com', 'www.x.com',
+        'threads.net', 'www.threads.net',
+        'tiktok.com', 'www.tiktok.com',
+        'pinterest.com', 'www.pinterest.com',
+        'linkedin.com', 'www.linkedin.com',
+        'reddit.com', 'www.reddit.com', 'i.redd.it', 'preview.redd.it',
+        'snapchat.com', 'www.snapchat.com',
+        'lookaside.instagram.com',  # Instagram CDN — also blocks bots
+        'lookaside.fbsbx.com',
+    }
+
     for img_idx, img in enumerate(raw_images[:6]):
         raw_url = img['url'] if isinstance(img, dict) else (img if isinstance(img, str) else None)
         desc    = img.get('description', topic) if isinstance(img, dict) else topic
         if not raw_url:
             continue
+
+        # Skip social media URLs — they serve HTML redirects not images to bots
+        try:
+            img_domain = raw_url.split('/')[2].lower().lstrip('www.')
+            img_domain_full = raw_url.split('/')[2].lower()
+        except Exception:
+            img_domain = img_domain_full = ''
+        if img_domain_full in BLOCKED_IMAGE_DOMAINS or img_domain in BLOCKED_IMAGE_DOMAINS:
+            log.info(f'[IMG] Skipping social media URL (bot-redirect risk): {raw_url[:80]}')
+            continue
+
         # Try to upload to R2; fall back to original URL if R2 not configured
         cdn_url = upload_image_to_r2(raw_url, safe_key_slug, img_idx) or raw_url
         tavily_images.append({'url': cdn_url, 'description': desc})
