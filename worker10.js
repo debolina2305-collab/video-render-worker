@@ -1244,8 +1244,10 @@ async function buildVideo(quiz, workDir) {
   // to <head> sets the background via CSS class, keeping the body HTML small.
   // NOTE: Wikipedia image is still used for the quiz video background (blurred bg).
   // Tavily image is used for the thumbnail/hero image cards only.
+  // ── THUMBNAIL SCREEN background (Wikipedia/topic image) ──────────────
+  // Used ONLY on the thumbnail screen (.thumb-photo-bg) at the end of the video.
+  // This is separate from the new video photo overlay below.
   let thumbBgStyleBlock = '';
-  // Prefer Tavily image as video background if available and Wikipedia not found
   const videoBgImageUrl = quiz.topic_image_url || null;
   if (videoBgImageUrl) {
     try {
@@ -1258,13 +1260,50 @@ async function buildVideo(quiz, workDir) {
         const mime    = imgRes.headers.get('content-type') || 'image/jpeg';
         const dataUri = `data:${mime};base64,${imgB64}`;
         thumbBgStyleBlock = `<style>.thumb-photo-bg-img{background-image:url("${dataUri}") !important;}</style>`;
-        console.log(`[THUMB-IMG] Encoded Wikipedia image (${(imgBuf.byteLength/1024).toFixed(0)}KB): ${videoBgImageUrl.slice(0,70)}`);
+        console.log(`[THUMB-IMG] Wikipedia image encoded (${(imgBuf.byteLength/1024).toFixed(0)}KB): ${videoBgImageUrl.slice(0,70)}`);
       } else {
         console.log(`[THUMB-IMG] Fetch failed: HTTP ${imgRes.status}`);
       }
     } catch (e) {
       console.log(`[THUMB-IMG] Image fetch failed (non-fatal): ${e.message}`);
     }
+  }
+
+  // ── VIDEO PHOTO OVERLAY — Tavily image at 30% opacity behind all screens ──
+  // This is the NEW feature: the Tavily news photo (best available image,
+  // already downloaded above by fetchTavilyImagesForQuiz) is injected as a
+  // fixed-position layer behind ALL quiz screens.
+  // Priority: thumbnail slot image → hero slot image → Wikipedia image → none
+  // The overlay sits above the theme animated bg but below all UI content.
+  // 30% opacity + slight blur = visible context without distracting from quiz.
+  let videoPhotoStyleBlock = '';
+  let videoPhotoClass = 'no-photo'; // CSS class on the overlay div
+
+  const videoPhotoDataUri = thumbImgData?.dataUri   // Tavily vertical/portrait
+                         || heroImgData?.dataUri    // Tavily wide/landscape
+                         || null;                   // no photo → hidden
+
+  if (videoPhotoDataUri) {
+    // Inject as CSS custom property so the fixed div can use background-image.
+    // Using a <style> block (not inline style) keeps the HTML body small
+    // and avoids Puppeteer's inline-style character limit issues.
+    videoPhotoStyleBlock = `<style>
+:root { --topic-photo-url: url("${videoPhotoDataUri}"); }
+</style>`;
+    videoPhotoClass = ''; // no "no-photo" class → overlay is visible
+    console.log(`[VIDEO-OVERLAY] Tavily photo injected as 30% opacity overlay (${(videoPhotoDataUri.length/1024).toFixed(0)}KB data URI)`);
+  } else if (videoBgImageUrl && thumbBgStyleBlock) {
+    // Fallback: use Wikipedia image for the overlay too if no Tavily image
+    const wikiDataUri = thumbBgStyleBlock.match(/url\("([^"]+)"\)/)?.[1] || null;
+    if (wikiDataUri) {
+      videoPhotoStyleBlock = `<style>
+:root { --topic-photo-url: url("${wikiDataUri}"); }
+</style>`;
+      videoPhotoClass = '';
+      console.log('[VIDEO-OVERLAY] Wikipedia image used as fallback overlay');
+    }
+  } else {
+    console.log('[VIDEO-OVERLAY] No photo available — overlay hidden');
   }
 
   console.log(`[CONFETTI] niche=${niche} set=${confettiSet.join(' ')}`);
@@ -1304,6 +1343,8 @@ async function buildVideo(quiz, workDir) {
     '{{niche_challenge_label}}': `${nicheLabel} Challenge No #${nicheNo}`,
     '{{thumb_bg_style_block}}': thumbBgStyleBlock,
     '{{thumb_bg_image_class}}': thumbBgStyleBlock ? ' thumb-photo-bg-img' : ' thumb-photo-bg-hidden',
+    '{{VIDEO_PHOTO_STYLE_BLOCK}}': videoPhotoStyleBlock,
+    '{{VIDEO_PHOTO_CLASS}}':       videoPhotoClass,
     '{{confetti_0}}':confettiSet[0], '{{confetti_1}}':confettiSet[1],
     '{{confetti_2}}':confettiSet[2], '{{confetti_3}}':confettiSet[3],
     '{{confetti_4}}':confettiSet[4], '{{confetti_5}}':confettiSet[5],
