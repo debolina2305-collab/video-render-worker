@@ -1405,25 +1405,36 @@ async function buildVideo(quiz, workDir) {
   });
   const page = await browser.newPage();
   await page.setViewport({width:1080,height:1920});
-  // Use networkidle0 so ALL resources including the overlay photo (file:// URL)
-  // are fully loaded before any screen recording starts.
-  // domcontentloaded fires too early — CSS background-image file:// URLs
-  // haven't been fetched yet, so the photo overlay renders as blank.
-  await page.goto(`file://${htmlPath}`,{waitUntil:'networkidle0', timeout:30000});
-  // Extra wait for CSS animations and background images to fully render
-  await new Promise(r=>setTimeout(r,800));
-  // Explicitly force-load the overlay photo by checking it rendered
+  // Load the page then wait for images separately.
+  // networkidle0 times out with large file:// images (142KB+).
+  // domcontentloaded is instant but images aren't loaded yet.
+  // Solution: domcontentloaded + explicit image wait via JS.
+  await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded', timeout:30000});
+  // Wait for all <img> tags AND CSS background-image file:// resources to load
+  await page.evaluate(() => new Promise(resolve => {
+    // Check all img elements
+    const imgs = [...document.querySelectorAll('img')];
+    if (imgs.length === 0) { resolve(); return; }
+    let loaded = 0;
+    const done = () => { if (++loaded >= imgs.length) resolve(); };
+    imgs.forEach(img => {
+      if (img.complete) done();
+      else { img.onload = done; img.onerror = done; }
+    });
+  })).catch(() => {});
+  // Additional fixed wait for CSS background-image rendering (file:// URLs)
+  // Chrome needs time to fetch and paint background-image after DOM is ready
+  await new Promise(r=>setTimeout(r,1000));
+  // Force repaint of overlay divs so background-image is applied
   if (videoPhotoClass !== 'no-photo') {
     await page.evaluate(() => {
-      const overlays = document.querySelectorAll('.topic-photo-overlay:not(.no-photo)');
-      overlays.forEach(el => {
-        // Force a repaint so the background-image is actually applied
-        el.style.display = 'none';
-        el.offsetHeight; // trigger reflow
-        el.style.display = '';
+      document.querySelectorAll('.topic-photo-overlay').forEach(el => {
+        el.style.opacity = '0';
+        el.offsetHeight; // force reflow
+        el.style.opacity = '0.30';
       });
     }).catch(() => {});
-    await new Promise(r=>setTimeout(r,200));
+    await new Promise(r=>setTimeout(r,300));
   }
 
   const showOnly = async (sel, { skipWait = false } = {}) => {
@@ -1506,9 +1517,8 @@ async function buildVideo(quiz, workDir) {
   }
 
   // ══ STEP 1: HOOK — screen-recorded (logoPop + hook-text animations + glow) ══
-  // networkidle0 ensures the overlay photo file:// URL is loaded before recording
-  await page.goto(`file://${htmlPath}`,{waitUntil:'networkidle0', timeout:30000});
-  await new Promise(r=>setTimeout(r,300));
+  await page.goto(`file://${htmlPath}`,{waitUntil:'domcontentloaded', timeout:30000});
+  await new Promise(r=>setTimeout(r,600));
   await showOnly('.hook-slide');
   await page.evaluate(()=>{
     const lw = document.querySelector('.hook-slide .logo-wrap');
