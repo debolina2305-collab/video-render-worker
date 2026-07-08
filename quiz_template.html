@@ -364,12 +364,12 @@
 .thumb-screen { padding:0; }
 /* Wikipedia topic image: blurred dark photo behind all thumbnail content.
    Sits above the animated CSS background (z-index:1) but below the gradient
-   overlay (z-index:2) and content (z-index:5).
+   overlay (z-index:3) and content (z-index:5).
    Background image injected via <style> block in <head> by Worker 10.
    When image present: div gets class thumb-photo-bg-img (sets background-image).
    When no image: div gets class thumb-photo-bg-hidden (display:none). */
 .thumb-photo-bg {
-  position:absolute; inset:0; z-index:1;
+  position:absolute; inset:0; z-index:2;
   background-size:cover; background-position:center center; background-repeat:no-repeat;
   filter:blur(14px) brightness(0.32) saturate(1.4);
   transform:scale(1.08); /* prevent blur edge artifacts */
