@@ -1402,12 +1402,25 @@ async function buildVideo(quiz, workDir) {
     console.log('[IMG-CARD] Generating news-style image cards...');
 
     // Generate 9:16 thumbnail (1080×1920) — vertical photo preferred (portrait fills frame best)
-    const thumb916Path = await buildImageCard(quiz, '9:16', thumbImgData?.dataUri||null, logoDataUri, workDir, browser);
-    if (R2_CONFIGURED) thumbnailUrl = await uploadThumbnailToR2(thumb916Path, quiz.id);
+    // Each card has its own try/catch so a failure on one doesn't block the other.
+    try {
+      const thumb916Path = await buildImageCard(quiz, '9:16', thumbImgData?.dataUri||null, logoDataUri, workDir, browser);
+      if (R2_CONFIGURED) thumbnailUrl = await uploadThumbnailToR2(thumb916Path, quiz.id);
+      console.log(`[IMG-CARD] ✓ 9:16 thumbnail=${thumbnailUrl||'generated but not uploaded'}`);
+    } catch (e9) {
+      console.error(`[IMG-CARD] 9:16 thumbnail FAILED: ${e9.message}`);
+      console.error(`[IMG-CARD] 9:16 stack: ${e9.stack?.slice(0,400)||'no stack'}`);
+    }
 
     // Generate 16:9 hero image (1280×720) — wide photo preferred (fills landscape frame best)
-    const hero169Path = await buildImageCard(quiz, '16:9', heroImgData?.dataUri||null, logoDataUri, workDir, browser);
-    if (R2_CONFIGURED) heroImageUrl = await uploadHeroImageToR2(hero169Path, quiz.id);
+    try {
+      const hero169Path = await buildImageCard(quiz, '16:9', heroImgData?.dataUri||null, logoDataUri, workDir, browser);
+      if (R2_CONFIGURED) heroImageUrl = await uploadHeroImageToR2(hero169Path, quiz.id);
+      console.log(`[IMG-CARD] ✓ 16:9 hero=${heroImageUrl||'generated but not uploaded'}`);
+    } catch (e16) {
+      console.error(`[IMG-CARD] 16:9 hero FAILED: ${e16.message}`);
+      console.error(`[IMG-CARD] 16:9 stack: ${e16.stack?.slice(0,400)||'no stack'}`);
+    }
 
     // Save inline image URL to Supabase for Worker 12 to use in blog body
     // inline uses square photo — fits naturally between paragraphs
@@ -1416,9 +1429,11 @@ async function buildVideo(quiz, workDir) {
       console.log(`[IMG-CARD] inline image URL saved: ${inlineImgData.rawUrl.slice(0,80)}`);
     }
 
-    console.log(`[IMG-CARD] ✓ thumbnail=${thumbnailUrl||'not uploaded'} hero=${heroImageUrl||'not uploaded'}`);
+    console.log(`[IMG-CARD] Summary: thumbnail=${thumbnailUrl||'FAILED'} hero=${heroImageUrl||'FAILED'}`);
   } catch (e) {
-    console.warn(`[IMG-CARD] Image card generation failed (non-fatal): ${e.message}`);
+    // Log the FULL error including stack so we can diagnose exactly why it failed
+    console.error(`[IMG-CARD] Image card generation FAILED: ${e.message}`);
+    console.error(`[IMG-CARD] Stack: ${e.stack?.slice(0,500) || 'no stack'}`);
     // Fall back to old quiz_template thumb-screen screenshot
     try {
       await showOnly('.thumb-screen');
