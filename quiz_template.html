@@ -364,12 +364,12 @@
 .thumb-screen { padding:0; }
 /* Wikipedia topic image: blurred dark photo behind all thumbnail content.
    Sits above the animated CSS background (z-index:1) but below the gradient
-   overlay (z-index:3) and content (z-index:5).
+   overlay (z-index:2) and content (z-index:5).
    Background image injected via <style> block in <head> by Worker 10.
    When image present: div gets class thumb-photo-bg-img (sets background-image).
    When no image: div gets class thumb-photo-bg-hidden (display:none). */
 .thumb-photo-bg {
-  position:absolute; inset:0; z-index:2;
+  position:absolute; inset:0; z-index:1;
   background-size:cover; background-position:center center; background-repeat:no-repeat;
   filter:blur(14px) brightness(0.32) saturate(1.4);
   transform:scale(1.08); /* prevent blur edge artifacts */
@@ -653,24 +653,20 @@
    When no Tavily photo available → display:none (zero visual impact).
 ─────────────────────────────────────────────────────────────────────── */
 .topic-photo-overlay {
-  /* NOTE: position:fixed is broken when any ancestor has will-change:transform
-     or creates a new stacking context (which .bg-orb elements do).
-     Solution: position:absolute inside each .screen, covering the full screen.
-     Each .screen is position:relative and overflow:hidden, so absolute inset:0
-     fills the entire screen perfectly. */
+  /* position:absolute inside each .screen (which is position:relative + overflow:hidden).
+     Fills the entire screen. */
   position: absolute;
   inset: 0;
-  /* z-index 1 = above bg-anim background (z:0) but below:
-       - bg-grid (z:1 but painted after so renders on top visually)
-       - content div (z:5)
-       - persistent-logo (z:50/51)
-     The photo sits behind all quiz content but above the raw gradient. */
-  /* z-index 0 = same level as bg-anim, but DOM order puts this BEFORE
-     bg-anim so the photo renders behind the theme animation layers.
-     The theme animation (bg-anim/bg-grid/bg-orb) paints on top of the photo,
-     creating a beautiful layered effect:
-       screen gradient → photo (30% opacity) → theme animation → content */
-  z-index: 0;
+  /* CRITICAL z-index CHOICE:
+     Every theme's .bg-anim has an OPAQUE gradient background and z-index:0.
+     .bg-grid and .bg-orb are z-index:1. .content is z-index:5.
+     If the photo overlay is z-index:0 (same as bg-anim), the opaque bg-anim
+     paints over it and the photo is invisible.
+     Solution: z-index:3 — this places the photo ABOVE bg-anim(0), bg-grid(1),
+     and bg-orb(1), but BELOW content(5) and persistent-logo(50).
+     So the photo sits on top of the theme background but behind all quiz text,
+     option boxes, logos. The 30% opacity lets the theme colours show through. */
+  z-index: 3;
   background-image: var(--topic-photo-url);
   background-size: cover;
   background-position: center center;
