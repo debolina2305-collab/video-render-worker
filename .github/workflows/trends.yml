@@ -11,16 +11,11 @@ on:
     # Times are US Eastern (EDT = UTC-4, summer 2026).
     # In November when clocks fall back to EST, ADD 1 HOUR to every cron.
 
-    - cron: '0 11 * * *'    # 7:00 AM ET
-    - cron: '0 13 * * *'    # 9:00 AM ET
-    - cron: '0 15 * * *'    # 11:00 AM ET
-    - cron: '0 17 * * *'    # 1:00 PM ET
-    - cron: '0 19 * * *'    # 3:00 PM ET
-    - cron: '0 21 * * *'    # 5:00 PM ET
+  
+    - cron: '0 22 * * *'    # 6:00 PM ET
     - cron: '0 23 * * *'    # 7:00 PM ET
-    - cron: '0 1 * * *'     # 9:00 PM ET
-    - cron: '0 3 * * *'     # 11:00 PM ET
-    - cron: '0 5 * * *'     # 1:00 AM ET
+    - cron: '0 0 * * *'     # 8:00 PM ET
+ 
 
   workflow_dispatch:
     inputs:
