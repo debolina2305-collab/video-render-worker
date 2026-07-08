@@ -640,14 +640,61 @@
 
 /* ===== Helper: hide an element completely ===== */
 .hidden-pre-reveal { opacity:0 !important; visibility:hidden !important; }
+
+/* ── TOPIC PHOTO OVERLAY ─────────────────────────────────────────────────
+   Tavily news photo at 30% opacity, fixed behind ALL content on EVERY screen.
+   Sits above the theme animated background (bg-anim/bg-grid/bg-orb)
+   but below all text, option cards, logos and UI elements.
+   Uses cover+center so any aspect ratio photo fills the 9:16 frame.
+   30% opacity means:
+     - Theme background colours/animations still visible through it
+     - Photo itself is visible as a subtle contextual layer
+     - All text, option boxes, logos remain 100% readable on top
+   When no Tavily photo available → display:none (zero visual impact).
+─────────────────────────────────────────────────────────────────────── */
+.topic-photo-overlay {
+  /* NOTE: position:fixed is broken when any ancestor has will-change:transform
+     or creates a new stacking context (which .bg-orb elements do).
+     Solution: position:absolute inside each .screen, covering the full screen.
+     Each .screen is position:relative and overflow:hidden, so absolute inset:0
+     fills the entire screen perfectly. */
+  position: absolute;
+  inset: 0;
+  /* z-index 1 = above bg-anim background (z:0) but below:
+       - bg-grid (z:1 but painted after so renders on top visually)
+       - content div (z:5)
+       - persistent-logo (z:50/51)
+     The photo sits behind all quiz content but above the raw gradient. */
+  /* z-index 0 = same level as bg-anim, but DOM order puts this BEFORE
+     bg-anim so the photo renders behind the theme animation layers.
+     The theme animation (bg-anim/bg-grid/bg-orb) paints on top of the photo,
+     creating a beautiful layered effect:
+       screen gradient → photo (30% opacity) → theme animation → content */
+  z-index: 0;
+  background-image: var(--topic-photo-url);
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+  opacity: 0.30;
+  pointer-events: none;
+  /* Slight blur softens photo edges so it reads as texture not a news image */
+  filter: blur(2px) saturate(0.8);
+}
+.topic-photo-overlay.no-photo {
+  display: none;
+}
 </style>
 {{thumb_bg_style_block}}
+{{VIDEO_PHOTO_STYLE_BLOCK}}
 </head>
 <body>
+
+
 
   <!-- STEP 1: HOOK + animated logo. This screen is SCREEN-RECORDED (not screenshotted)
        so the logoPop + hook-text animations actually play in the final video. -->
   <div class="screen hook-slide active">
+    <div class="topic-photo-overlay {{VIDEO_PHOTO_CLASS}}"></div>
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div><div class="bg-orb orb3"></div>
     {{theme_deco_html}}
@@ -662,6 +709,7 @@
 
   <!-- STEP 3a: question_intro_audio_url plays — question TEXT HIDDEN -->
   <div class="screen question-waiting-slide">
+    <div class="topic-photo-overlay {{VIDEO_PHOTO_CLASS}}"></div>
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="challenge-no">{{quiz_no}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
@@ -688,6 +736,7 @@
 
   <!-- STEP 3b: question_1 REVEALED + TTS -->
   <div class="screen question-appear-slide">
+    <div class="topic-photo-overlay {{VIDEO_PHOTO_CLASS}}"></div>
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="challenge-no">{{quiz_no}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
@@ -708,6 +757,7 @@
 
   <!-- STEP 4a: options_intro_audio_url plays — options HIDDEN, question stays visible -->
   <div class="screen options-waiting-slide">
+    <div class="topic-photo-overlay {{VIDEO_PHOTO_CLASS}}"></div>
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="challenge-no">{{quiz_no}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
@@ -734,6 +784,7 @@
 
   <!-- STEP 4b: options_1 REVEALED + TTS + "time starts now" -->
   <div class="screen question-static">
+    <div class="topic-photo-overlay {{VIDEO_PHOTO_CLASS}}"></div>
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="challenge-no">{{quiz_no}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
@@ -812,6 +863,7 @@
 
   <!-- STEP 9: PRE-REVEAL — audio only, no text changes -->
   <div class="screen pre-reveal-slide">
+    <div class="topic-photo-overlay {{VIDEO_PHOTO_CLASS}}"></div>
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="challenge-no">{{quiz_no}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
@@ -838,6 +890,7 @@
 
   <!-- STEP 10: ANSWER REVEAL -->
   <div class="screen answer-slide">
+    <div class="topic-photo-overlay {{VIDEO_PHOTO_CLASS}}"></div>
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="challenge-no">{{quiz_no}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
@@ -874,6 +927,7 @@
 
   <!-- CTA1: affiliate (checklist item 17) -->
   <div class="screen cta1-slide">
+    <div class="topic-photo-overlay {{VIDEO_PHOTO_CLASS}}"></div>
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="challenge-no">{{quiz_no}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
@@ -894,6 +948,7 @@
 
   <!-- REAL CHALLENGE SCREEN — styled "Want to play real challenge? Click link in description" -->
   <div class="screen cta2-slide">
+    <div class="topic-photo-overlay {{VIDEO_PHOTO_CLASS}}"></div>
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="challenge-no">{{quiz_no}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
@@ -930,6 +985,7 @@
        3) OPTIONS label + mi-options fade in at 2.8s.
        4) After MI audio plays, cta3 fades in (class toggle). -->
   <div class="screen mission-final-slide">
+    <div class="topic-photo-overlay {{VIDEO_PHOTO_CLASS}}"></div>
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="challenge-no">{{quiz_no}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
@@ -966,6 +1022,7 @@
 
   <!-- COMBINED CTA SCREEN — like/share/subscribe one by one, then cta4 -->
   <div class="screen comment-cta-screen">
+    <div class="topic-photo-overlay {{VIDEO_PHOTO_CLASS}}"></div>
     <div class="persistent-logo"><img src="{{LOGO_DATA_URI}}" alt="JAASX"></div>
     <div class="challenge-no">{{quiz_no}}</div>
     <div class="niche-marquee">{{marquee_text}}</div>
@@ -1005,6 +1062,7 @@
 
   <!-- DEDICATED THUMBNAIL SCREEN -->
   <div class="screen thumb-screen">
+    <div class="topic-photo-overlay {{VIDEO_PHOTO_CLASS}}"></div>
     <div class="bg-anim"></div><div class="bg-grid"></div>
     <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div><div class="bg-orb orb3"></div>
     {{theme_deco_html}}
