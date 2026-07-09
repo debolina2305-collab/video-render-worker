@@ -416,7 +416,8 @@ video.av-human {
 </style>`;
 
 // ─── SCREEN RECORDER CLIP ─────────────────────────────────────────────
-// Records `dur` seconds of the Puppeteer page, muxes with audioPath.
+// Records `dur` seconds of Puppeteer page (UI only — no video elements).
+// The human clip is composited by FFmpeg AFTER recording, not inside Puppeteer.
 // Returns { path, dur }.
 async function recordedClip(page, audioPath, dur, workDir, name) {
   const rawPath  = path.join(workDir, `${name}_raw.mp4`);
@@ -431,7 +432,7 @@ async function recordedClip(page, audioPath, dur, workDir, name) {
   await new Promise(r => setTimeout(r, Math.max(dur, 0.5) * 1000));
   await withTimeout(rec.stop(), TIMEOUT_RECORDER, `${name}.stop`);
 
-  // Re-encode VP8→H264
+  // Re-encode VP8→H264 (PuppeteerScreenRecorder outputs VP8/WebM)
   await ffmpeg(
     `-y -i "${rawPath}" -an -c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264Path}"`,
     `${name}_enc`
@@ -455,6 +456,57 @@ async function recordedClip(page, audioPath, dur, workDir, name) {
   return { path: outPath, dur };
 }
 
+// ─── FFMPEG COMPOSITE: overlay human circle onto a UI clip ────────────
+// Takes a Puppeteer-recorded UI clip and overlays a circular crop of the
+// human video clip in the bottom-left corner (matching the CSS avatar strip).
+// The dog circle stays as CSS — it's in the UI recording already.
+//
+//  uiClipPath     — Puppeteer screen recording (H264, 1080x1920)
+//  humanClipPath  — R2 downloaded .mp4 of the human host
+//  dur            — target duration in seconds
+//  outPath        — output file path
+//  circleSize     — diameter in pixels (default 140)
+//  padBottom      — px from bottom of frame to circle centre (default 106)
+//  padLeft        — px from left edge to circle centre (default 172)
+async function compositeHumanCircle(uiClipPath, humanClipPath, dur, outPath, circleSize = 140, padBottom = 106, padLeft = 172) {
+  // Circle geometry
+  const r  = circleSize / 2;
+  // Position: bottom-left, matching CSS `bottom:36px; padding:0 32px`
+  // Circle centre Y from top = 1920 - padBottom, centre X = padLeft
+  const cx = padLeft;
+  const cy = 1920 - padBottom;
+  // Top-left corner of the bounding square in the output frame
+  const ox = cx - r;
+  const oy = cy - r;
+
+  // FFmpeg filter_complex:
+  // 1. Loop human clip to cover full duration
+  // 2. Scale to circle size
+  // 3. Crop to circle using an alpha mask (alphamerge with geq)
+  // 4. Overlay onto UI clip at (ox, oy)
+  const filter = [
+    // Scale human clip to circleSize x circleSize
+    `[1:v]scale=${circleSize}:${circleSize}[hscaled]`,
+    // Create circular alpha mask: white inside circle, black outside
+    `[hscaled]format=yuva420p,geq=` +
+      `lum='p(X,Y)':` +
+      `a='if(lte(pow(X-${r}\\,2)+pow(Y-${r}\\,2)\\,pow(${r}\\,2))\\,255\\,0)'` +
+      `[hcircle]`,
+    // Overlay circle onto UI at computed position
+    `[0:v][hcircle]overlay=${ox}:${oy}:shortest=1[vout]`
+  ].join(';');
+
+  await ffmpeg(
+    `-y -i "${uiClipPath}" -stream_loop -1 -i "${humanClipPath}" ` +
+    `-filter_complex "${filter}" ` +
+    `-map "[vout]" -map 0:a? ` +
+    `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 ` +
+    `-c:a aac -b:a 128k -ar 44100 -ac 1 ` +
+    `-t ${dur} "${outPath}"`,
+    'composite_circle'
+  );
+}
+
 // ─── SHOW SCREEN (hide all .screen, activate selector) ────────────────
 async function showScreen(page, sel) {
   await page.evaluate(s => {
@@ -465,48 +517,21 @@ async function showScreen(page, sel) {
   await new Promise(r => setTimeout(r, 80));
 }
 
-// ─── SET AVATAR MODE ──────────────────────────────────────────────────
-// mode: 'human_speaking' | 'dog_speaking' | 'both_silent'
-// humanVideoPath: local path to the .mp4 clip to show in the human circle.
-//   Pass null to keep the current src unchanged.
-//   Pass a path to swap to a different clip (idle → timeup → cta4 etc).
-async function setAvatarMode(page, mode, humanVideoPath) {
-  // Step 1: swap video src if a new clip is provided
-  if (humanVideoPath) {
-    const fileUrl = `file://${humanVideoPath}`;
-    await page.evaluate((src) => {
-      let v = document.getElementById('av-human');
-      if (!v) return;
-      if (v.tagName !== 'VIDEO') {
-        // Replace placeholder div with a proper <video> element
-        const vid = document.createElement('video');
-        vid.id        = 'av-human';
-        vid.className = v.className;
-        vid.autoplay  = true;
-        vid.loop      = true;
-        vid.muted     = true;
-        vid.setAttribute('playsinline', '');
-        vid.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
-        v.parentNode.replaceChild(vid, v);
-        v = vid;
-      }
-      // Only reload if src actually changed — avoids flicker on same-clip steps
-      if (v.getAttribute('src') !== src) {
-        v.pause();
-        v.setAttribute('src', src);
-        v.load();
-        v.play().catch(() => {});
-      }
-    }, fileUrl);
-    await new Promise(r => setTimeout(r, 150)); // let first frame paint
-  }
+// ─── SET AVATAR DOG MODE (CSS only — human handled by FFmpeg) ─────────
+// mode: 'dog_speaking' | 'human_speaking' | 'both_silent'
+// NOTE: Human video is NOT displayed inside Puppeteer. The av-human div
+//       is a placeholder circle that is visually hidden behind the FFmpeg
+//       composite step. The dog CSS animation IS real and appears in recording.
+async function setAvatarMode(page, mode) {
+  await page.evaluate((m) => {
+    const dog = document.getElementById('av-dog');
+    if (dog) dog.classList.toggle('av-dog-speaking', m === 'dog_speaking');
 
-  // Step 2: apply speaking / silent CSS classes
-  await page.evaluate((mode) => {
+    // Human: just show the speaking glow border when human is speaking
+    // The actual video is composited by FFmpeg, not displayed by Puppeteer.
+    // The placeholder div shows a subtle glowing border to mark the slot.
     const human = document.getElementById('av-human');
-    const dog   = document.getElementById('av-dog');
-    if (human) human.classList.toggle('av-speaking',     mode === 'human_speaking');
-    if (dog)   dog.classList.toggle('av-dog-speaking',   mode === 'dog_speaking');
+    if (human) human.classList.toggle('av-speaking', m === 'human_speaking');
   }, mode);
 }
 
@@ -541,97 +566,54 @@ async function applyBgMusic(videoPath, totalDur, voiceRanges, bgFile, workDir) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// STEP 1+2 — FULL-SCREEN HUMAN VIDEO (hook + question intro combined)
+// STEP 1+2 — FULL-SCREEN HUMAN HOST VIDEO
 //
-// The human_hook .mp4 clip plays full-screen. We overlay it on the
-// Puppeteer page, record for its actual duration (dynamic), and mux
-// the clip's own audio track using ffmpeg (not TTS — the audio is
-// already embedded in the .mp4).
+// Architecture: do NOT use Puppeteer for this step at all.
+// The human_hook.mp4 IS the video for steps 1+2. We just re-encode it
+// to our target spec (1080x1920, H264) and use it directly.
+// No screen-recording needed — the host clip is the full screen content.
 // ═══════════════════════════════════════════════════════════════════════
-async function recordHookIntroStep(page, humanHookPath, workDir) {
+async function buildHookStep(humanHookPath, workDir) {
   const stepName = 'sh_step12';
-
-  // Get the actual duration of the human host clip
-  const hostDur = humanHookPath ? Math.max(await videoDur(humanHookPath), 1.0) : 3.0;
-  console.log(`[SHORT] Step 1+2 duration from host clip: ${hostDur.toFixed(2)}s`);
-
-  // Inject a full-screen video overlay on top of the current page
-  // We use a fixed-position overlay <video> so the quiz template
-  // background/theme is still rendered behind it.
-  if (humanHookPath) {
-    const fileUrl = `file://${humanHookPath}`;
-    await page.evaluate((src) => {
-      // Remove existing overlay if any
-      document.getElementById('host-fullscreen')?.remove();
-      const vid = document.createElement('video');
-      vid.id = 'host-fullscreen';
-      vid.src = src;
-      vid.autoplay = true;
-      vid.muted = true;         // audio muxed separately by ffmpeg
-      vid.setAttribute('playsinline', '');
-      vid.style.cssText = [
-        'position:fixed', 'inset:0', 'width:100%', 'height:100%',
-        'object-fit:cover', 'z-index:8888', 'background:#000'
-      ].join(';');
-      document.body.appendChild(vid);
-      vid.play().catch(() => {});
-    }, fileUrl);
-    await new Promise(r => setTimeout(r, 200)); // let first frame paint
-  } else {
-    // No host clip — show hook slide from the quiz template as fallback
-    await showScreen(page, '.hook-slide');
-  }
-
-  // Record the screen for the clip's full duration
-  const rawPath  = path.join(workDir, `${stepName}_raw.mp4`);
-  const h264Path = path.join(workDir, `${stepName}_h264.mp4`);
   const outPath  = path.join(workDir, `${stepName}.mp4`);
 
-  const rec = new PuppeteerScreenRecorder(page, {
-    fps: 30, videoFrame: { width: 1080, height: 1920 },
-    aspectRatio: '9:16', followNewTab: false
-  });
-  await rec.start(rawPath);
-  await new Promise(r => setTimeout(r, hostDur * 1000));
-  await withTimeout(rec.stop(), TIMEOUT_RECORDER, `${stepName}.stop`);
-
-  await ffmpeg(
-    `-y -i "${rawPath}" -an -c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264Path}"`,
-    `${stepName}_enc`
-  );
-
-  // Audio source: extract audio from the host clip itself (contains hook+intro audio)
-  // If no host clip, use silence (pre-recorded audio is in the video)
   if (humanHookPath && await fileExists(humanHookPath)) {
-    // Re-encode audio to AAC mono 44100Hz — handles any source codec (aac, mp3, pcm, opus)
-    const extractedAudio = path.join(workDir, `${stepName}_audio.m4a`);
+    const hostDur = Math.max(await videoDur(humanHookPath), 1.0);
+    console.log(`[SHORT] Step 1+2: using host clip directly (${hostDur.toFixed(2)}s)`);
+
+    // Re-encode to our exact spec: 1080x1920, 30fps, H264, AAC audio
+    // The clip's own audio IS the hook+intro speech — no TTS needed.
     await ffmpeg(
-      `-y -i "${humanHookPath}" -vn -ar 44100 -ac 1 -c:a aac -b:a 128k "${extractedAudio}"`,
-      `${stepName}_audio_extract`
+      `-y -i "${humanHookPath}" ` +
+      `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 ` +
+      `-vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920" ` +
+      `-c:a aac -b:a 128k -ar 44100 -ac 1 ` +
+      `-t ${hostDur} "${outPath}"`,
+      `${stepName}_encode`
     );
-    if (await fileExists(extractedAudio) && await audioDur(extractedAudio) > 0) {
-      await ffmpeg(
-        `-y -stream_loop -1 -i "${h264Path}" -i "${extractedAudio}" ` +
-        `-map 0:v:0 -map 1:a:0 ` +
-        `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 ` +
-        `-c:a aac -b:a 128k -ar 44100 -ac 1 ` +
-        `-t ${hostDur} "${outPath}"`,
-        `${stepName}_mux`
-      );
-    } else {
-      console.warn(`[SHORT] Step 1+2: host clip has no audio track — video only`);
-      await ffmpeg(`-y -i "${h264Path}" -c:v copy -an -t ${hostDur} "${outPath}"`, `${stepName}_noaudio`);
-    }
+    return { path: outPath, dur: hostDur };
   } else {
-    // No host clip — fallback hook slide, no audio (bg music fills in)
-    await ffmpeg(`-y -i "${h264Path}" -c:v copy -an -t ${hostDur} "${outPath}"`, `${stepName}_noaudio`);
+    // No host clip — Puppeteer fallback: record the hook slide for 3s
+    console.log('[SHORT] Step 1+2: no host clip — using hook-slide fallback');
+    return null; // caller handles null and records hook slide
   }
-
-  // Remove the fullscreen overlay so it doesn't appear in subsequent steps
-  await page.evaluate(() => { document.getElementById('host-fullscreen')?.remove(); });
-
-  return { path: outPath, dur: hostDur };
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// STEPS 3+4 — Q+OPTIONS + COUNTDOWN
+//
+// Architecture:
+//  1. Puppeteer records the UI (dog CSS rings animate — captured correctly)
+//  2. FFmpeg composites humanIdleFile into the bottom-left circle
+// ═══════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════
+// STEPS 5+6 — TIMEUP + CTA
+//
+// Architecture:
+//  1. Puppeteer records the UI (dog idle, speaking glow border on human slot)
+//  2. FFmpeg composites humanTimeupFile / humanCta4File into human circle
+// ═══════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════
 // MAIN SHORT VIDEO BUILDER
@@ -676,16 +658,23 @@ async function buildShortVideo(quiz, workDir) {
   // ── Avatar video downloads (from R2 via avatar_assets table) ──────
   console.log('[SHORT] Downloading avatar clips...');
   const [
-    humanHookFile,    // full-screen for steps 1+2
-    humanIdleFile,    // looping idle for steps 3+4
-    humanTimeupFile,  // speaking for step 5
-    humanCta4File,    // speaking for step 6
+    humanHookFile,    // full-screen for steps 1+2 (used directly as video)
+    humanIdleFile,    // composited into circle for steps 3+4
+    humanTimeupFile,  // composited into circle for step 5
+    humanCta4File,    // composited into circle for step 6
   ] = await Promise.all([
     download(avatarUrls.human_hook,   'av_hook'),
     download(avatarUrls.human_idle,   'av_idle'),
     download(avatarUrls.human_timeup, 'av_timeup'),
     download(avatarUrls.human_cta4,   'av_cta4'),
   ]);
+
+  console.log('[SHORT] Avatar clips:', {
+    hook:   humanHookFile   ? 'OK' : 'missing (will use fallback)',
+    idle:   humanIdleFile   ? 'OK' : 'missing (circle will be placeholder)',
+    timeup: humanTimeupFile ? 'OK' : 'missing (will use idle)',
+    cta4:   humanCta4File   ? 'OK' : 'missing (will use idle)',
+  });
 
   let resolvedBgFile = bgFile;
   if (!resolvedBgFile) {
@@ -696,7 +685,7 @@ async function buildShortVideo(quiz, workDir) {
   // ── Theme ──────────────────────────────────────────────────────────
   const { themeCss, decoHtml } = await resolveTheme(quiz);
 
-  // ── Build HTML (reuse quiz_template.html) ─────────────────────────
+  // ── Build HTML ─────────────────────────────────────────────────────
   const niceLabel = niche ? niche.charAt(0).toUpperCase() + niche.slice(1) : 'General';
   const nicheNo   = quiz.niche_challenge_no || 1;
 
@@ -716,10 +705,9 @@ async function buildShortVideo(quiz, workDir) {
     '{{options[2]}}': options[2]||'', '{{options[3]}}': options[3]||'',
     '{{opt0_class}}': optClass(0), '{{opt1_class}}': optClass(1),
     '{{opt2_class}}': optClass(2), '{{opt3_class}}': optClass(3),
-    // No answer reveal — blank all reveal classes
     '{{rev0_class}}': '', '{{rev1_class}}': '', '{{rev2_class}}': '', '{{rev3_class}}': '',
     '{{hint}}':            quiz.hint_1 || '',
-    '{{correct_answer}}':  '',   // deliberately blank
+    '{{correct_answer}}':  '',
     '{{explanation_1}}':   '',
     '{{cta1_description_text}}': '',
     '{{cta2_text}}':       quiz.cta2_text || 'Play the full challenge!',
@@ -754,16 +742,19 @@ async function buildShortVideo(quiz, workDir) {
   };
   for (const [k, v] of Object.entries(R)) html = html.split(k).join(String(v ?? ''));
 
-  // ── Inject avatar CSS + short-format overrides into <head> ─────────
+  // ── Short-format CSS overrides ─────────────────────────────────────
+  // IMPORTANT: The human circle is a PLACEHOLDER div that shows the slot.
+  // The actual human video is composited by FFmpeg after Puppeteer recording.
+  // The dog CSS animation IS real and will appear correctly in the recording.
   const shortCss = `
 <style id="short-fmt-css">
-/* Slide bottom padding so content doesn't sit behind avatar strip */
+/* Slide bottom padding so content stays above avatar strip */
 .short-fmt .question-phase,
 .short-fmt .pre-reveal-slide,
 .short-fmt .comment-cta-screen {
   padding-bottom: ${AVATAR_SIZE + 60}px !important;
 }
-/* Q+Options appear simultaneously */
+/* Q+Options appear simultaneously (no stagger animation) */
 .short-fmt .question-phase .question-text,
 .short-fmt .question-phase .options-grid,
 .short-fmt .question-phase .option-btn {
@@ -778,10 +769,10 @@ async function buildShortVideo(quiz, workDir) {
   border-color: unset !important;
   color: unset !important;
 }
-/* Hide hint — too much info for short */
+/* Hide hint — too much info for short format */
 .short-fmt .hint-wrap,
 .short-fmt .hint-text { display: none !important; }
-/* Eliminated options fade at right time via existing template logic */
+/* Eliminated options disappear */
 .short-fmt .option-btn.eliminate {
   opacity: 0 !important;
   pointer-events: none !important;
@@ -791,53 +782,50 @@ ${AVATAR_CSS}`;
 
   html = html.replace('</head>', `${shortCss}\n</head>`);
 
-  // ── Inject avatar strip HTML into body (hidden initially) ──────────
-  // It uses humanIdleFile for the circle video.
-  // We convert to data URI so Puppeteer can load it via file:// policy.
-  // Large videos are handled via file:// URL instead to avoid base64 bloat.
-  const idleFileUrl = humanIdleFile ? `file://${humanIdleFile}` : null;
-  const avatarStripHtml = buildAvatarStripHtml(null, humanIdleFile, 'both_silent');
-  html = html.replace('</body>', `${avatarStripHtml}\n</body>`);
+  // ── Avatar strip: human is a styled placeholder div ────────────────
+  // The actual video is composited by FFmpeg. The placeholder holds the
+  // position and shows the speaking glow border via .av-speaking CSS.
+  // The dog div with its ring elements IS real and captured by Puppeteer.
+  const avatarStripHtml = `
+<!-- AVATAR STRIP — human=placeholder (FFmpeg composites real video), dog=real CSS -->
+<div id="avatar-strip">
+  <div id="av-human" class="av-circle av-human av-placeholder">
+    <span class="av-placeholder-icon" style="font-size:56px;opacity:0.15">👤</span>
+  </div>
+  <div id="av-dog" class="av-circle av-dog">
+    <span class="av-dog-face">🐶</span>
+    <div class="av-dog-ring av-dog-ring-1"></div>
+    <div class="av-dog-ring av-dog-ring-2"></div>
+    <div class="av-dog-ring av-dog-ring-3"></div>
+  </div>
+</div>`;
 
-  // If idle video exists, patch the src to use file:// URL
-  if (idleFileUrl) {
-    html = html.replace(
-      'id="av-human"',
-      `id="av-human" src="${idleFileUrl}"`
-    );
-  }
+  html = html.replace('</body>', `${avatarStripHtml}\n</body>`);
 
   const htmlPath = path.join(workDir, 'short_index.html');
   await fs.writeFile(htmlPath, html);
 
-  // ── Launch Puppeteer ────────────────────────────────────────────────
+  // ── Launch Puppeteer ───────────────────────────────────────────────
   const browser = await puppeteer.launch({
     headless: 'new',
     args: [
       '--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage',
       '--disable-gpu','--disable-web-security','--allow-file-access-from-files',
-      '--autoplay-policy=no-user-gesture-required',  // allow video autoplay
+      '--autoplay-policy=no-user-gesture-required',
     ]
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920 });
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0', timeout: 30000 });
   await new Promise(r => setTimeout(r, 800));
   await page.evaluate(() => { document.body.classList.add('short-fmt'); });
 
-  // Start idle video playing
-  await page.evaluate(() => {
-    const v = document.getElementById('av-human');
-    if (v?.tagName === 'VIDEO') v.play().catch(() => {});
-  });
-
-  // ── Hide avatar strip until step 3 ─────────────────────────────────
+  // Hide avatar strip until step 3
   await page.evaluate(() => {
     const strip = document.getElementById('avatar-strip');
     if (strip) strip.style.display = 'none';
   });
 
-  // Clip accumulator
   const clips       = [];
   const voiceRanges = [];
   let cursor = 0;
@@ -849,27 +837,45 @@ ${AVATAR_CSS}`;
     console.log(`[SHORT] + ${path.basename(clip.path)} ${clip.dur.toFixed(2)}s  (Σ ${cursor.toFixed(2)}s)`);
   }
 
-  // ══ STEP 1+2 — COMBINED FULL-SCREEN HUMAN HOST CLIP ════════════════
-  // The human_hook.mp4 plays full-screen. Its own audio track contains
-  // both the hook line and the question intro. Dynamic duration.
+  // ══ STEP 1+2 — FULL-SCREEN HOST CLIP (used directly, not Puppeteer) ══
+  // The human_hook.mp4 IS the video for this step. FFmpeg re-encodes it
+  // to our spec. No Puppeteer recording at all for this step.
   console.log('[SHORT] ── Step 1+2: Full-screen host clip');
-  // Show hook slide behind the video overlay
-  await showScreen(page, '.hook-slide');
-  const step12Clip = await recordHookIntroStep(page, humanHookFile, workDir);
-  // Step 1+2 audio comes from the host clip — mark as voice so bg music ducks
-  pushClip(step12Clip, true);
+  const step12Result = await buildHookStep(humanHookFile, workDir);
+
+  if (step12Result) {
+    // ✓ Have real host clip — use it directly
+    pushClip(step12Result, true);
+  } else {
+    // ✗ No host clip — Puppeteer fallback: hook slide
+    console.log('[SHORT] Step 1+2 fallback: recording hook slide');
+    await showScreen(page, '.hook-slide');
+    const fallbackDur = 3.0;
+    const rawPath  = path.join(workDir, 'sh_step12_raw.mp4');
+    const h264Path = path.join(workDir, 'sh_step12_h264.mp4');
+    const outPath  = path.join(workDir, 'sh_step12.mp4');
+    const rec = new PuppeteerScreenRecorder(page, {
+      fps: 30, videoFrame: { width: 1080, height: 1920 },
+      aspectRatio: '9:16', followNewTab: false
+    });
+    await rec.start(rawPath);
+    await new Promise(r => setTimeout(r, fallbackDur * 1000));
+    await withTimeout(rec.stop(), TIMEOUT_RECORDER, 'step12_fallback.stop');
+    await ffmpeg(`-y -i "${rawPath}" -an -c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264Path}"`, 'step12_fallback_enc');
+    await ffmpeg(`-y -i "${h264Path}" -c:v copy -an -t ${fallbackDur} "${outPath}"`, 'step12_fallback_vid');
+    pushClip({ path: outPath, dur: fallbackDur }, false);
+  }
 
   // ══ STEP 3 — QUESTION + OPTIONS + DOG TTS ══════════════════════════
-  // Avatar strip appears. Dog speaking. Question + options both visible.
-  // TTS reads question, then "5 seconds, time starts now!"
+  // Puppeteer records: UI with dog CSS animation (real).
+  // FFmpeg composites: humanIdleFile into human circle slot.
   console.log('[SHORT] ── Step 3: Q + Options + Dog TTS');
 
-  // Show avatar strip, set dog to speaking mode, human idle
   await page.evaluate(() => {
     const strip = document.getElementById('avatar-strip');
     if (strip) strip.style.display = 'flex';
   });
-  await setAvatarMode(page, 'dog_speaking', humanIdleFile);
+  await setAvatarMode(page, 'dog_speaking');
   await showScreen(page, '.question-phase');
 
   // Freeze countdown timer — it only ticks in step 4
@@ -879,7 +885,7 @@ ${AVATAR_CSS}`;
     ).forEach(el => { el.style.animationPlayState = 'paused'; });
   });
 
-  // Build step 3 audio
+  // Build step 3 audio: sfx → question TTS → gap → "time starts now"
   const s3Parts = [];
   if (sfxFile) {
     s3Parts.push(sfxFile);
@@ -901,15 +907,29 @@ ${AVATAR_CSS}`;
   await concatAudio(s3Parts, step3Audio, workDir);
   const step3Dur = Math.max(await audioDur(step3Audio), 2.0);
   console.log(`[SHORT] Step 3 audio: ${step3Dur.toFixed(2)}s`);
-  pushClip(await recordedClip(page, step3Audio, step3Dur, workDir, 'sh_step3'));
+
+  // Record Puppeteer UI (dog animation is real here)
+  const step3Ui = await recordedClip(page, step3Audio, step3Dur, workDir, 'sh_step3_ui');
+
+  // FFmpeg: composite human idle video into circle slot (bottom-left)
+  let step3Final;
+  if (humanIdleFile && await fileExists(humanIdleFile)) {
+    const step3CompPath = path.join(workDir, 'sh_step3.mp4');
+    await compositeHumanCircle(step3Ui.path, humanIdleFile, step3Dur, step3CompPath);
+    step3Final = { path: step3CompPath, dur: step3Dur };
+    console.log('[SHORT] Step 3: human idle composited onto UI');
+  } else {
+    step3Final = step3Ui; // no idle clip — placeholder div stays visible
+    console.log('[SHORT] Step 3: no idle clip — using placeholder');
+  }
+  pushClip(step3Final, true);
 
   // ══ STEP 4 — COUNTDOWN 5s (both silent) ════════════════════════════
   console.log('[SHORT] ── Step 4: Countdown 5s');
 
-  // Switch both to silent/idle
-  await setAvatarMode(page, 'both_silent', humanIdleFile);
+  await setAvatarMode(page, 'both_silent');
 
-  // Resume countdown timer from the start
+  // Resume countdown timer
   await page.evaluate((cd, fa, ft) => {
     document.querySelectorAll(
       '.countdown-timer,.timer-ring,.timer-bar,[class*="countdown"],[class*="timer"]'
@@ -920,7 +940,6 @@ ${AVATAR_CSS}`;
       el.style.animationPlayState = 'running';
       el.style.animationDuration  = cd + 's';
     });
-    // Update CSS vars for 5s countdown
     const qp = document.querySelector('.question-phase');
     if (qp) {
       qp.style.setProperty('--qtime', cd);
@@ -938,14 +957,28 @@ ${AVATAR_CSS}`;
   } else {
     await silence(SHORT_COUNTDOWN, cdAudioPath);
   }
+
+  // Record Puppeteer UI
+  const step4Ui = await recordedClip(page, cdAudioPath, SHORT_COUNTDOWN, workDir, 'sh_step4_ui');
+
+  // FFmpeg: composite human idle video into circle slot
+  let step4Final;
+  if (humanIdleFile && await fileExists(humanIdleFile)) {
+    const step4CompPath = path.join(workDir, 'sh_step4.mp4');
+    await compositeHumanCircle(step4Ui.path, humanIdleFile, SHORT_COUNTDOWN, step4CompPath);
+    step4Final = { path: step4CompPath, dur: SHORT_COUNTDOWN };
+    console.log('[SHORT] Step 4: human idle composited onto UI');
+  } else {
+    step4Final = step4Ui;
+    console.log('[SHORT] Step 4: no idle clip — using placeholder');
+  }
   // Countdown is not a voice range — bg music stays at base volume
-  pushClip(await recordedClip(page, cdAudioPath, SHORT_COUNTDOWN, workDir, 'sh_step4'), false);
+  pushClip(step4Final, false);
 
   // ══ STEP 5 — TIMEUP (human speaking, dog silent) ═══════════════════
   console.log('[SHORT] ── Step 5: Timeup');
 
-  // Switch to timeup clip on human circle, set human speaking mode
-  await setAvatarMode(page, 'human_speaking', humanTimeupFile || humanIdleFile);
+  await setAvatarMode(page, 'human_speaking'); // shows glow border in UI
   await showScreen(page, '.pre-reveal-slide');
 
   let timeupAudioPath;
@@ -957,15 +990,32 @@ ${AVATAR_CSS}`;
     await tts(quiz.timeup_text || "Time's up!", voice, timeupAudioPath, 3);
   }
   const timeupDur = Math.max(await audioDur(timeupAudioPath), 1.0);
-  pushClip(await recordedClip(page, timeupAudioPath, timeupDur, workDir, 'sh_step5'));
+
+  // Record Puppeteer UI (glow border shows, dog idle)
+  const step5Ui = await recordedClip(page, timeupAudioPath, timeupDur, workDir, 'sh_step5_ui');
+
+  // FFmpeg: composite human timeup (or idle fallback) into circle
+  const step5HumanClip = (humanTimeupFile && await fileExists(humanTimeupFile))
+    ? humanTimeupFile
+    : (humanIdleFile && await fileExists(humanIdleFile)) ? humanIdleFile : null;
+
+  let step5Final;
+  if (step5HumanClip) {
+    const step5CompPath = path.join(workDir, 'sh_step5.mp4');
+    await compositeHumanCircle(step5Ui.path, step5HumanClip, timeupDur, step5CompPath);
+    step5Final = { path: step5CompPath, dur: timeupDur };
+    console.log(`[SHORT] Step 5: ${humanTimeupFile ? 'timeup' : 'idle'} clip composited`);
+  } else {
+    step5Final = step5Ui;
+    console.log('[SHORT] Step 5: no human clip — using placeholder');
+  }
+  pushClip(step5Final, true);
 
   // ══ STEP 6 — CTA (human speaking, dog silent) ══════════════════════
   console.log('[SHORT] ── Step 6: CTA');
 
-  // Switch to cta4 clip on human circle, keep human speaking mode
-  await setAvatarMode(page, 'human_speaking', humanCta4File || humanIdleFile);
+  await setAvatarMode(page, 'human_speaking');
 
-  // Show comment CTA screen if it exists, otherwise stay on pre-reveal
   const ctaSel = await page.evaluate(() => {
     return document.querySelector('.comment-cta-screen') ? '.comment-cta-screen' : '.pre-reveal-slide';
   });
@@ -980,7 +1030,26 @@ ${AVATAR_CSS}`;
     await tts(quiz.cta4_text || 'Write your answer in the comments right now!', voice, cta4Path, 3);
   }
   const cta4Dur = Math.max(await audioDur(cta4Path), 1.5);
-  pushClip(await recordedClip(page, cta4Path, cta4Dur, workDir, 'sh_step6'));
+
+  // Record Puppeteer UI
+  const step6Ui = await recordedClip(page, cta4Path, cta4Dur, workDir, 'sh_step6_ui');
+
+  // FFmpeg: composite human cta4 (or idle fallback) into circle
+  const step6HumanClip = (humanCta4File && await fileExists(humanCta4File))
+    ? humanCta4File
+    : (humanIdleFile && await fileExists(humanIdleFile)) ? humanIdleFile : null;
+
+  let step6Final;
+  if (step6HumanClip) {
+    const step6CompPath = path.join(workDir, 'sh_step6.mp4');
+    await compositeHumanCircle(step6Ui.path, step6HumanClip, cta4Dur, step6CompPath);
+    step6Final = { path: step6CompPath, dur: cta4Dur };
+    console.log(`[SHORT] Step 6: ${humanCta4File ? 'cta4' : 'idle'} clip composited`);
+  } else {
+    step6Final = step6Ui;
+    console.log('[SHORT] Step 6: no human clip — using placeholder');
+  }
+  pushClip(step6Final, true);
 
   await browser.close();
 
@@ -989,7 +1058,7 @@ ${AVATAR_CSS}`;
   console.log(`\n[SHORT] ── Assembling ${clips.length} clips — ${totalDur.toFixed(2)}s total`);
 
   const concatTxt  = path.join(workDir,'sh_concat.txt');
-  await fs.writeFile(concatTxt, clips.map(c => `file '${c.path.replace(/'/g,"'\\''")}' `).join('\n'));
+  await fs.writeFile(concatTxt, clips.map(c => `file '${c.path.replace(/'/g,"'\\''")}'`).join('\n'));
   const concatenated = path.join(workDir,'sh_concatenated.mp4');
   await ffmpeg(
     `-y -f concat -safe 0 -i "${concatTxt}" ` +
@@ -1011,6 +1080,7 @@ ${AVATAR_CSS}`;
 
   return { videoPath: finalPath, durationSec: finalDur };
 }
+
 
 // ─── FORMAT ASSIGNER ──────────────────────────────────────────────────
 const { pollMyFormat, markDone, markError } = require('./formatAssigner');
