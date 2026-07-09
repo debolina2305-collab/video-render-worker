@@ -1012,32 +1012,32 @@ ${AVATAR_CSS}`;
   return { videoPath: finalPath, durationSec: finalDur };
 }
 
+// ─── FORMAT ASSIGNER ──────────────────────────────────────────────────
+const { pollMyFormat, markDone, markError } = require('./formatAssigner');
+
+async function patchForAssigner(pathStr, body) {
+  const res = await fetch(`${cleanUrl}/rest/v1/${pathStr}`, {
+    method: 'PATCH',
+    headers: {
+      'apikey':        supabaseKey,
+      'Authorization': `Bearer ${supabaseKey}`,
+      'Content-Type':  'application/json',
+      'Prefer':        'return=minimal',
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error(`PATCH ${pathStr} -> ${res.status}: ${await res.text()}`);
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // JOB PROCESSOR
 // ═══════════════════════════════════════════════════════════════════════
 async function processJobs() {
   console.log('[SHORT-WORKER] Starting — avatar-strip short format');
 
-  let rows = await fetchSupabase(
-    `quiz?video_status=eq.pending_short&is_active=eq.true&quiz_enriched=eq.true&order=created_at.asc&limit=1&select=*`
-  ).catch(() => null);
-
-  if (!rows?.length) {
-    console.log('[SHORT-WORKER] No pending_short rows — picking newest pending row');
-    rows = await fetchSupabase(
-      `quiz?video_status=eq.pending&is_active=eq.true&quiz_enriched=eq.true&order=created_at.desc&limit=1&select=*`
-    ).catch(() => null);
-  }
-
-  if (!rows?.length) { console.log('[SHORT-WORKER] Nothing to render.'); return; }
-
-  const quiz = rows[0];
-  console.log(`[SHORT-WORKER] "${quiz.topic}" id=${quiz.id}`);
-
-  await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ video_status: 'processing_short', updated_at: new Date().toISOString() })
-  }).catch(() => {});
+  const result = await pollMyFormat(fetchSupabase, patchForAssigner, 'short', '[SHORT-WORKER]');
+  if (!result) return;
+  const { quiz, cfg } = result;
 
   const workDir = `/tmp/short_${uuidv4()}`;
   await ensureDir(workDir);
@@ -1068,22 +1068,8 @@ async function processJobs() {
       } catch (e) { console.warn(`[R2] Upload failed: ${e.message}`); }
     }
 
-    const patch = { updated_at: new Date().toISOString() };
-    if (shortVideoUrl) {
-      await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ ...patch, short_video_url: shortVideoUrl })
-      }).catch(async () => {
-        // short_video_url column may not exist yet
-        await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
-          method: 'PATCH', body: JSON.stringify(patch)
-        }).catch(() => {});
-      });
-    } else {
-      await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
-        method: 'PATCH', body: JSON.stringify(patch)
-      }).catch(() => {});
-    }
+    // markDone handles the status column + video URL column atomically
+    await markDone(patchForAssigner, quiz.id, cfg, shortVideoUrl);
 
     await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
     console.log(`[SHORT-WORKER] Artifact: ${artifactPath}`);
@@ -1091,14 +1077,7 @@ async function processJobs() {
   } catch (err) {
     console.error('[SHORT-WORKER] FAILED:', err.message);
     console.error(err.stack?.slice(0, 600) || '');
-    await fetchSupabase(`quiz?id=eq.${quiz.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        video_status: 'error',
-        generation_error: `[short] ${String(err.message||err).slice(0,700)}`,
-        updated_at: new Date().toISOString()
-      })
-    }).catch(() => {});
+    await markError(patchForAssigner, quiz.id, cfg, err.message);
     await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
     throw err;
   }

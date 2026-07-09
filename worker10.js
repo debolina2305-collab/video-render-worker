@@ -986,10 +986,14 @@ async function processJobs() {
   //             recoverable (video_status='skipped' → re-queued next run
   //             only if no fresh topics exist).
 
-  // Fetch pending rows — newest first so we naturally find the freshest topic
+  // Fetch pending rows — newest first so we naturally find the freshest topic.
+  // Dual query: rows assigned to long format use long_status=pending_long;
+  // legacy rows (pre-migration, assigned_format null) fall back to video_status=pending.
+  // OR filter covers both so worker10 handles whichever it finds.
   const pendingRows = await fetchSupabase(
-    'quiz?video_status=eq.pending&is_active=eq.true&quiz_enriched=eq.true' +
-    '&select=id,topic,topic_slug,created_at&order=created_at.desc&limit=500'
+    'quiz?or=(long_status.eq.pending_long,and(assigned_format.is.null,video_status.eq.pending))' +
+    '&is_active=eq.true&quiz_enriched=eq.true' +
+    '&select=id,topic,topic_slug,created_at,assigned_format,long_status&order=created_at.desc&limit=500'
   );
   if (!pendingRows?.length) {
     // No fresh pending — check if any skipped rows can be revived
@@ -1066,7 +1070,10 @@ async function processJobs() {
 
   const quiz = rows[0];
   console.log(`[WORKER] Processing: ${quiz.id} — ${quiz.topic}`);
-  await fetchSupabase(`quiz?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify({video_status:'processing',updated_at:new Date().toISOString()})});
+  // Claim: set both video_status (legacy compat) and long_status (new system)
+  const claimPatch = { video_status: 'processing', updated_at: new Date().toISOString() };
+  if (quiz.long_status === 'pending_long') claimPatch.long_status = 'rendering_long';
+  await fetchSupabase(`quiz?id=eq.\${quiz.id}`,{method:'PATCH',body:JSON.stringify(claimPatch)});
 
   const workDir = `/tmp/video_${uuidv4()}`;
   await ensureDir(workDir);
@@ -1106,6 +1113,8 @@ async function processJobs() {
 
     const patchBody = {
       video_status:'rendered',
+      // Also mark long_status done if this row was assigned via round-robin
+      ...(quiz.long_status === 'rendering_long' ? { long_status: 'done_long' } : {}),
       render_duration_sec:Math.round(dur),
       file_size_mb:sizeMb,
       updated_at:new Date().toISOString()

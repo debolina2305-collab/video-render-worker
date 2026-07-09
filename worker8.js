@@ -367,14 +367,40 @@ async function processQuizQueue(env) {
       });
     }
 
-    // ── 5. Insert rows (2–3 fetches) ─────────────────────────────────────
+    // ── 5. Insert rows — with round-robin format assignment ───────────────
+    // For each row, call assign_video_format() (Postgres function) which
+    // atomically increments a counter and returns 'short' | 'medium' | 'long'.
+    // Only the assigned format's status column is set to pending_*.
+    // The other two format columns stay null so those workers never see the row.
     let inserted = 0;
     const insertedSlugs = [];
 
     for (const { slug, row } of rowsToInsert) {
       try {
-        await dbInsert(env, 'quiz', row);
-        console.log(`[W8] Inserted: ${slug}`);
+        // Ask Postgres which format this row gets (atomic counter increment)
+        let assignedFormat = 'long'; // safe fallback
+        try {
+          assignedFormat = await dbRpc(env, 'assign_video_format');
+        } catch (e) {
+          console.warn(`[W8] assign_video_format() failed (${e.message}) — defaulting to long`);
+        }
+
+        // Set only the matching format's status column; the others stay null
+        const formatRow = { ...row };
+        delete formatRow.short_video_status; // remove the old column from previous approach
+        formatRow.assigned_format = assignedFormat;
+        if (assignedFormat === 'short') {
+          formatRow.short_status = 'pending_short';
+        } else if (assignedFormat === 'medium') {
+          formatRow.medium_status = 'pending_medium';
+        } else {
+          // long — keep video_status = 'pending' for Worker 10 compatibility
+          formatRow.long_status = 'pending_long';
+          // video_status = 'pending' is already set in the base row above
+        }
+
+        await dbInsert(env, 'quiz', formatRow);
+        console.log(`[W8] Inserted: ${slug} → format=${assignedFormat}`);
         inserted++;
         insertedSlugs.push(slug);
       } catch (err) {
@@ -1145,6 +1171,18 @@ async function dbInsert(env, table, data) {
     body: JSON.stringify(data)
   });
   if (!res.ok) throw new Error(`INSERT ${table} → ${res.status}: ${await res.text()}`);
+  const txt = await res.text();
+  return txt.trim() ? JSON.parse(txt) : null;
+}
+
+async function dbRpc(env, fnName, params = {}) {
+  const url = `${env.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/rpc/${fnName}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: sbHeaders(env),
+    body: JSON.stringify(params)
+  });
+  if (!res.ok) throw new Error(`RPC ${fnName} → ${res.status}: ${await res.text()}`);
   const txt = await res.text();
   return txt.trim() ? JSON.parse(txt) : null;
 }
