@@ -168,16 +168,69 @@ async function probeNum(filePath) {
 const audioDur = probeNum;
 const videoDur = probeNum;
 
+// CRITICAL: FFmpeg's concat DEMUXER (-f concat) requires every input to have
+// an IDENTICAL codec/samplerate/channel layout. Our parts are a mix of:
+//   - .wav  (sfx_cues, timeup_cues, cta4_cues downloaded from R2)
+//   - .mp3  (edge-tts output, generated silence)
+// Feeding mixed codecs to the demuxer silently drops all but the first stream
+// -- which is exactly why the question TTS never played in step 3.
+//
+// Fix: normalise EVERY part to mp3/44100Hz/mono FIRST, then concat.
 async function concatAudio(parts, outPath, workDir) {
   const valid = (parts || []).filter(Boolean);
   if (!valid.length) { await silence(0.5, outPath); return; }
+
   if (valid.length === 1) {
     await ffmpeg(`-y -i "${valid[0]}" -ar 44100 -ac 1 -acodec libmp3lame "${outPath}"`, 'cat1');
     return;
   }
-  const lst = path.join(workDir, `cat_${Date.now()}.txt`);
-  await fs.writeFile(lst, valid.map(p => `file '${p.replace(/'/g,"'\\''")}' `).join('\n'));
-  await ffmpeg(`-y -f concat -safe 0 -i "${lst}" -ar 44100 -ac 1 -acodec libmp3lame "${outPath}"`, 'cat');
+
+  // Step 1 -- normalise each part to a uniform mp3 so the demuxer is happy
+  const stamp = Date.now();
+  const normDir = path.join(workDir, `norm_${stamp}`);
+  await ensureDir(normDir);
+
+  const normalised = [];
+  for (let i = 0; i < valid.length; i++) {
+    const src = valid[i];
+    if (!await fileExists(src)) {
+      console.warn(`[CAT] part ${i} missing, skipping: ${src}`);
+      continue;
+    }
+    const dst = path.join(normDir, `p${String(i).padStart(2,'0')}.mp3`);
+    try {
+      await ffmpeg(
+        `-y -i "${src}" -vn -ar 44100 -ac 1 -b:a 128k -acodec libmp3lame "${dst}"`,
+        `catnorm${i}`
+      );
+      const d = await audioDur(dst);
+      if (d > 0) {
+        normalised.push(dst);
+        console.log(`[CAT] part ${i}: ${path.basename(src)} -> ${d.toFixed(2)}s`);
+      } else {
+        console.warn(`[CAT] part ${i} normalised to 0s, skipping`);
+      }
+    } catch (e) {
+      console.warn(`[CAT] part ${i} normalise failed: ${e.message.slice(0,80)}`);
+    }
+  }
+
+  if (!normalised.length) { await silence(0.5, outPath); return; }
+  if (normalised.length === 1) {
+    await ffmpeg(`-y -i "${normalised[0]}" -ar 44100 -ac 1 -acodec libmp3lame "${outPath}"`, 'cat1n');
+    return;
+  }
+
+  // Step 2 -- concat the now-uniform mp3 parts
+  const lst = path.join(workDir, `cat_${stamp}.txt`);
+  await fs.writeFile(lst, normalised.map(p => `file '${p.replace(/'/g,"'\\''")}'`).join('\n'));
+  await ffmpeg(
+    `-y -f concat -safe 0 -i "${lst}" -ar 44100 -ac 1 -acodec libmp3lame "${outPath}"`,
+    'cat'
+  );
+
+  const finalDur = await audioDur(outPath);
+  console.log(`[CAT] concatenated ${normalised.length} parts -> ${finalDur.toFixed(2)}s`);
 }
 
 async function tts(text, voice, outPath, retries = 3) {
@@ -816,8 +869,31 @@ ${AVATAR_CSS}`;
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1080, height: 1920 });
-  await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0', timeout: 30000 });
-  await new Promise(r => setTimeout(r, 800));
+
+  // CRITICAL: block ALL external network requests.
+  // The theme CSS references Google Fonts / external assets which are
+  // unreachable from the GitHub Actions runner. Those requests hang until
+  // Puppeteer's navigation timeout fires. We abort them immediately so the
+  // page settles instantly. Everything we actually need (CSS, logo) is
+  // already inlined into the HTML as text / base64 data URIs.
+  await page.setRequestInterception(true);
+  page.on('request', (req) => {
+    const u = req.url();
+    // Allow only the local file:// page itself and inline data: URIs
+    if (u.startsWith('file://') || u.startsWith('data:') || u.startsWith('about:')) {
+      req.continue().catch(() => {});
+    } else {
+      req.abort().catch(() => {});
+    }
+  });
+
+  // Use 'domcontentloaded' -- NOT 'networkidle0'. With external requests
+  // aborted there is nothing to wait for, and networkidle0 was the direct
+  // cause of the 30s navigation timeout.
+  await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+  // Give CSS + fonts + layout a moment to settle
+  await new Promise(r => setTimeout(r, 1200));
   await page.evaluate(() => { document.body.classList.add('short-fmt'); });
 
   // Hide avatar strip until step 3
