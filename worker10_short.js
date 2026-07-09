@@ -129,10 +129,12 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// 'dog_image' is NOT a required section (no dress_code constraint on it).
+// It is a single shared image used for ALL dress codes.
 const AVATAR_SECTIONS = ['hook', 'silent', 'cta4'];
 
 async function fetchAvatarSet() {
-  const empty = { dressCode: null, hook: null, silent: null, cta4: null, timeupSplitSec: null };
+  const empty = { dressCode: null, hook: null, silent: null, cta4: null, timeupSplitSec: null, dogImage: null };
 
   let rows;
   try {
@@ -143,6 +145,12 @@ async function fetchAvatarSet() {
     console.warn('[AVATAR] avatar_assets fetch failed (non-fatal):', e.message);
     return empty;
   }
+
+  // dog_image rows have section='dog_image'; they are shared (dress_code-agnostic)
+  const dogImageRows = (rows || []).filter(r => r.section === 'dog_image' && r.video_url);
+  const dogImageUrl  = dogImageRows.length ? dogImageRows[Math.floor(Math.random()*dogImageRows.length)].video_url : null;
+  if (dogImageUrl) console.log('[AVATAR] dog_image found:', dogImageUrl.slice(0,60));
+  else             console.log('[AVATAR] no dog_image row — CSS placeholder used');
 
   const usable = (rows || []).filter(r =>
     r.video_url && r.dress_code != null && AVATAR_SECTIONS.includes(r.section)
@@ -179,6 +187,7 @@ async function fetchAvatarSet() {
         if (s === 'cta4') fb.timeupSplitSec = anyRow.timeup_split_sec ?? null;
       }
     }
+    fb.dogImage = dogImageUrl;
     return fb;
   }
 
@@ -194,6 +203,7 @@ async function fetchAvatarSet() {
     console.log(`[AVATAR] dress=${dressCode} ${s}: picked 1 of ${pool.length} takes`);
   }
 
+  set.dogImage = dogImageUrl;
   console.log(`[AVATAR] Host outfit locked to dress_code=${dressCode} for entire video`);
   return set;
 }
@@ -394,9 +404,25 @@ const AVATAR_STRIP_HTML = `
     <span class="av-placeholder-icon">&#128100;</span>
   </div>
 
-  <!-- DOG: pure CSS, animates for real inside Puppeteer -->
+  <!-- DOG: HD photo background + CSS overlays for mouth/tail/rings -->
   <div id="av-dog" class="av-circle av-dog">
-    <div class="dog-stage">
+    <!-- Photo layer: hidden when no dog_image is in avatar_assets.
+         The CSS override block above sets display:block when URL is available. -->
+    <div class="dog-photo"></div>
+
+    <!-- CSS speaking overlay: amber rings + mouth-open / tail-wag.
+         Sit ON TOP of the photo via z-index.
+         Active only when .dog-talking is on #av-dog. -->
+    <div class="dog-overlay">
+      <div class="dog-ring dog-ring-1"></div>
+      <div class="dog-ring dog-ring-2"></div>
+      <div class="dog-ring dog-ring-3"></div>
+      <div class="dog-tail-anim"></div>
+      <div class="dog-mouth-slit"></div>
+    </div>
+
+    <!-- Fallback CSS rig (visible when no HD photo) -->
+    <div class="dog-stage dog-css-only">
       <div class="dog-tail"></div>
       <div class="dog-body"></div>
       <div class="dog-head">
@@ -468,10 +494,101 @@ const AVATAR_CSS = `
 .av-dog {
   background: radial-gradient(circle at 50% 40%, #3a2a12 0%, #1a1206 70%, #100b04 100%);
 }
+
+/* ── HD photo layer ── */
+.dog-photo {
+  display: none;           /* shown when dog_image URL is available (see inline <style>) */
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-size: cover;
+  background-position: center top;
+  background-repeat: no-repeat;
+  z-index: 1;
+}
+
+/* ── Overlay rings + mouth slit + tail (all above the photo) ── */
+.dog-overlay {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  z-index: 2;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* Three amber expanding rings — fire only while .dog-talking */
+.dog-ring {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 3px solid rgba(255,200,50,0.0);
+  width: var(--av); height: var(--av);
+}
+.dog-talking .dog-ring-1 { animation: dogRing 0.50s ease-out infinite 0.00s; }
+.dog-talking .dog-ring-2 { animation: dogRing 0.50s ease-out infinite 0.17s; }
+.dog-talking .dog-ring-3 { animation: dogRing 0.50s ease-out infinite 0.34s; }
+@keyframes dogRing {
+  0%   { transform:translate(-50%,-50%) scale(1.00); border-color:rgba(255,200,50,0.80); opacity:1; }
+  100% { transform:translate(-50%,-50%) scale(1.60); border-color:rgba(255,200,50,0.00); opacity:0; }
+}
+
+/* Mouth slit at bottom-centre of circle — simulates open/close on photo */
+.dog-mouth-slit {
+  position: absolute;
+  bottom: 22%;
+  left: 50%;
+  transform: translateX(-50%);
+  width:  calc(var(--av) * 0.30);
+  height: calc(var(--av) * 0.02);   /* closed */
+  background: rgba(20,8,4,0.70);
+  border-radius: 0 0 50% 50%;
+  transition: height 0.08s ease;
+}
+.dog-talking .dog-mouth-slit {
+  animation: photoMouth 0.28s steps(1,end) infinite;
+}
+@keyframes photoMouth {
+  0%   { height: calc(var(--av) * 0.02); }
+  25%  { height: calc(var(--av) * 0.07); }
+  50%  { height: calc(var(--av) * 0.13); }
+  75%  { height: calc(var(--av) * 0.07); }
+  100% { height: calc(var(--av) * 0.02); }
+}
+
+/* Animated tail wedge at top-right of the circle (visible on photo) */
+.dog-tail-anim {
+  position: absolute;
+  top: 12%;
+  right: 8%;
+  width:  calc(var(--av) * 0.14);
+  height: calc(var(--av) * 0.32);
+  background: linear-gradient(180deg, rgba(180,120,40,0.90), rgba(140,90,30,0.70));
+  border-radius: calc(var(--av)*0.07);
+  transform-origin: 50% 100%;
+  animation: tailWagOverlay 0.72s ease-in-out infinite alternate;
+  z-index: 3;
+}
+.dog-talking .dog-tail-anim { animation-duration: 0.26s; }
+@keyframes tailWagOverlay {
+  from { transform: rotate(-28deg); }
+  to   { transform: rotate( 28deg); }
+}
+
+/* When HD photo is active, hide the CSS-only fallback rig */
+.dog-photo[style*="block"] ~ .dog-overlay ~ .dog-css-only,
+.dog-photo:not([style]) ~ .dog-css-only { display: flex; }   /* CSS rig visible by default */
+
+/* Hide CSS rig when photo is showing */
+#av-dog .dog-photo { display: none; }            /* overridden by inline <style> when image loaded */
+
+/* CSS-only fallback stage */
 .dog-stage {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
 }
+/* Shown/hidden by the dog-photo display override below */
+.dog-css-only { display: flex; }
 
 /* ── Tail: always wagging, faster while talking ── */
 .dog-tail {
@@ -882,6 +999,16 @@ async function buildShortVideo(quiz, workDir) {
     download(quiz.sfx_audio_url,   `sh_sfx_${quiz.id}`, 'question_appear'),
   ]);
 
+  // ── Dog HD image download ─────────────────────────────────────────
+  let dogImageFileUrl = null;   // file:// URL injected into dog circle CSS
+  if (avatarSet.dogImage) {
+    const dogImgFile = await download(avatarSet.dogImage, 'av_dog_img');
+    if (dogImgFile) {
+      dogImageFileUrl = `file://${dogImgFile}`;
+      console.log('[SHORT] Dog HD image downloaded OK');
+    }
+  }
+
   // ── Host clip downloads (all share one dress_code) ────────────────
   console.log('[SHORT] Downloading host clips...');
   const dc = avatarSet.dressCode ?? 'na';
@@ -902,6 +1029,29 @@ async function buildShortVideo(quiz, workDir) {
     console.log('[SHORT][BG] Retrying default track...');
     resolvedBgFile = await download(DEFAULT_BG_MUSIC, 'sh_bg_default');
   }
+
+  // ── Background photo overlay (30% opacity, same logic as worker10 long) ──
+  // Priority: hero_image_url -> topic_image_url -> none.
+  // Written as a temp file (file://) because Puppeteer can't use large
+  // base64 data URIs as CSS custom properties.
+  let videoPhotoStyleBlock = '';
+  let videoPhotoClass      = 'no-photo';
+  const bgImageUrl = quiz.hero_image_url || quiz.topic_image_url || null;
+  if (bgImageUrl) {
+    try {
+      const imgRes = await fetch(bgImageUrl, { headers: { 'User-Agent': 'AutoQuiz/1.0 short renderer' } });
+      if (imgRes.ok) {
+        const buf = await imgRes.arrayBuffer();
+        if (buf.byteLength > 500) {
+          const imgPath = path.join(workDir, 'sh_bg_photo.jpg');
+          await fs.writeFile(imgPath, Buffer.from(buf));
+          videoPhotoStyleBlock = `<style>:root{--topic-photo-url:url("file://${imgPath}");}</style>`;
+          videoPhotoClass = '';
+          console.log(`[SHORT-BG] ${(buf.byteLength/1024).toFixed(0)}KB from ${bgImageUrl.slice(0,60)}`);
+        }
+      } else { console.log(`[SHORT-BG] HTTP ${imgRes.status}`); }
+    } catch (e) { console.warn(`[SHORT-BG] ${e.message.slice(0,80)}`); }
+  } else { console.log('[SHORT-BG] No image URL on quiz row'); }
 
   // ── Theme ──────────────────────────────────────────────────────────
   const { themeCss, decoHtml } = await resolveTheme(quiz);
@@ -945,8 +1095,8 @@ async function buildShortVideo(quiz, workDir) {
     '{{niche_challenge_label}}':   `${niceLabel} Challenge No #${nicheNo}`,
     '{{thumb_bg_style_block}}':    '',
     '{{thumb_bg_image_class}}':    'thumb-photo-bg-hidden',
-    '{{VIDEO_PHOTO_STYLE_BLOCK}}': '',
-    '{{VIDEO_PHOTO_CLASS}}':       'no-photo',
+    '{{VIDEO_PHOTO_STYLE_BLOCK}}': videoPhotoStyleBlock,
+    '{{VIDEO_PHOTO_CLASS}}':       videoPhotoClass,
     '{{confetti_0}}':'🎉','{{confetti_1}}':'✨','{{confetti_2}}':'⭐',
     '{{confetti_3}}':'💫','{{confetti_4}}':'🎊','{{confetti_5}}':'🌟',
     '{{confetti_6}}':'🏆','{{confetti_7}}':'🎈',
@@ -969,13 +1119,30 @@ async function buildShortVideo(quiz, workDir) {
   // The dog CSS animation IS real and will appear correctly in the recording.
   const shortCss = `
 <style id="short-fmt-css">
-/* Slide bottom padding so content stays above avatar strip */
+/* ── LAYOUT: reserve space at bottom for avatar strip ── */
 .short-fmt .question-phase,
 .short-fmt .pre-reveal-slide,
 .short-fmt .comment-cta-screen {
-  padding-bottom: ${AVATAR_SIZE + 60}px !important;
+  padding-bottom: ${AVATAR_SIZE + 80}px !important;
+  box-sizing: border-box !important;
 }
-/* Q+Options appear simultaneously (no stagger animation) */
+
+/* ── HINT: COMPLETELY REMOVED from the flow.
+   The hint covers the last option because the template renders it
+   below the options grid and it overlaps at short-format heights.
+   In short format we show 50/50 instead — hint is redundant. ── */
+.short-fmt .hint-wrap,
+.short-fmt .hint-text,
+.short-fmt [class*="hint"] {
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+/* ── Q+OPTIONS: appear simultaneously (short format = no stagger) ── */
 .short-fmt .question-phase .question-text,
 .short-fmt .question-phase .options-grid,
 .short-fmt .question-phase .option-btn {
@@ -983,24 +1150,17 @@ async function buildShortVideo(quiz, workDir) {
   opacity: 1 !important;
   transform: translateY(0) !important;
 }
-/* No answer colour reveal */
+
+/* ── No answer colour reveal in this format ── */
 .short-fmt .option-btn.correct,
 .short-fmt .option-btn.wrong {
   background: unset !important;
   border-color: unset !important;
   color: unset !important;
 }
-/* Hide hint — too much info for short format */
-.short-fmt .hint-wrap,
-.short-fmt .hint-text { display: none !important; }
-/* 50/50 -- options marked as targets stay FULLY VISIBLE until JS adds
-   .opt-eliminated mid-recording at t=SHORT_FIFTY_AT. Previously the
-   template's own .eliminate class was stamped in at build time and forced
-   to opacity:0, so the 50/50 "reveal" had already happened before the
-   options were ever shown. */
-.short-fmt .option-btn.opt-elim-target {
-  opacity: 1;
-}
+
+/* ── 50/50 ── */
+.short-fmt .option-btn.opt-elim-target { opacity: 1; }
 .short-fmt .option-btn.opt-eliminated {
   animation: fiftyFade 0.45s ease-out forwards !important;
   pointer-events: none !important;
@@ -1009,6 +1169,54 @@ async function buildShortVideo(quiz, workDir) {
   0%   { opacity: 1; transform: scale(1);    filter: blur(0); }
   100% { opacity: 0; transform: scale(0.90); filter: blur(3px); }
 }
+
+/* ── COUNTDOWN TIMER: always show a large, readable ring/digital.
+   The template hides small timers in some themes. We force it visible
+   and large enough to read in 9:16 at YouTube Shorts size.         ── */
+.short-fmt .qp-timer-wrap {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1   !important;
+  width:  96px !important;
+  height: 96px !important;
+  min-width:  96px !important;
+  min-height: 96px !important;
+  margin: 6px auto !important;
+  position: relative !important;
+}
+.short-fmt .qp-timer-ring {
+  width:  96px !important;
+  height: 96px !important;
+}
+.short-fmt .qp-timer-number {
+  font-size: 30px !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+}
+/* cd-digital: large block countdown number */
+.short-fmt .cd-digital {
+  font-size: 44px !important;
+  font-weight: 900 !important;
+  text-align: center !important;
+  line-height: 96px !important;
+  color: #fff !important;
+  text-shadow: 0 0 14px rgba(255,200,0,0.9), 0 2px 6px rgba(0,0,0,0.8) !important;
+}
+/* cd-hourglass: show emoji + number */
+.short-fmt .cd-hourglass     { font-size: 36px !important; }
+.short-fmt .cd-hourglass-num { font-size: 32px !important; font-weight: 900 !important; }
+/* cd-bar: full-width progress bar below options */
+.short-fmt .cd-bar-wrap {
+  width: 100% !important; height: 10px !important;
+  background: rgba(255,255,255,0.18) !important;
+  border-radius: 99px !important; overflow: hidden !important;
+}
+.short-fmt .cd-bar-fill {
+  height: 100% !important;
+  background: linear-gradient(90deg,#ffc832,#ff4444) !important;
+  animation: cdBarDrain ${SHORT_COUNTDOWN}s linear forwards !important;
+}
+@keyframes cdBarDrain { from { width:100%; } to { width:0%; } }
 </style>
 ${AVATAR_CSS}`;
 
@@ -1018,7 +1226,12 @@ ${AVATAR_CSS}`;
   // Host = placeholder div (FFmpeg composites the real clip on top later).
   // Dog  = full CSS rig (head/ears/eyes/snout/mouth/tail) that Puppeteer
   //        captures for real. Defined once as AVATAR_STRIP_HTML.
-  html = html.replace('</body>', `${AVATAR_STRIP_HTML}\n</body>`);
+  // Build avatar strip HTML — dog image URL is injected via a CSS var
+  // so the const AVATAR_STRIP_HTML doesn't need to change per quiz.
+  const dogImgCssOverride = dogImageFileUrl
+    ? `<style>#av-dog .dog-photo{background-image:url("${dogImageFileUrl}") !important;display:block !important;}</style>`
+    : '';
+  html = html.replace('</body>', `${dogImgCssOverride}${AVATAR_STRIP_HTML}\n</body>`);
 
   const htmlPath = path.join(workDir, 'short_index.html');
   await fs.writeFile(htmlPath, html);
@@ -1060,6 +1273,22 @@ ${AVATAR_CSS}`;
   // Give CSS + fonts + layout a moment to settle
   await new Promise(r => setTimeout(r, 1200));
   await page.evaluate(() => { document.body.classList.add('short-fmt'); });
+
+  // If the HD dog photo loaded, hide the CSS-only fallback rig so they
+  // don't stack. The inline <style> already sets .dog-photo { display:block }.
+  await page.evaluate(() => {
+    const photo = document.querySelector('#av-dog .dog-photo');
+    const cssRig = document.querySelector('#av-dog .dog-css-only');
+    if (photo && cssRig) {
+      const isShowing = window.getComputedStyle(photo).display !== 'none';
+      if (isShowing) {
+        cssRig.style.display = 'none';
+        console.log('[DOG] HD photo active — CSS rig hidden');
+      } else {
+        console.log('[DOG] No HD photo — CSS fallback rig shown');
+      }
+    }
+  });
 
   // Hide avatar strip until step 3
   await page.evaluate(() => {
