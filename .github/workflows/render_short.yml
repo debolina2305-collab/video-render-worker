@@ -1,12 +1,25 @@
 name: Short Video Render (20s Format)
 
 on:
-  # Manual trigger — run whenever you want to generate a 20s short
+  # Manual trigger
   workflow_dispatch:
 
-  # Event-driven: triggered by render.yml after a normal video succeeds
+  # Same trigger as render.yml — all three render workers fire in parallel
+  # when a new batch of quiz rows is inserted. Each worker polls only rows
+  # assigned to its own format (short_status=pending_short), so there is
+  # no race condition between the three workers.
   repository_dispatch:
-    types: [trigger-render-short]
+    types: [trigger-render]
+
+# Prevent pile-up: if a short render is already running/queued, cancel the
+# stale one rather than stacking a queue behind it. This is the main cause
+# of "stays queued for a long time" -- render.yml, render_short.yml,
+# render_medium.yml, blog.yml and facebook.yml all fire on the same
+# repository_dispatch, and GitHub serialises them once the concurrent-job
+# limit is hit.
+concurrency:
+  group: render-short
+  cancel-in-progress: false
 
 jobs:
   render-short:
