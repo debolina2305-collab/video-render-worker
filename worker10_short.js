@@ -77,11 +77,16 @@ const TIMEOUT_JOB       = 25 * 60 * 1000;
 const TIMEOUT_RECORDER  = 90 * 1000;
 const BG_VOL_BASE       = 0.10;
 const BG_VOL_DUCK       = 0.035;
-const SHORT_COUNTDOWN   = 5;
-const SHORT_FIFTY_AT    = 3;
+const SHORT_COUNTDOWN   = 6;    // countdown length (was 5)
+const SHORT_FIFTY_AT    = 3;    // 50/50 fires at t=3s INTO the countdown
 const SHORT_HINT_AT     = 2;
 // Avatar circle size (px) — matches CSS below
-const AVATAR_SIZE       = 140;
+// Circle diameter = 33% of the 1080px video width (host and dog each).
+const VIDEO_W           = 1080;
+const VIDEO_H           = 1920;
+const AVATAR_SIZE       = Math.round(VIDEO_W * 0.33);   // 356px
+const AVATAR_PAD_X      = 32;   // px from left/right frame edge to circle edge
+const AVATAR_PAD_Y      = 36;   // px from bottom frame edge to circle edge
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────
 async function fetchSupabase(pathStr, opts = {}) {
@@ -106,28 +111,91 @@ async function fetchSupabase(pathStr, opts = {}) {
   try { return txt ? JSON.parse(txt) : null; } catch { return txt; }
 }
 
-// Fetch all avatar asset URLs from the avatar_assets table in one call
-async function fetchAvatarAssets() {
-  const assets = {
-    human_hook:   null,   // full-screen clip for steps 1+2
-    human_idle:   null,   // looping idle for human circle
-    human_timeup: null,   // speaking clip for step 5
-    human_cta4:   null,   // speaking clip for step 6
-  };
+// ─── AVATAR SET: pick ONE dress_code, then one clip per section ───────
+//
+// avatar_assets schema (see avatar_assets.sql):
+//   section          'hook' | 'silent' | 'cta4'
+//   dress_code       integer 1..N  (the outfit the host is wearing)
+//   video_url        R2 URL
+//   timeup_split_sec numeric|null  (cta4 only: when timeup speech ends)
+//
+// A "complete" dress_code is one that has at least one active clip for
+// ALL THREE sections. We pick a complete dress_code at random, then pick
+// one random clip within each section for that dress_code. This keeps the
+// host wearing the same outfit for the whole video, while still rotating
+// across the 20-50 takes you record per section.
+function pickRandom(arr) {
+  if (!arr || !arr.length) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+const AVATAR_SECTIONS = ['hook', 'silent', 'cta4'];
+
+async function fetchAvatarSet() {
+  const empty = { dressCode: null, hook: null, silent: null, cta4: null, timeupSplitSec: null };
+
+  let rows;
   try {
-    const rows = await fetchSupabase(
-      'avatar_assets?is_active=eq.true&select=asset_key,video_url'
+    rows = await fetchSupabase(
+      'avatar_assets?is_active=eq.true&select=section,dress_code,video_url,timeup_split_sec'
     );
-    for (const row of (rows || [])) {
-      if (row.asset_key in assets && row.video_url) {
-        assets[row.asset_key] = row.video_url;
+  } catch (e) {
+    console.warn('[AVATAR] avatar_assets fetch failed (non-fatal):', e.message);
+    return empty;
+  }
+
+  const usable = (rows || []).filter(r =>
+    r.video_url && r.dress_code != null && AVATAR_SECTIONS.includes(r.section)
+  );
+  if (!usable.length) {
+    console.warn('[AVATAR] No usable avatar_assets rows.');
+    return empty;
+  }
+
+  // Group: byDress[dress_code][section] = [rows...]
+  const byDress = {};
+  for (const r of usable) {
+    (byDress[r.dress_code] ??= {});
+    (byDress[r.dress_code][r.section] ??= []).push(r);
+  }
+
+  // Keep only dress codes that have every section covered
+  const complete = Object.keys(byDress).filter(dc =>
+    AVATAR_SECTIONS.every(s => byDress[dc][s]?.length)
+  );
+
+  if (!complete.length) {
+    const partial = Object.keys(byDress).map(dc =>
+      `${dc}[${AVATAR_SECTIONS.filter(s => byDress[dc][s]?.length).join(',') || 'none'}]`
+    ).join(' ');
+    console.warn(`[AVATAR] No dress_code has all 3 sections. Have: ${partial}`);
+    console.warn('[AVATAR] Falling back to best-effort mixed selection.');
+    // Best effort: take whatever exists, per section, ignoring consistency
+    const fb = { ...empty };
+    for (const s of AVATAR_SECTIONS) {
+      const anyRow = pickRandom(usable.filter(r => r.section === s));
+      if (anyRow) {
+        fb[s] = anyRow.video_url;
+        if (s === 'cta4') fb.timeupSplitSec = anyRow.timeup_split_sec ?? null;
       }
     }
-    console.log('[AVATAR] Loaded asset URLs:', Object.entries(assets).map(([k,v])=>`${k}=${v?'OK':'missing'}`).join(' '));
-  } catch (e) {
-    console.warn('[AVATAR] Could not fetch avatar_assets table (non-fatal):', e.message);
+    return fb;
   }
-  return assets;
+
+  // Pick one dress_code at random, then one clip per section within it
+  const dressCode = pickRandom(complete);
+  const set = { ...empty, dressCode: Number(dressCode) };
+
+  for (const s of AVATAR_SECTIONS) {
+    const pool = byDress[dressCode][s];
+    const chosen = pickRandom(pool);
+    set[s] = chosen.video_url;
+    if (s === 'cta4') set.timeupSplitSec = chosen.timeup_split_sec ?? null;
+    console.log(`[AVATAR] dress=${dressCode} ${s}: picked 1 of ${pool.length} takes`);
+  }
+
+  console.log(`[AVATAR] Host outfit locked to dress_code=${dressCode} for entire video`);
+  return set;
 }
 
 // ─── FS / UTILITY ─────────────────────────────────────────────────────
@@ -310,242 +378,299 @@ async function resolveTheme(quiz) {
 }
 
 // ─── AVATAR STRIP HTML + CSS ──────────────────────────────────────────
-// Injected into every screen from step 3 onward.
-// humanVideoDataUri — base64 data URI of the human idle or speaking clip
-// mode — 'human_speaking' | 'dog_speaking' | 'both_silent'
-function buildAvatarStripHtml(humanVideoDataUri, humanVideoPath, mode) {
-  const hasHuman = !!(humanVideoDataUri || humanVideoPath);
-  // Human video element — muted (audio handled by separate ffmpeg mux)
-  const humanVideoSrc = humanVideoDataUri || '';
-  const humanEl = hasHuman
-    ? `<video id="av-human" class="av-circle av-human ${mode === 'human_speaking' ? 'av-speaking' : ''}"
-              src="${humanVideoSrc}" autoplay loop muted playsinline></video>`
-    : `<div id="av-human" class="av-circle av-human av-placeholder ${mode === 'human_speaking' ? 'av-speaking' : ''}">
-         <span class="av-placeholder-icon">👤</span>
-       </div>`;
-
-  // Dog — always CSS-only. .av-dog-speaking triggers the amplitude pulse.
-  const dogClass = mode === 'dog_speaking' ? 'av-dog-speaking' : '';
-  const dogEl = `
-    <div id="av-dog" class="av-circle av-dog ${dogClass}">
-      <span class="av-dog-face">🐶</span>
-      <div class="av-dog-ring av-dog-ring-1"></div>
-      <div class="av-dog-ring av-dog-ring-2"></div>
-      <div class="av-dog-ring av-dog-ring-3"></div>
-    </div>`;
-
-  return `
-<!-- AVATAR STRIP — injected for steps 3-6 -->
+//
+// Host  = placeholder <div> only. The real host video is composited on top
+//         by FFmpeg (Puppeteer cannot decode video reliably in headless CI).
+// Dog   = fully real CSS. Puppeteer captures it correctly.
+//
+// Dog states:
+//   .dog-talking  → mouth cycles closed → half-open → full-open, fast tail
+//   (default)     → mouth stays closed, tail wags slowly
+// ──────────────────────────────────────────────────────────────────────
+const AVATAR_STRIP_HTML = `
 <div id="avatar-strip">
-  ${humanEl}
-  ${dogEl}
-</div>`;
-}
+  <!-- HOST: placeholder; FFmpeg composites the real video into this circle -->
+  <div id="av-human" class="av-circle av-human av-placeholder">
+    <span class="av-placeholder-icon">&#128100;</span>
+  </div>
 
-// CSS injected once into the HTML head
+  <!-- DOG: pure CSS, animates for real inside Puppeteer -->
+  <div id="av-dog" class="av-circle av-dog">
+    <div class="dog-stage">
+      <div class="dog-tail"></div>
+      <div class="dog-body"></div>
+      <div class="dog-head">
+        <div class="dog-ear dog-ear-l"></div>
+        <div class="dog-ear dog-ear-r"></div>
+        <div class="dog-eye dog-eye-l"></div>
+        <div class="dog-eye dog-eye-r"></div>
+        <div class="dog-snout">
+          <div class="dog-nose"></div>
+          <div class="dog-mouth"><div class="dog-tongue"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>`;
+
+// All dog geometry scales off --av (the circle diameter), so changing
+// AVATAR_SIZE automatically resizes the whole dog.
 const AVATAR_CSS = `
 <style id="avatar-strip-style">
-/* ── Avatar strip container ── */
 #avatar-strip {
+  /* fixed => coordinates map 1:1 onto the 1080x1920 video frame.
+     Safe here because the strip is a direct child of <body>, not nested
+     inside any will-change:transform ancestor. */
   position: fixed;
-  bottom: 36px;
-  left: 0;
-  right: 0;
+  bottom: ${AVATAR_PAD_Y}px;
+  left: 0; right: 0;
   z-index: 9999;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  padding: 0 32px;
+  padding: 0 ${AVATAR_PAD_X}px;
   pointer-events: none;
 }
 
-/* ── Shared circle style ── */
 .av-circle {
-  width:  ${AVATAR_SIZE}px;
-  height: ${AVATAR_SIZE}px;
+  --av: ${AVATAR_SIZE}px;
+  width: var(--av);
+  height: var(--av);
   border-radius: 50%;
   overflow: hidden;
-  border: 3px solid rgba(255,255,255,0.55);
-  box-shadow: 0 4px 24px rgba(0,0,0,0.45);
+  border: 4px solid rgba(255,255,255,0.55);
+  box-shadow: 0 6px 30px rgba(0,0,0,0.5);
   background: #111;
   position: relative;
   flex-shrink: 0;
 }
 
-/* Human video fills the circle */
-.av-human video,
-video.av-human {
-  width:  100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 50%;
-}
-
-/* Human placeholder icon (fallback when no video) */
+/* ── HOST placeholder (real video composited by FFmpeg) ── */
 .av-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   background: linear-gradient(135deg, #1a2340, #0d1520);
 }
 .av-placeholder-icon {
-  font-size: 64px;
+  font-size: calc(var(--av) * 0.40);
   line-height: 1;
+  opacity: 0.12;
 }
-
-/* ── Human speaking pulse (border glow) ── */
 .av-human.av-speaking {
   border-color: #00cfff;
   animation: humanSpeak 0.5s ease-in-out infinite alternate;
 }
 @keyframes humanSpeak {
-  from { box-shadow: 0 0 0  4px rgba(0,207,255,0.4), 0 4px 24px rgba(0,0,0,0.45); }
-  to   { box-shadow: 0 0 0 10px rgba(0,207,255,0.15),0 4px 24px rgba(0,0,0,0.45); }
+  from { box-shadow: 0 0 0  5px rgba(0,207,255,0.40), 0 6px 30px rgba(0,0,0,0.5); }
+  to   { box-shadow: 0 0 0 14px rgba(0,207,255,0.12), 0 6px 30px rgba(0,0,0,0.5); }
 }
 
-/* ── Dog face ── */
+/* ══════════════ DOG ══════════════ */
 .av-dog {
-  background: linear-gradient(135deg, #2a1a00, #1a1000);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: radial-gradient(circle at 50% 40%, #3a2a12 0%, #1a1206 70%, #100b04 100%);
 }
-.av-dog-face {
-  font-size: 72px;
-  line-height: 1;
-  display: block;
-  position: relative;
-  z-index: 2;
-  /* Idle: very subtle slow breath bob */
-  animation: dogIdle 3s ease-in-out infinite;
-}
-@keyframes dogIdle {
-  0%,100% { transform: scale(1.00) translateY(0); }
-  50%      { transform: scale(1.02) translateY(-3px); }
+.dog-stage {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
 }
 
-/* ── Dog speaking — amplitude rings + face pulse ── */
-/* Ring elements sit behind the emoji */
-.av-dog-ring {
+/* ── Tail: always wagging, faster while talking ── */
+.dog-tail {
   position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  border: 2px solid rgba(255,200,50,0.0);
-  width:  ${AVATAR_SIZE}px;
-  height: ${AVATAR_SIZE}px;
+  right: calc(var(--av) * 0.10);
+  bottom: calc(var(--av) * 0.26);
+  width:  calc(var(--av) * 0.055);
+  height: calc(var(--av) * 0.26);
+  background: linear-gradient(180deg, #b5762e, #8a5620);
+  border-radius: calc(var(--av) * 0.03);
+  transform-origin: 50% 100%;
+  animation: tailWag 0.72s ease-in-out infinite alternate;
   z-index: 1;
 }
-
-/* When .av-dog-speaking is on the wrapper, all three rings animate */
-.av-dog-speaking .av-dog-ring-1 {
-  animation: dogRing 0.55s ease-out infinite 0.00s;
-}
-.av-dog-speaking .av-dog-ring-2 {
-  animation: dogRing 0.55s ease-out infinite 0.18s;
-}
-.av-dog-speaking .av-dog-ring-3 {
-  animation: dogRing 0.55s ease-out infinite 0.36s;
-}
-@keyframes dogRing {
-  0%   { transform: translate(-50%,-50%) scale(1.00); border-color: rgba(255,200,50,0.70); opacity:1; }
-  100% { transform: translate(-50%,-50%) scale(1.55); border-color: rgba(255,200,50,0.00); opacity:0; }
+.dog-talking .dog-tail { animation-duration: 0.26s; }
+@keyframes tailWag {
+  from { transform: rotate(-32deg); }
+  to   { transform: rotate( 32deg); }
 }
 
-/* Dog face pulses to simulate mouth open/close during speaking */
-.av-dog-speaking .av-dog-face {
-  animation: dogSpeak 0.28s ease-in-out infinite alternate;
-}
-@keyframes dogSpeak {
-  from { transform: scale(0.92) translateY( 2px); }
-  to   { transform: scale(1.08) translateY(-2px); }
+/* ── Body ── */
+.dog-body {
+  position: absolute;
+  bottom: calc(var(--av) * 0.10);
+  width:  calc(var(--av) * 0.52);
+  height: calc(var(--av) * 0.32);
+  background: linear-gradient(180deg, #d08c39, #a56823);
+  border-radius: 50% 50% 42% 42%;
+  z-index: 2;
 }
 
-/* Border glow when dog is speaking */
-.av-dog-speaking {
+/* ── Head ── */
+.dog-head {
+  position: absolute;
+  top: calc(var(--av) * 0.16);
+  width:  calc(var(--av) * 0.58);
+  height: calc(var(--av) * 0.54);
+  background: linear-gradient(180deg, #e39a41, #c07c2c);
+  border-radius: 48% 48% 44% 44%;
+  z-index: 3;
+  animation: headBob 3s ease-in-out infinite;
+}
+.dog-talking .dog-head { animation: headBob 0.9s ease-in-out infinite; }
+@keyframes headBob {
+  0%,100% { transform: translateY(0)   rotate(0deg); }
+  50%     { transform: translateY(-2%) rotate(1.5deg); }
+}
+
+/* ── Ears ── */
+.dog-ear {
+  position: absolute;
+  top: calc(var(--av) * -0.03);
+  width:  calc(var(--av) * 0.16);
+  height: calc(var(--av) * 0.26);
+  background: linear-gradient(180deg, #8a5620, #6d4318);
+  border-radius: 50% 50% 40% 40%;
+}
+.dog-ear-l { left:  calc(var(--av) * -0.035); transform: rotate(-18deg); transform-origin: 50% 0;
+             animation: earL 1.6s ease-in-out infinite alternate; }
+.dog-ear-r { right: calc(var(--av) * -0.035); transform: rotate( 18deg); transform-origin: 50% 0;
+             animation: earR 1.6s ease-in-out infinite alternate; }
+.dog-talking .dog-ear-l, .dog-talking .dog-ear-r { animation-duration: 0.5s; }
+@keyframes earL { from { transform: rotate(-18deg); } to { transform: rotate(-26deg); } }
+@keyframes earR { from { transform: rotate( 18deg); } to { transform: rotate( 26deg); } }
+
+/* ── Eyes ── */
+.dog-eye {
+  position: absolute;
+  top: calc(var(--av) * 0.16);
+  width:  calc(var(--av) * 0.075);
+  height: calc(var(--av) * 0.075);
+  background: #14100a;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,0.12);
+  animation: blink 4.2s infinite;
+}
+.dog-eye-l { left:  calc(var(--av) * 0.13); }
+.dog-eye-r { right: calc(var(--av) * 0.13); }
+@keyframes blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95%           { transform: scaleY(0.1); }
+}
+
+/* ── Snout + nose ── */
+.dog-snout {
+  position: absolute;
+  bottom: calc(var(--av) * 0.02);
+  left: 50%;
+  transform: translateX(-50%);
+  width:  calc(var(--av) * 0.30);
+  height: calc(var(--av) * 0.24);
+  background: linear-gradient(180deg, #f2c88a, #dba965);
+  border-radius: 44% 44% 50% 50%;
+  display: flex; flex-direction: column; align-items: center;
+}
+.dog-nose {
+  margin-top: calc(var(--av) * 0.012);
+  width:  calc(var(--av) * 0.085);
+  height: calc(var(--av) * 0.062);
+  background: #16110b;
+  border-radius: 50% 50% 46% 46%;
+}
+
+/* ── MOUTH — the talking element ──
+   Closed by default (thin line). While .dog-talking is on the wrapper it
+   cycles closed → half-open → full-open on a fast loop, which reads as
+   speech at 30fps. */
+.dog-mouth {
+  margin-top: calc(var(--av) * 0.014);
+  width:  calc(var(--av) * 0.145);
+  height: calc(var(--av) * 0.014);          /* closed */
+  background: #2a1408;
+  border-radius: 0 0 50% 50%;
+  overflow: hidden;
+  position: relative;
+  display: flex; justify-content: center;
+}
+.dog-talking .dog-mouth {
+  animation: dogMouth 0.30s steps(1, end) infinite;
+}
+@keyframes dogMouth {
+  0%   { height: calc(var(--av) * 0.014); }  /* closed    */
+  33%  { height: calc(var(--av) * 0.055); }  /* half open */
+  66%  { height: calc(var(--av) * 0.105); }  /* full open */
+  100% { height: calc(var(--av) * 0.045); }  /* half close*/
+}
+
+/* Tongue only visible when the mouth is open enough */
+.dog-tongue {
+  position: absolute;
+  bottom: 0;
+  width:  calc(var(--av) * 0.085);
+  height: calc(var(--av) * 0.075);
+  background: linear-gradient(180deg, #e2607a, #c2405c);
+  border-radius: 0 0 50% 50%;
+}
+
+/* Subtle glow ring while the dog speaks */
+.av-dog.dog-talking {
   border-color: #ffc832;
-  box-shadow: 0 0 0 4px rgba(255,200,50,0.25), 0 4px 24px rgba(0,0,0,0.45);
+  box-shadow: 0 0 0 5px rgba(255,200,50,0.22), 0 6px 30px rgba(0,0,0,0.5);
 }
 </style>`;
 
-// ─── SCREEN RECORDER CLIP ─────────────────────────────────────────────
-// Records `dur` seconds of Puppeteer page (UI only — no video elements).
-// The human clip is composited by FFmpeg AFTER recording, not inside Puppeteer.
-// Returns { path, dur }.
-async function recordedClip(page, audioPath, dur, workDir, name) {
-  const rawPath  = path.join(workDir, `${name}_raw.mp4`);
-  const h264Path = path.join(workDir, `${name}_h264.mp4`);
-  const outPath  = path.join(workDir, `${name}.mp4`);
-
-  const rec = new PuppeteerScreenRecorder(page, {
-    fps: 30, videoFrame: { width: 1080, height: 1920 },
-    aspectRatio: '9:16', followNewTab: false
-  });
-  await rec.start(rawPath);
-  await new Promise(r => setTimeout(r, Math.max(dur, 0.5) * 1000));
-  await withTimeout(rec.stop(), TIMEOUT_RECORDER, `${name}.stop`);
-
-  // Re-encode VP8→H264 (PuppeteerScreenRecorder outputs VP8/WebM)
-  await ffmpeg(
-    `-y -i "${rawPath}" -an -c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264Path}"`,
-    `${name}_enc`
-  );
-
-  if (audioPath && await fileExists(audioPath)) {
-    await ffmpeg(
-      `-y -stream_loop -1 -i "${h264Path}" -i "${audioPath}" ` +
-      `-map 0:v:0 -map 1:a:0 ` +
-      `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 ` +
-      `-c:a aac -b:a 128k -ar 44100 -ac 1 ` +
-      `-t ${dur} "${outPath}"`,
-      `${name}_mux`
-    );
-  } else {
-    await ffmpeg(
-      `-y -i "${h264Path}" -c:v copy -an -t ${dur} "${outPath}"`,
-      `${name}_vid`
-    );
+// ─── MEASURE THE HOST SLOT FROM THE LIVE PAGE ────────────────────────
+// Read the real pixel box of the #av-human placeholder. FFmpeg then overlays
+// the host clip at exactly those coordinates, so CSS and the composite can
+// never drift apart.
+async function measureHostSlot(page) {
+  try {
+    const box = await page.evaluate(() => {
+      const el = document.getElementById('av-human');
+      if (!el) return null;
+      const prev = el.style.display;
+      el.style.display = '';                    // ensure measurable
+      const r = el.getBoundingClientRect();
+      el.style.display = prev;
+      if (!r.width || !r.height) return null;
+      return { x: Math.round(r.left), y: Math.round(r.top), size: Math.round(r.width) };
+    });
+    if (box) {
+      console.log(`[AVATAR] host slot measured: x=${box.x} y=${box.y} size=${box.size}`);
+      return box;
+    }
+    console.warn('[AVATAR] host slot not measurable — using constants');
+  } catch (e) {
+    console.warn(`[AVATAR] measure failed: ${e.message.slice(0,60)} — using constants`);
   }
-  return { path: outPath, dur };
+  return null;
 }
 
-// ─── FFMPEG COMPOSITE: overlay human circle onto a UI clip ────────────
-// Takes a Puppeteer-recorded UI clip and overlays a circular crop of the
-// human video clip in the bottom-left corner (matching the CSS avatar strip).
-// The dog circle stays as CSS — it's in the UI recording already.
+// ─── FFMPEG COMPOSITE: overlay host circle onto a UI clip ─────────────
+// Puppeteer records the UI (dog + question + countdown). FFmpeg then crops
+// the host clip into a circle and overlays it in the bottom-LEFT slot,
+// exactly where the #av-human placeholder sits.
 //
-//  uiClipPath     — Puppeteer screen recording (H264, 1080x1920)
-//  humanClipPath  — R2 downloaded .mp4 of the human host
-//  dur            — target duration in seconds
-//  outPath        — output file path
-//  circleSize     — diameter in pixels (default 140)
-//  padBottom      — px from bottom of frame to circle centre (default 106)
-//  padLeft        — px from left edge to circle centre (default 172)
-async function compositeHumanCircle(uiClipPath, humanClipPath, dur, outPath, circleSize = 140, padBottom = 106, padLeft = 172) {
-  // Circle geometry
-  const r  = circleSize / 2;
-  // Position: bottom-left, matching CSS `bottom:36px; padding:0 32px`
-  // Circle centre Y from top = 1920 - padBottom, centre X = padLeft
-  const cx = padLeft;
-  const cy = 1920 - padBottom;
-  // Top-left corner of the bounding square in the output frame
-  const ox = cx - r;
-  const oy = cy - r;
+// Geometry is derived from the same constants the CSS uses, so the overlay
+// always lands on the placeholder no matter what AVATAR_SIZE is set to.
+//   host circle: left edge  = AVATAR_PAD_X
+//                bottom edge= AVATAR_PAD_Y
+async function compositeHumanCircle(uiClipPath, humanClipPath, dur, outPath, geom = null) {
+  // geom is measured from the live page (see measureHostSlot) so the overlay
+  // always lands exactly on the #av-human placeholder. Falls back to the
+  // constants if measurement failed.
+  const size = geom?.size ?? AVATAR_SIZE;
+  const r    = size / 2;
+  const ox   = geom?.x ?? AVATAR_PAD_X;
+  const oy   = geom?.y ?? (VIDEO_H - AVATAR_PAD_Y - size);
 
-  // FFmpeg filter_complex:
-  // 1. Loop human clip to cover full duration
-  // 2. Scale to circle size
-  // 3. Crop to circle using an alpha mask (alphamerge with geq)
-  // 4. Overlay onto UI clip at (ox, oy)
+  // scale → crop-to-fill square → circular alpha mask → overlay
   const filter = [
-    // Scale human clip to circleSize x circleSize
-    `[1:v]scale=${circleSize}:${circleSize}[hscaled]`,
-    // Create circular alpha mask: white inside circle, black outside
+    `[1:v]scale=${size}:${size}:force_original_aspect_ratio=increase,` +
+      `crop=${size}:${size}[hscaled]`,
     `[hscaled]format=yuva420p,geq=` +
       `lum='p(X,Y)':` +
+      `cb='p(X,Y)':` +
+      `cr='p(X,Y)':` +
       `a='if(lte(pow(X-${r}\\,2)+pow(Y-${r}\\,2)\\,pow(${r}\\,2))\\,255\\,0)'` +
       `[hcircle]`,
-    // Overlay circle onto UI at computed position
     `[0:v][hcircle]overlay=${ox}:${oy}:shortest=1[vout]`
   ].join(';');
 
@@ -560,6 +685,59 @@ async function compositeHumanCircle(uiClipPath, humanClipPath, dur, outPath, cir
   );
 }
 
+// ─── RECORD UI WITH MID-RECORDING EVENTS ──────────────────────────────
+// Records `dur` seconds of the page, firing timed callbacks WHILE recording.
+// This is how the 50/50 elimination lands at exactly t=3s inside the
+// countdown, and how the timeup→CTA screen switch happens mid-clip.
+//
+//   events: [{ at: <seconds into the clip>, fn: async (page) => {...} }]
+async function recordUiWithEvents(page, audioPath, dur, workDir, name, events = []) {
+  const rawPath  = path.join(workDir, `${name}_raw.mp4`);
+  const h264Path = path.join(workDir, `${name}_h264.mp4`);
+  const outPath  = path.join(workDir, `${name}.mp4`);
+
+  const rec = new PuppeteerScreenRecorder(page, {
+    fps: 30, videoFrame: { width: VIDEO_W, height: VIDEO_H },
+    aspectRatio: '9:16', followNewTab: false
+  });
+  await rec.start(rawPath);
+
+  const t0 = Date.now();
+  const queue = [...events].sort((a, b) => a.at - b.at);
+  for (const ev of queue) {
+    const waitMs = Math.max(0, ev.at * 1000 - (Date.now() - t0));
+    if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
+    try {
+      await ev.fn(page);
+      console.log(`[REC:${name}] event fired at t=${((Date.now()-t0)/1000).toFixed(2)}s`);
+    } catch (e) {
+      console.warn(`[REC:${name}] event failed: ${e.message.slice(0,80)}`);
+    }
+  }
+  const remainMs = Math.max(0, dur * 1000 - (Date.now() - t0));
+  if (remainMs > 0) await new Promise(r => setTimeout(r, remainMs));
+
+  await withTimeout(rec.stop(), TIMEOUT_RECORDER, `${name}.stop`);
+
+  await ffmpeg(
+    `-y -i "${rawPath}" -an -c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 -vf "scale=${VIDEO_W}:${VIDEO_H}" "${h264Path}"`,
+    `${name}_enc`
+  );
+
+  if (audioPath && await fileExists(audioPath)) {
+    await ffmpeg(
+      `-y -stream_loop -1 -i "${h264Path}" -i "${audioPath}" ` +
+      `-map 0:v:0 -map 1:a:0 ` +
+      `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 ` +
+      `-c:a aac -b:a 128k -ar 44100 -ac 1 -t ${dur} "${outPath}"`,
+      `${name}_mux`
+    );
+  } else {
+    await ffmpeg(`-y -i "${h264Path}" -c:v copy -an -t ${dur} "${outPath}"`, `${name}_vid`);
+  }
+  return { path: outPath, dur };
+}
+
 // ─── SHOW SCREEN (hide all .screen, activate selector) ────────────────
 async function showScreen(page, sel) {
   await page.evaluate(s => {
@@ -570,22 +748,20 @@ async function showScreen(page, sel) {
   await new Promise(r => setTimeout(r, 80));
 }
 
-// ─── SET AVATAR DOG MODE (CSS only — human handled by FFmpeg) ─────────
+// ─── SET AVATAR MODE (CSS only — host video handled by FFmpeg) ────────
 // mode: 'dog_speaking' | 'human_speaking' | 'both_silent'
-// NOTE: Human video is NOT displayed inside Puppeteer. The av-human div
-//       is a placeholder circle that is visually hidden behind the FFmpeg
-//       composite step. The dog CSS animation IS real and appears in recording.
+//   dog_speaking   → dog mouth cycles + fast tail  (TTS is playing)
+//   both_silent    → dog mouth closed, tail wags slowly
+//   human_speaking → host circle glows; dog mouth closed, tail wags slowly
 async function setAvatarMode(page, mode) {
   await page.evaluate((m) => {
-    const dog = document.getElementById('av-dog');
-    if (dog) dog.classList.toggle('av-dog-speaking', m === 'dog_speaking');
-
-    // Human: just show the speaking glow border when human is speaking
-    // The actual video is composited by FFmpeg, not displayed by Puppeteer.
-    // The placeholder div shows a subtle glowing border to mark the slot.
+    const dog   = document.getElementById('av-dog');
     const human = document.getElementById('av-human');
+    // Dog talks ONLY while TTS is speaking. Tail always wags (pure CSS default).
+    if (dog)   dog.classList.toggle('dog-talking', m === 'dog_speaking');
     if (human) human.classList.toggle('av-speaking', m === 'human_speaking');
   }, mode);
+  await new Promise(r => setTimeout(r, 60));
 }
 
 // ─── BG MUSIC ─────────────────────────────────────────────────────────
@@ -657,7 +833,7 @@ async function buildHookStep(humanHookPath, workDir) {
 //
 // Architecture:
 //  1. Puppeteer records the UI (dog CSS rings animate — captured correctly)
-//  2. FFmpeg composites humanIdleFile into the bottom-left circle
+//  2. FFmpeg composites the SILENT host clip into the bottom-left circle
 // ═══════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -665,7 +841,7 @@ async function buildHookStep(humanHookPath, workDir) {
 //
 // Architecture:
 //  1. Puppeteer records the UI (dog idle, speaking glow border on human slot)
-//  2. FFmpeg composites humanTimeupFile / humanCta4File into human circle
+//  2. FFmpeg composites the CTA4 host clip into the host circle
 // ═══════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -683,50 +859,42 @@ async function buildShortVideo(quiz, workDir) {
   const allIdx   = [0,1,2,3];
   const keepIdx  = keep5050.map(v => (typeof v === 'string' ? parseInt(v) : v));
   const elimIdx  = allIdx.filter(i => !keepIdx.includes(i));
-  const optClass = i => elimIdx.includes(i) ? 'eliminate' : '';
+  // NOTE: we deliberately do NOT stamp an 'eliminate' class into the HTML.
+  // Doing so hid the two wrong options from the instant the options appeared.
+  // Instead we tag them with .opt-elim-target and add .opt-eliminated via JS
+  // at exactly t=SHORT_FIFTY_AT seconds into the countdown recording.
+  const optClass = i => (elimIdx.includes(i) ? 'opt-elim-target' : '');
 
-  // ── Avatar assets from DB ──────────────────────────────────────────
-  const avatarUrls = await fetchAvatarAssets();
+  // ── Avatar set: ONE dress_code, one random take per section ────────
+  const avatarSet = await fetchAvatarSet();
 
   // ── Logo ───────────────────────────────────────────────────────────
   console.log('[SHORT] Loading logo...');
   const logoDataUri = await getLogoDataUri();
 
   // ── Audio downloads (quiz-specific) ───────────────────────────────
+  // NOTE: timeup + cta4 speech now live INSIDE the cta4 host clip's own
+  // audio track, so we no longer download timeup_audio_url / cta4_audio_url.
   console.log('[SHORT] Downloading audio...');
-  const [
-    countdownFile,
-    timeupFile,
-    cta4AudioFile,
-    bgFile,
-    sfxFile,
-  ] = await Promise.all([
-    download(quiz.countdown_music,   `sh_cd_${quiz.id}`),
-    download(quiz.timeup_audio_url,  `sh_timeup_${quiz.id}`),
-    download(quiz.cta4_audio_url,    `sh_cta4_${quiz.id}`),
+  const [countdownFile, bgFile, sfxFile] = await Promise.all([
+    download(quiz.countdown_music, `sh_cd_${quiz.id}`),
     download(quiz.background_music || DEFAULT_BG_MUSIC, `sh_bg_${quiz.id}`),
-    download(quiz.sfx_audio_url,     `sh_sfx_${quiz.id}`, 'question_appear'),
+    download(quiz.sfx_audio_url,   `sh_sfx_${quiz.id}`, 'question_appear'),
   ]);
 
-  // ── Avatar video downloads (from R2 via avatar_assets table) ──────
-  console.log('[SHORT] Downloading avatar clips...');
-  const [
-    humanHookFile,    // full-screen for steps 1+2 (used directly as video)
-    humanIdleFile,    // composited into circle for steps 3+4
-    humanTimeupFile,  // composited into circle for step 5
-    humanCta4File,    // composited into circle for step 6
-  ] = await Promise.all([
-    download(avatarUrls.human_hook,   'av_hook'),
-    download(avatarUrls.human_idle,   'av_idle'),
-    download(avatarUrls.human_timeup, 'av_timeup'),
-    download(avatarUrls.human_cta4,   'av_cta4'),
+  // ── Host clip downloads (all share one dress_code) ────────────────
+  console.log('[SHORT] Downloading host clips...');
+  const dc = avatarSet.dressCode ?? 'na';
+  const [hostHookFile, hostSilentFile, hostCta4File] = await Promise.all([
+    download(avatarSet.hook,   `av_hook_d${dc}`),
+    download(avatarSet.silent, `av_silent_d${dc}`),
+    download(avatarSet.cta4,   `av_cta4_d${dc}`),
   ]);
 
-  console.log('[SHORT] Avatar clips:', {
-    hook:   humanHookFile   ? 'OK' : 'missing (will use fallback)',
-    idle:   humanIdleFile   ? 'OK' : 'missing (circle will be placeholder)',
-    timeup: humanTimeupFile ? 'OK' : 'missing (will use idle)',
-    cta4:   humanCta4File   ? 'OK' : 'missing (will use idle)',
+  console.log('[SHORT] Host clips (dress_code=' + dc + '):', {
+    hook:   hostHookFile   ? 'OK' : 'missing (hook-slide fallback)',
+    silent: hostSilentFile ? 'OK' : 'missing (placeholder circle)',
+    cta4:   hostCta4File   ? 'OK' : 'missing (TTS fallback)',
   });
 
   let resolvedBgFile = bgFile;
@@ -825,35 +993,32 @@ async function buildShortVideo(quiz, workDir) {
 /* Hide hint — too much info for short format */
 .short-fmt .hint-wrap,
 .short-fmt .hint-text { display: none !important; }
-/* Eliminated options disappear */
-.short-fmt .option-btn.eliminate {
-  opacity: 0 !important;
+/* 50/50 -- options marked as targets stay FULLY VISIBLE until JS adds
+   .opt-eliminated mid-recording at t=SHORT_FIFTY_AT. Previously the
+   template's own .eliminate class was stamped in at build time and forced
+   to opacity:0, so the 50/50 "reveal" had already happened before the
+   options were ever shown. */
+.short-fmt .option-btn.opt-elim-target {
+  opacity: 1;
+}
+.short-fmt .option-btn.opt-eliminated {
+  animation: fiftyFade 0.45s ease-out forwards !important;
   pointer-events: none !important;
+}
+@keyframes fiftyFade {
+  0%   { opacity: 1; transform: scale(1);    filter: blur(0); }
+  100% { opacity: 0; transform: scale(0.90); filter: blur(3px); }
 }
 </style>
 ${AVATAR_CSS}`;
 
   html = html.replace('</head>', `${shortCss}\n</head>`);
 
-  // ── Avatar strip: human is a styled placeholder div ────────────────
-  // The actual video is composited by FFmpeg. The placeholder holds the
-  // position and shows the speaking glow border via .av-speaking CSS.
-  // The dog div with its ring elements IS real and captured by Puppeteer.
-  const avatarStripHtml = `
-<!-- AVATAR STRIP — human=placeholder (FFmpeg composites real video), dog=real CSS -->
-<div id="avatar-strip">
-  <div id="av-human" class="av-circle av-human av-placeholder">
-    <span class="av-placeholder-icon" style="font-size:56px;opacity:0.15">👤</span>
-  </div>
-  <div id="av-dog" class="av-circle av-dog">
-    <span class="av-dog-face">🐶</span>
-    <div class="av-dog-ring av-dog-ring-1"></div>
-    <div class="av-dog-ring av-dog-ring-2"></div>
-    <div class="av-dog-ring av-dog-ring-3"></div>
-  </div>
-</div>`;
-
-  html = html.replace('</body>', `${avatarStripHtml}\n</body>`);
+  // ── Avatar strip ───────────────────────────────────────────────────
+  // Host = placeholder div (FFmpeg composites the real clip on top later).
+  // Dog  = full CSS rig (head/ears/eyes/snout/mouth/tail) that Puppeteer
+  //        captures for real. Defined once as AVATAR_STRIP_HTML.
+  html = html.replace('</body>', `${AVATAR_STRIP_HTML}\n</body>`);
 
   const htmlPath = path.join(workDir, 'short_index.html');
   await fs.writeFile(htmlPath, html);
@@ -913,219 +1078,213 @@ ${AVATAR_CSS}`;
     console.log(`[SHORT] + ${path.basename(clip.path)} ${clip.dur.toFixed(2)}s  (Σ ${cursor.toFixed(2)}s)`);
   }
 
-  // ══ STEP 1+2 — FULL-SCREEN HOST CLIP (used directly, not Puppeteer) ══
-  // The human_hook.mp4 IS the video for this step. FFmpeg re-encodes it
-  // to our spec. No Puppeteer recording at all for this step.
-  console.log('[SHORT] ── Step 1+2: Full-screen host clip');
-  const step12Result = await buildHookStep(humanHookFile, workDir);
+  // ══ STEP 1+2 — FULL-SCREEN HOST CLIP (hook + question intro) ═══════
+  // The hook clip IS the video for this step; its own audio track carries
+  // both the hook line and the question intro. Not recorded by Puppeteer.
+  console.log('[SHORT] -- Step 1+2: full-screen host clip');
+  const step12Result = await buildHookStep(hostHookFile, workDir);
 
   if (step12Result) {
-    // ✓ Have real host clip — use it directly
     pushClip(step12Result, true);
   } else {
-    // ✗ No host clip — Puppeteer fallback: hook slide
     console.log('[SHORT] Step 1+2 fallback: recording hook slide');
     await showScreen(page, '.hook-slide');
-    const fallbackDur = 3.0;
-    const rawPath  = path.join(workDir, 'sh_step12_raw.mp4');
-    const h264Path = path.join(workDir, 'sh_step12_h264.mp4');
-    const outPath  = path.join(workDir, 'sh_step12.mp4');
-    const rec = new PuppeteerScreenRecorder(page, {
-      fps: 30, videoFrame: { width: 1080, height: 1920 },
-      aspectRatio: '9:16', followNewTab: false
-    });
-    await rec.start(rawPath);
-    await new Promise(r => setTimeout(r, fallbackDur * 1000));
-    await withTimeout(rec.stop(), TIMEOUT_RECORDER, 'step12_fallback.stop');
-    await ffmpeg(`-y -i "${rawPath}" -an -c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${h264Path}"`, 'step12_fallback_enc');
-    await ffmpeg(`-y -i "${h264Path}" -c:v copy -an -t ${fallbackDur} "${outPath}"`, 'step12_fallback_vid');
-    pushClip({ path: outPath, dur: fallbackDur }, false);
+    const fbDur = 3.0;
+    const fb = await recordUiWithEvents(page, null, fbDur, workDir, 'sh_step12');
+    pushClip(fb, false);
   }
 
-  // ══ STEP 3 — QUESTION + OPTIONS + DOG TTS ══════════════════════════
-  // Puppeteer records: UI with dog CSS animation (real).
-  // FFmpeg composites: humanIdleFile into human circle slot.
-  console.log('[SHORT] ── Step 3: Q + Options + Dog TTS');
+  // ══ STEP 3 — QUESTION + OPTIONS, DOG SPEAKS THE TTS ════════════════
+  // Options appear together with the question. Dog mouth cycles while TTS
+  // plays. Host circle shows the SILENT clip (same dress_code).
+  console.log('[SHORT] -- Step 3: Q + options + dog TTS');
 
   await page.evaluate(() => {
-    const strip = document.getElementById('avatar-strip');
-    if (strip) strip.style.display = 'flex';
+    const s = document.getElementById('avatar-strip');
+    if (s) s.style.display = 'flex';
   });
+  // Measure the real host-circle box ONCE, now that the strip is laid out.
+  const hostSlot = await measureHostSlot(page);
   await setAvatarMode(page, 'dog_speaking');
   await showScreen(page, '.question-phase');
 
-  // Freeze countdown timer — it only ticks in step 4
+  // Freeze the countdown — it must not tick until step 4
   await page.evaluate(() => {
     document.querySelectorAll(
       '.countdown-timer,.timer-ring,.timer-bar,[class*="countdown"],[class*="timer"]'
     ).forEach(el => { el.style.animationPlayState = 'paused'; });
   });
 
-  // Build step 3 audio: sfx → question TTS → gap → "time starts now"
+  // Audio: sfx -> question TTS -> gap -> "you have only 6 seconds..."
   const s3Parts = [];
   if (sfxFile) {
     s3Parts.push(sfxFile);
-    const sg = path.join(workDir,'sh_sfxgap.mp3');
+    const sg = path.join(workDir, 'sh_sfxgap.mp3');
     await silence(0.12, sg);
     s3Parts.push(sg);
   }
-  const qTtsPath = path.join(workDir,'sh_q_tts.mp3');
-  await tts(question, voice, qTtsPath, 3);
-  s3Parts.push(qTtsPath);
-  const microGap = path.join(workDir,'sh_microgap.mp3');
+  const qTts = path.join(workDir, 'sh_q_tts.mp3');
+  await tts(question, voice, qTts, 3);
+  s3Parts.push(qTts);
+
+  const microGap = path.join(workDir, 'sh_microgap.mp3');
   await silence(0.22, microGap);
   s3Parts.push(microGap);
-  const timerPrompt = path.join(workDir,'sh_timerprompt.mp3');
-  await tts('You have only 5 seconds and your time starts now!', voice, timerPrompt, 3);
+
+  const timerPrompt = path.join(workDir, 'sh_timerprompt.mp3');
+  await tts(
+    `You have only ${SHORT_COUNTDOWN} seconds and your time starts now!`,
+    voice, timerPrompt, 3
+  );
   s3Parts.push(timerPrompt);
 
-  const step3Audio = path.join(workDir,'sh_step3.mp3');
+  const step3Audio = path.join(workDir, 'sh_step3.mp3');
   await concatAudio(s3Parts, step3Audio, workDir);
   const step3Dur = Math.max(await audioDur(step3Audio), 2.0);
   console.log(`[SHORT] Step 3 audio: ${step3Dur.toFixed(2)}s`);
 
-  // Record Puppeteer UI (dog animation is real here)
-  const step3Ui = await recordedClip(page, step3Audio, step3Dur, workDir, 'sh_step3_ui');
+  const step3Ui = await recordUiWithEvents(page, step3Audio, step3Dur, workDir, 'sh_step3_ui');
 
-  // FFmpeg: composite human idle video into circle slot (bottom-left)
-  let step3Final;
-  if (humanIdleFile && await fileExists(humanIdleFile)) {
-    const step3CompPath = path.join(workDir, 'sh_step3.mp4');
-    await compositeHumanCircle(step3Ui.path, humanIdleFile, step3Dur, step3CompPath);
-    step3Final = { path: step3CompPath, dur: step3Dur };
-    console.log('[SHORT] Step 3: human idle composited onto UI');
-  } else {
-    step3Final = step3Ui; // no idle clip — placeholder div stays visible
-    console.log('[SHORT] Step 3: no idle clip — using placeholder');
+  let step3Final = step3Ui;
+  if (hostSilentFile && await fileExists(hostSilentFile)) {
+    const cp = path.join(workDir, 'sh_step3.mp4');
+    await compositeHumanCircle(step3Ui.path, hostSilentFile, step3Dur, cp, hostSlot);
+    step3Final = { path: cp, dur: step3Dur };
+    console.log('[SHORT] Step 3: silent host clip composited');
   }
   pushClip(step3Final, true);
 
-  // ══ STEP 4 — COUNTDOWN 5s (both silent) ════════════════════════════
-  console.log('[SHORT] ── Step 4: Countdown 5s');
+  // ══ STEP 4 — COUNTDOWN (6s), 50/50 FIRES AT t=3s ═══════════════════
+  // Dog stops talking (tail keeps wagging). Host stays on the silent clip.
+  console.log(`[SHORT] -- Step 4: countdown ${SHORT_COUNTDOWN}s, 50/50 at ${SHORT_FIFTY_AT}s`);
 
   await setAvatarMode(page, 'both_silent');
 
-  // Resume countdown timer
-  await page.evaluate((cd, fa, ft) => {
+  // Restart the countdown animation at the new duration
+  await page.evaluate((cd, hintAt, fiftyAt) => {
     document.querySelectorAll(
       '.countdown-timer,.timer-ring,.timer-bar,[class*="countdown"],[class*="timer"]'
     ).forEach(el => {
       el.style.animation = 'none';
-      el.offsetHeight;
+      void el.offsetHeight;                 // force reflow
       el.style.animation = '';
-      el.style.animationPlayState = 'running';
       el.style.animationDuration  = cd + 's';
+      el.style.animationPlayState = 'running';
     });
     const qp = document.querySelector('.question-phase');
     if (qp) {
       qp.style.setProperty('--qtime', cd);
-      qp.style.setProperty('--fiftyfifty-time', ft);
-      qp.style.setProperty('--hint-time', fa);
+      qp.style.setProperty('--hint-time', hintAt);
+      qp.style.setProperty('--fiftyfifty-time', fiftyAt);
     }
   }, SHORT_COUNTDOWN, SHORT_HINT_AT, SHORT_FIFTY_AT);
 
-  const cdAudioPath = path.join(workDir,'sh_cd.mp3');
+  // Countdown music, looped to exactly SHORT_COUNTDOWN seconds
+  const cdAudio = path.join(workDir, 'sh_cd.mp3');
   if (countdownFile) {
     await ffmpeg(
-      `-y -stream_loop -1 -i "${countdownFile}" -t ${SHORT_COUNTDOWN} -af "volume=0.75" -ar 44100 -ac 1 -acodec libmp3lame "${cdAudioPath}"`,
+      `-y -stream_loop -1 -i "${countdownFile}" -t ${SHORT_COUNTDOWN} -af "volume=0.75" -ar 44100 -ac 1 -acodec libmp3lame "${cdAudio}"`,
       'sh_cdLoop'
     );
   } else {
-    await silence(SHORT_COUNTDOWN, cdAudioPath);
+    await silence(SHORT_COUNTDOWN, cdAudio);
   }
 
-  // Record Puppeteer UI
-  const step4Ui = await recordedClip(page, cdAudioPath, SHORT_COUNTDOWN, workDir, 'sh_step4_ui');
+  // THE 50/50: fire the elimination mid-recording, exactly at t=3s
+  const step4Ui = await recordUiWithEvents(
+    page, cdAudio, SHORT_COUNTDOWN, workDir, 'sh_step4_ui',
+    [{
+      at: SHORT_FIFTY_AT,
+      fn: async (pg) => {
+        const n = await pg.evaluate(() => {
+          const targets = document.querySelectorAll('.option-btn.opt-elim-target');
+          targets.forEach(el => el.classList.add('opt-eliminated'));
+          return targets.length;
+        });
+        console.log(`[SHORT] 50/50 eliminated ${n} options`);
+      }
+    }]
+  );
 
-  // FFmpeg: composite human idle video into circle slot
-  let step4Final;
-  if (humanIdleFile && await fileExists(humanIdleFile)) {
-    const step4CompPath = path.join(workDir, 'sh_step4.mp4');
-    await compositeHumanCircle(step4Ui.path, humanIdleFile, SHORT_COUNTDOWN, step4CompPath);
-    step4Final = { path: step4CompPath, dur: SHORT_COUNTDOWN };
-    console.log('[SHORT] Step 4: human idle composited onto UI');
-  } else {
-    step4Final = step4Ui;
-    console.log('[SHORT] Step 4: no idle clip — using placeholder');
+  let step4Final = step4Ui;
+  if (hostSilentFile && await fileExists(hostSilentFile)) {
+    const cp = path.join(workDir, 'sh_step4.mp4');
+    await compositeHumanCircle(step4Ui.path, hostSilentFile, SHORT_COUNTDOWN, cp, hostSlot);
+    step4Final = { path: cp, dur: SHORT_COUNTDOWN };
+    console.log('[SHORT] Step 4: silent host clip composited');
   }
-  // Countdown is not a voice range — bg music stays at base volume
-  pushClip(step4Final, false);
+  pushClip(step4Final, false);   // countdown music != voice, no bg duck
 
-  // ══ STEP 5 — TIMEUP (human speaking, dog silent) ═══════════════════
-  console.log('[SHORT] ── Step 5: Timeup');
-
-  await setAvatarMode(page, 'human_speaking'); // shows glow border in UI
-  await showScreen(page, '.pre-reveal-slide');
-
-  let timeupAudioPath;
-  if (timeupFile) {
-    timeupAudioPath = timeupFile;
-    console.log(`[SHORT] Timeup: pre-recorded (${(await audioDur(timeupFile)).toFixed(2)}s)`);
-  } else {
-    timeupAudioPath = path.join(workDir,'sh_timeup_tts.mp3');
-    await tts(quiz.timeup_text || "Time's up!", voice, timeupAudioPath, 3);
-  }
-  const timeupDur = Math.max(await audioDur(timeupAudioPath), 1.0);
-
-  // Record Puppeteer UI (glow border shows, dog idle)
-  const step5Ui = await recordedClip(page, timeupAudioPath, timeupDur, workDir, 'sh_step5_ui');
-
-  // FFmpeg: composite human timeup (or idle fallback) into circle
-  const step5HumanClip = (humanTimeupFile && await fileExists(humanTimeupFile))
-    ? humanTimeupFile
-    : (humanIdleFile && await fileExists(humanIdleFile)) ? humanIdleFile : null;
-
-  let step5Final;
-  if (step5HumanClip) {
-    const step5CompPath = path.join(workDir, 'sh_step5.mp4');
-    await compositeHumanCircle(step5Ui.path, step5HumanClip, timeupDur, step5CompPath);
-    step5Final = { path: step5CompPath, dur: timeupDur };
-    console.log(`[SHORT] Step 5: ${humanTimeupFile ? 'timeup' : 'idle'} clip composited`);
-  } else {
-    step5Final = step5Ui;
-    console.log('[SHORT] Step 5: no human clip — using placeholder');
-  }
-  pushClip(step5Final, true);
-
-  // ══ STEP 6 — CTA (human speaking, dog silent) ══════════════════════
-  console.log('[SHORT] ── Step 6: CTA');
+  // ══ STEP 5+6 — TIMEUP + CTA4 (ONE host clip, one audio track) ══════
+  // Section (c) is a single recording containing BOTH the time-up line and
+  // the CTA4 line. We take its audio wholesale and switch the on-screen
+  // slide from timeup -> CTA partway through.
+  console.log('[SHORT] -- Step 5+6: timeup + CTA4 (single host clip)');
 
   await setAvatarMode(page, 'human_speaking');
+  await showScreen(page, '.pre-reveal-slide');
 
-  const ctaSel = await page.evaluate(() => {
-    return document.querySelector('.comment-cta-screen') ? '.comment-cta-screen' : '.pre-reveal-slide';
-  });
-  await showScreen(page, ctaSel);
+  let step56Audio, step56Dur, splitAt;
 
-  let cta4Path;
-  if (cta4AudioFile) {
-    cta4Path = cta4AudioFile;
-    console.log(`[SHORT] CTA4: pre-recorded (${(await audioDur(cta4AudioFile)).toFixed(2)}s)`);
+  if (hostCta4File && await fileExists(hostCta4File)) {
+    // Audio comes from the host clip itself
+    step56Audio = path.join(workDir, 'sh_step56_audio.mp3');
+    await ffmpeg(
+      `-y -i "${hostCta4File}" -vn -ar 44100 -ac 1 -b:a 128k -acodec libmp3lame "${step56Audio}"`,
+      'step56_audio'
+    );
+    step56Dur = Math.max(await videoDur(hostCta4File), await audioDur(step56Audio), 1.5);
+
+    // When to swap timeup -> CTA slide. Prefer the DB value; else 45%.
+    splitAt = (avatarSet.timeupSplitSec != null && avatarSet.timeupSplitSec > 0
+               && avatarSet.timeupSplitSec < step56Dur)
+      ? Number(avatarSet.timeupSplitSec)
+      : step56Dur * 0.45;
+    console.log(`[SHORT] Step 5+6: ${step56Dur.toFixed(2)}s, slide switch at ${splitAt.toFixed(2)}s`);
   } else {
-    cta4Path = path.join(workDir,'sh_cta4_tts.mp3');
-    await tts(quiz.cta4_text || 'Write your answer in the comments right now!', voice, cta4Path, 3);
+    // No cta4 clip — fall back to TTS for both lines
+    console.log('[SHORT] Step 5+6: no cta4 host clip — TTS fallback');
+    const tuTts = path.join(workDir, 'sh_timeup_tts.mp3');
+    await tts(quiz.timeup_text || "Time's up!", voice, tuTts, 3);
+    const ctaTts = path.join(workDir, 'sh_cta4_tts.mp3');
+    await tts(quiz.cta4_text || 'Write your answer in the comments!', voice, ctaTts, 3);
+    splitAt = Math.max(await audioDur(tuTts), 0.8);
+    step56Audio = path.join(workDir, 'sh_step56_audio.mp3');
+    await concatAudio([tuTts, ctaTts], step56Audio, workDir);
+    step56Dur = Math.max(await audioDur(step56Audio), 2.0);
   }
-  const cta4Dur = Math.max(await audioDur(cta4Path), 1.5);
 
-  // Record Puppeteer UI
-  const step6Ui = await recordedClip(page, cta4Path, cta4Dur, workDir, 'sh_step6_ui');
+  // Which slide to switch TO at splitAt
+  const ctaSel = await page.evaluate(() =>
+    document.querySelector('.comment-cta-screen') ? '.comment-cta-screen' : '.pre-reveal-slide'
+  );
 
-  // FFmpeg: composite human cta4 (or idle fallback) into circle
-  const step6HumanClip = (humanCta4File && await fileExists(humanCta4File))
-    ? humanCta4File
-    : (humanIdleFile && await fileExists(humanIdleFile)) ? humanIdleFile : null;
+  const step56Ui = await recordUiWithEvents(
+    page, step56Audio, step56Dur, workDir, 'sh_step56_ui',
+    [{
+      at: splitAt,
+      fn: async (pg) => {
+        await pg.evaluate((sel) => {
+          document.querySelectorAll('.screen').forEach(e => e.classList.remove('active'));
+          document.querySelector(sel)?.classList.add('active');
+        }, ctaSel);
+        console.log('[SHORT] switched to CTA slide');
+      }
+    }]
+  );
 
-  let step6Final;
-  if (step6HumanClip) {
-    const step6CompPath = path.join(workDir, 'sh_step6.mp4');
-    await compositeHumanCircle(step6Ui.path, step6HumanClip, cta4Dur, step6CompPath);
-    step6Final = { path: step6CompPath, dur: cta4Dur };
-    console.log(`[SHORT] Step 6: ${humanCta4File ? 'cta4' : 'idle'} clip composited`);
-  } else {
-    step6Final = step6Ui;
-    console.log('[SHORT] Step 6: no human clip — using placeholder');
+  let step56Final = step56Ui;
+  const step56Host = (hostCta4File && await fileExists(hostCta4File))
+    ? hostCta4File
+    : (hostSilentFile && await fileExists(hostSilentFile) ? hostSilentFile : null);
+
+  if (step56Host) {
+    const cp = path.join(workDir, 'sh_step56.mp4');
+    await compositeHumanCircle(step56Ui.path, step56Host, step56Dur, cp, hostSlot);
+    step56Final = { path: cp, dur: step56Dur };
+    console.log(`[SHORT] Step 5+6: ${hostCta4File ? 'cta4' : 'silent'} host clip composited`);
   }
-  pushClip(step6Final, true);
+  pushClip(step56Final, true);
 
   await browser.close();
 
