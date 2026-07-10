@@ -135,7 +135,7 @@ const AVATAR_SECTIONS = ['hook', 'silent', 'cta4'];
 const DOG_SECTIONS    = ['dog_image', 'dog_gif_talking', 'dog_gif_idle'];
 
 async function fetchAvatarSet() {
-  const empty = { dressCode: null, hook: null, silent: null, cta4: null, timeupSplitSec: null, dogImage: null, dogGifTalking: null, dogGifIdle: null };
+  const empty = { dressCode: null, hook: null, silent: null, cta4: null, timeupSplitSec: null, dogImage: null, dogIdle: null, dogSpeaking: null, dogCountdown: null, dogCta4: null };
 
   let rows;
   try {
@@ -152,10 +152,15 @@ async function fetchAvatarSet() {
     const dr = (rows||[]).filter(r=>r.section===sec && r.video_url);
     return dr.length ? dr[Math.floor(Math.random()*dr.length)].video_url : null;
   };
-  const dogImageUrl      = pickDogUrl('dog_image');
-  const dogGifTalkingUrl = pickDogUrl('dog_gif_talking');
-  const dogGifIdleUrl    = pickDogUrl('dog_gif_idle');
-  console.log('[AVATAR] dog: image='+(dogImageUrl?'OK':'none')+' gif_talk='+(dogGifTalkingUrl?'OK':'none')+' gif_idle='+(dogGifIdleUrl?'OK':'none'));
+  const dogImageUrl    = pickDogUrl('dog_image');
+  const dogIdleUrl     = pickDogUrl('dog_idle');
+  const dogSpeakingUrl = pickDogUrl('dog_speaking');
+  const dogCdUrl       = pickDogUrl('dog_countdown');
+  const dogCta4Url     = pickDogUrl('dog_cta4');
+  console.log('[AVATAR] dog MP4s: idle='+(dogIdleUrl?'OK':'none')+
+    ' speaking='+(dogSpeakingUrl?'OK':'none')+
+    ' countdown='+(dogCdUrl?'OK':'none')+
+    ' cta4='+(dogCta4Url?'OK':'none'));
 
   const usable = (rows || []).filter(r =>
     r.video_url && r.dress_code != null && AVATAR_SECTIONS.includes(r.section)
@@ -192,7 +197,7 @@ async function fetchAvatarSet() {
         if (s === 'cta4') fb.timeupSplitSec = anyRow.timeup_split_sec ?? null;
       }
     }
-    fb.dogImage = dogImageUrl; fb.dogGifTalking = dogGifTalkingUrl; fb.dogGifIdle = dogGifIdleUrl;
+    fb.dogImage = dogImageUrl; fb.dogIdle = dogIdleUrl; fb.dogSpeaking = dogSpeakingUrl; fb.dogCountdown = dogCdUrl; fb.dogCta4 = dogCta4Url;
     return fb;
   }
 
@@ -208,7 +213,7 @@ async function fetchAvatarSet() {
     console.log(`[AVATAR] dress=${dressCode} ${s}: picked 1 of ${pool.length} takes`);
   }
 
-  set.dogImage = dogImageUrl; set.dogGifTalking = dogGifTalkingUrl; set.dogGifIdle = dogGifIdleUrl;
+  set.dogImage = dogImageUrl; set.dogIdle = dogIdleUrl; set.dogSpeaking = dogSpeakingUrl; set.dogCountdown = dogCdUrl; set.dogCta4 = dogCta4Url;
   console.log(`[AVATAR] Host outfit locked to dress_code=${dressCode} for entire video`);
   return set;
 }
@@ -404,25 +409,17 @@ async function resolveTheme(quiz) {
 // ──────────────────────────────────────────────────────────────────────
 const AVATAR_STRIP_HTML = `
 <div id="avatar-strip">
+  <!-- HOST: placeholder — FFmpeg composites real host clip here -->
   <div id="av-human" class="av-circle av-human av-placeholder">
     <span class="av-placeholder-icon">&#128100;</span>
   </div>
-  <div id="av-dog" class="av-circle av-dog">
-    <div class="dog-gif-wrap">
-      <img class="dog-gif dog-gif-talk" src="" alt="" draggable="false">
-      <img class="dog-gif dog-gif-idle" src="" alt="" draggable="false">
-    </div>
-    <div class="dog-photo-wrap">
-      <div class="dog-photo"></div>
-      <div class="dog-blink"></div>
-      <div class="dog-overlay">
-        <div class="dog-ring dog-ring-1"></div>
-        <div class="dog-ring dog-ring-2"></div>
-        <div class="dog-ring dog-ring-3"></div>
-        <div class="dog-tail-anim"></div>
-        <div class="dog-mouth-slit"></div>
-      </div>
-    </div>
+
+  <!-- DOG: placeholder — FFmpeg composites real dog clip here.
+       No GIF/CSS animation needed; the MP4 clips contain the real movement.
+       The CSS rig below is a last-resort fallback if no dog clips exist. -->
+  <div id="av-dog" class="av-circle av-dog av-placeholder">
+    <span class="av-placeholder-icon" style="font-size:56px;opacity:0.15">&#128054;</span>
+    <!-- CSS fallback rig (hidden when dog MP4 clips are available) -->
     <div class="dog-stage dog-css-only">
       <div class="dog-tail"></div>
       <div class="dog-body"></div>
@@ -556,6 +553,51 @@ async function measureHostSlot(page) {
     console.warn(`[AVATAR] measure failed: ${e.message.slice(0,60)} — using constants`);
   }
   return null;
+}
+
+// ─── MEASURE THE DOG SLOT FROM THE LIVE PAGE ─────────────────────────
+async function measureDogSlot(page) {
+  try {
+    const box = await page.evaluate(() => {
+      const el = document.getElementById('av-dog');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return null;
+      return { x: Math.round(r.left), y: Math.round(r.top), size: Math.round(r.width) };
+    });
+    if (box) { console.log(`[AVATAR] dog slot: x=${box.x} y=${box.y} size=${box.size}`); return box; }
+  } catch (e) { console.warn(`[AVATAR] dog measure failed: ${e.message.slice(0,60)}`); }
+  return null;
+}
+
+// ─── COMPOSITE A DOG MP4 CLIP INTO THE DOG CIRCLE SLOT ───────────────
+// loop=true  → stream_loop -1  (speaking: loops to fill `dur` exactly)
+// loop=false → plays once (idle, countdown, cta4 clips have fixed duration)
+async function compositeDogCircle(baseClipPath, dogClipPath, dur, outPath, geom, loop = false) {
+  const size = geom?.size ?? AVATAR_SIZE;
+  const r    = size / 2;
+  const gx   = geom?.x ?? (VIDEO_W - AVATAR_PAD_X - size);
+  const gy   = geom?.y ?? (VIDEO_H - AVATAR_PAD_Y - size);
+
+  const filter = [
+    `[1:v]scale=${size}:${size}:force_original_aspect_ratio=increase,` +
+      `crop=${size}:${size}[dogsq]`,
+    `[dogsq]format=yuva420p,geq=` +
+      `lum='p(X,Y)':cb='p(X,Y)':cr='p(X,Y)':` +
+      `a='if(lte(pow(X-${r}\,2)+pow(Y-${r}\,2)\,pow(${r}\,2))\,255\,0)'` +
+      `[dogcircle]`,
+    `[0:v][dogcircle]overlay=${gx}:${gy}:shortest=1[vout]`
+  ].join(';');
+
+  const loopFlag = loop ? '-stream_loop -1' : '';
+  await ffmpeg(
+    `-y -i "${baseClipPath}" ${loopFlag} -i "${dogClipPath}" ` +
+    `-filter_complex "${filter}" ` +
+    `-map "[vout]" -map 0:a? ` +
+    `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 ` +
+    `-c:a aac -b:a 128k -ar 44100 -ac 1 -t ${dur} "${outPath}"`,
+    'composite_dog'
+  );
 }
 
 // ─── FFMPEG COMPOSITE: overlay host circle onto a UI clip ─────────────
@@ -801,14 +843,27 @@ async function buildShortVideo(quiz, workDir) {
   let dogImageFileUrl  = null;
   let dogGifTalkingUrl = null;
   let dogGifIdleUrl    = null;
-  const [dogImgFile, dogGifTalkFile, dogGifIdleFile] = await Promise.all([
-    avatarSet.dogImage      ? download(avatarSet.dogImage,      'av_dog_img')  : Promise.resolve(null),
-    avatarSet.dogGifTalking ? download(avatarSet.dogGifTalking, 'av_dog_talk') : Promise.resolve(null),
-    avatarSet.dogGifIdle    ? download(avatarSet.dogGifIdle,    'av_dog_idle') : Promise.resolve(null),
+  // ── Dog MP4 clips (4 sections, all downloaded in parallel) ──────────
+  // No GIFs needed — all dog animation is now driven by real MP4 clips
+  // composited by FFmpeg into the dog circle slot, just like the host clips.
+  const [dogImgFile, dogIdleFile, dogSpeakingFile, dogCdFile, dogCta4File_d] = await Promise.all([
+    avatarSet.dogImage    ? download(avatarSet.dogImage,    'av_dog_img')  : Promise.resolve(null),
+    avatarSet.dogIdle     ? download(avatarSet.dogIdle,     'av_dog_idle') : Promise.resolve(null),
+    avatarSet.dogSpeaking ? download(avatarSet.dogSpeaking, 'av_dog_spk')  : Promise.resolve(null),
+    avatarSet.dogCountdown? download(avatarSet.dogCountdown,'av_dog_cd')   : Promise.resolve(null),
+    avatarSet.dogCta4     ? download(avatarSet.dogCta4,     'av_dog_cta4') : Promise.resolve(null),
   ]);
-  if (dogGifTalkFile) { dogGifTalkingUrl = `file://${dogGifTalkFile}`; console.log('[SHORT] Dog talking GIF OK'); }
-  if (dogGifIdleFile) { dogGifIdleUrl    = `file://${dogGifIdleFile}`; console.log('[SHORT] Dog idle GIF OK'); }
-  if (dogImgFile)     { dogImageFileUrl  = `file://${dogImgFile}`;     console.log('[SHORT] Dog HD image OK'); }
+  if (dogImgFile)       { dogImageFileUrl  = `file://${dogImgFile}`;   console.log('[SHORT] Dog HD image OK (photo fallback)'); }
+  if (dogIdleFile)      console.log('[SHORT] Dog idle MP4 OK');
+  if (dogSpeakingFile)  console.log('[SHORT] Dog speaking MP4 OK (will loop to match TTS)');
+  if (dogCdFile)        console.log('[SHORT] Dog countdown MP4 OK');
+  if (dogCta4File_d)    console.log('[SHORT] Dog CTA4 MP4 OK');
+  console.log('[SHORT] Dog MP4 set:', {
+    idle:      dogIdleFile      ? 'OK' : 'missing',
+    speaking:  dogSpeakingFile  ? 'OK' : 'missing',
+    countdown: dogCdFile        ? 'OK' : 'missing',
+    cta4:      dogCta4File_d    ? 'OK' : 'missing',
+  });
 
   // ── Host clip downloads (all share one dress_code) ────────────────
   console.log('[SHORT] Downloading host clips...');
@@ -1030,31 +1085,19 @@ ${AVATAR_CSS}`;
   //        captures for real. Defined once as AVATAR_STRIP_HTML.
   // Build avatar strip HTML — dog image URL is injected via a CSS var
   // so the const AVATAR_STRIP_HTML doesn't need to change per quiz.
-  const dogImgCssOverride = '';
-  if (dogGifTalkingUrl && dogGifIdleUrl) {
-    dogImgCssOverride = `<style>
-#av-dog .dog-gif-wrap{display:block !important}
-#av-dog .dog-photo-wrap{display:none !important}
-#av-dog .dog-css-only{display:none !important}
-</style><script>(function(){
-  var t=document.querySelector('#av-dog .dog-gif-talk');
-  var i=document.querySelector('#av-dog .dog-gif-idle');
-  if(t) t.src="${dogGifTalkingUrl}";
-  if(i) i.src="${dogGifIdleUrl}";
-})();</script>`;
-    console.log('[SHORT] Dog: GIF pair mode');
-  } else if (dogImageFileUrl) {
-    dogImgCssOverride = `<style>
-#av-dog .dog-photo-wrap{display:block !important}
-#av-dog .dog-gif-wrap{display:none !important}
-#av-dog .dog-css-only{display:none !important}
-#av-dog .dog-photo{background-image:url("${dogImageFileUrl}") !important}
-#av-dog .dog-blink{display:block !important}
-</style>`;
-    console.log('[SHORT] Dog: HD photo + overlay mode');
-  } else {
-    console.log('[SHORT] Dog: CSS rig fallback mode');
-  }
+  // When dog MP4 clips exist, hide the CSS fallback rig — the real dog
+  // video will be composited by FFmpeg so the placeholder shows nothing.
+  // When no clips exist, the CSS rig animates as a last resort.
+  const hasDogMp4 = !!(dogIdleFile || dogSpeakingFile || dogCdFile || dogCta4File_d);
+  const dogImgCssOverride = hasDogMp4
+    ? `<style>
+        #av-dog .dog-css-only { display: none !important; }
+        #av-dog .av-placeholder-icon { opacity: 0.05 !important; }
+       </style>`
+    : '';
+  if (hasDogMp4) console.log('[SHORT] Dog: MP4 clip mode (CSS rig hidden)');
+  else           console.log('[SHORT] Dog: CSS rig fallback mode (no dog MP4 clips in DB)');
+
   html = html.replace('</body>', `${dogImgCssOverride}${AVATAR_STRIP_HTML}\n</body>`);
 
   const htmlPath = path.join(workDir, 'short_index.html');
@@ -1128,13 +1171,34 @@ ${AVATAR_CSS}`;
   const step12Result = await buildHookStep(hostHookFile, workDir);
 
   if (step12Result) {
-    pushClip(step12Result, true);
+    // Composite idle dog onto the full-screen hook clip
+    let step12Final = step12Result;
+    if (dogIdleFile && await fileExists(dogIdleFile)) {
+      try {
+        const cp = path.join(workDir, 'sh_step12_final.mp4');
+        // loop=true: idle clip loops to fill the full hook duration
+        await compositeDogCircle(step12Result.path, dogIdleFile, step12Result.dur, cp, dogSlot, true);
+        step12Final = { path: cp, dur: step12Result.dur };
+        console.log('[SHORT] Step 1+2: dog idle clip looped onto hook clip');
+      } catch (e) {
+        console.warn(`[SHORT] Step 1+2 dog composite non-fatal: ${e.message.slice(0,80)}`);
+      }
+    }
+    pushClip(step12Final, true);
   } else {
     console.log('[SHORT] Step 1+2 fallback: recording hook slide');
     await showScreen(page, '.hook-slide');
     const fbDur = 3.0;
     const fb = await recordUiWithEvents(page, null, fbDur, workDir, 'sh_step12');
-    pushClip(fb, false);
+    let fbFinal = fb;
+    if (dogIdleFile && await fileExists(dogIdleFile)) {
+      try {
+        const cp = path.join(workDir, 'sh_step12_dog.mp4');
+        await compositeDogCircle(fb.path, dogIdleFile, fbDur, cp, dogSlot, true);
+        fbFinal = { path: cp, dur: fbDur };
+      } catch (e) {}
+    }
+    pushClip(fbFinal, false);
   }
 
   // ══ STEP 3 — QUESTION + OPTIONS, DOG SPEAKS THE TTS ════════════════
@@ -1148,6 +1212,7 @@ ${AVATAR_CSS}`;
   });
   // Measure the real host-circle box ONCE, now that the strip is laid out.
   const hostSlot = await measureHostSlot(page);
+  const dogSlot  = await measureDogSlot(page);
   await setAvatarMode(page, 'dog_speaking');
   await showScreen(page, '.question-phase');
 
@@ -1188,12 +1253,20 @@ ${AVATAR_CSS}`;
 
   const step3Ui = await recordUiWithEvents(page, step3Audio, step3Dur, workDir, 'sh_step3_ui');
 
+  // Composite host then dog onto the UI recording (two FFmpeg passes)
   let step3Final = step3Ui;
   if (hostSilentFile && await fileExists(hostSilentFile)) {
-    const cp = path.join(workDir, 'sh_step3.mp4');
+    const cp = path.join(workDir, 'sh_step3_host.mp4');
     await compositeHumanCircle(step3Ui.path, hostSilentFile, step3Dur, cp, hostSlot);
     step3Final = { path: cp, dur: step3Dur };
-    console.log('[SHORT] Step 3: silent host clip composited');
+    console.log('[SHORT] Step 3: silent host composited');
+  }
+  if (dogSpeakingFile && await fileExists(dogSpeakingFile)) {
+    const cp = path.join(workDir, 'sh_step3.mp4');
+    // loop=true: speaking clip loops to fill the exact TTS duration
+    await compositeDogCircle(step3Final.path, dogSpeakingFile, step3Dur, cp, dogSlot, true);
+    step3Final = { path: cp, dur: step3Dur };
+    console.log(`[SHORT] Step 3: dog speaking clip looped to ${step3Dur.toFixed(2)}s`);
   }
   pushClip(step3Final, true);
 
@@ -1252,10 +1325,17 @@ ${AVATAR_CSS}`;
 
   let step4Final = step4Ui;
   if (hostSilentFile && await fileExists(hostSilentFile)) {
-    const cp = path.join(workDir, 'sh_step4.mp4');
+    const cp = path.join(workDir, 'sh_step4_host.mp4');
     await compositeHumanCircle(step4Ui.path, hostSilentFile, SHORT_COUNTDOWN, cp, hostSlot);
     step4Final = { path: cp, dur: SHORT_COUNTDOWN };
-    console.log('[SHORT] Step 4: silent host clip composited');
+    console.log('[SHORT] Step 4: silent host composited');
+  }
+  if (dogCdFile && await fileExists(dogCdFile)) {
+    const cp = path.join(workDir, 'sh_step4.mp4');
+    // loop=false: countdown clip is exactly SHORT_COUNTDOWN seconds long
+    await compositeDogCircle(step4Final.path, dogCdFile, SHORT_COUNTDOWN, cp, dogSlot, false);
+    step4Final = { path: cp, dur: SHORT_COUNTDOWN };
+    console.log('[SHORT] Step 4: dog countdown clip composited');
   }
   pushClip(step4Final, false);   // countdown music != voice, no bg duck
 
@@ -1323,10 +1403,17 @@ ${AVATAR_CSS}`;
     : (hostSilentFile && await fileExists(hostSilentFile) ? hostSilentFile : null);
 
   if (step56Host) {
-    const cp = path.join(workDir, 'sh_step56.mp4');
+    const cp = path.join(workDir, 'sh_step56_host.mp4');
     await compositeHumanCircle(step56Ui.path, step56Host, step56Dur, cp, hostSlot);
     step56Final = { path: cp, dur: step56Dur };
-    console.log(`[SHORT] Step 5+6: ${hostCta4File ? 'cta4' : 'silent'} host clip composited`);
+    console.log(`[SHORT] Step 5+6: ${hostCta4File ? 'cta4' : 'silent'} host composited`);
+  }
+  if (dogCta4File_d && await fileExists(dogCta4File_d)) {
+    const cp = path.join(workDir, 'sh_step56.mp4');
+    // loop=false: dog cta4 clip matches the host cta4 clip duration
+    await compositeDogCircle(step56Final.path, dogCta4File_d, step56Dur, cp, dogSlot, false);
+    step56Final = { path: cp, dur: step56Dur };
+    console.log('[SHORT] Step 5+6: dog cta4 clip composited');
   }
   pushClip(step56Final, true);
 
