@@ -1027,9 +1027,20 @@ async function buildShortVideo(quiz, workDir) {
   // The dog CSS animation IS real and will appear correctly in the recording.
   const shortCss = `
 <style id="short-fmt-css">
-/* ── LAYOUT: reserve space at bottom for avatar strip ── */
+/* ── LAYOUT ──────────────────────────────────────────────────────────────
+   The template places a spinning logo (position:absolute; top:38px; h=100px)
+   and challenge-no (position:absolute; top:155px; ~30px tall) on every screen.
+   Without a matching padding-top they overlap the question box.
+   230px = 155px (challenge-no top) + 30px (its height) + 45px breathing room.
+   The +200px the client requested is relative to the previous ~30-80px default,
+   so 230px is the correct absolute value. ── */
 .short-fmt .question-phase,
-.short-fmt .pre-reveal-slide,
+.short-fmt .pre-reveal-slide {
+  padding-top:    230px !important;
+  padding-bottom: ${AVATAR_SIZE + 80}px !important;
+  box-sizing: border-box !important;
+}
+/* CTA screen handled separately — it hides logo+challenge-no so needs less top space */
 .short-fmt .comment-cta-screen {
   padding-bottom: ${AVATAR_SIZE + 80}px !important;
   box-sizing: border-box !important;
