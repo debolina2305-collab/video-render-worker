@@ -41,8 +41,7 @@ const execPromise = util.promisify(exec);
 const fs          = require('fs').promises;
 const path        = require('path');
 const puppeteer   = require('puppeteer');
-// PuppeteerScreenRecorder removed — using page.screenshot() + FFmpeg instead
-// (screencast API produces black frames when --disable-gpu is active on CI)
+const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
 const { v4: uuidv4 } = require('uuid');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
@@ -80,7 +79,7 @@ const BG_VOL_BASE       = 0.10;
 const BG_VOL_DUCK       = 0.035;
 const SHORT_COUNTDOWN   = 6;    // countdown length (was 5)
 const SHORT_FIFTY_AT    = 3;    // 50/50 fires at t=3s INTO the countdown
-const SHORT_HINT_AT     = 2;
+const SHORT_HINT_AT     = 1;    // hint appears t=1s INTO the countdown
 // Avatar circle size (px) — matches CSS below
 // Circle diameter = 33% of the 1080px video width (host and dog each).
 const VIDEO_W           = 1080;
@@ -649,111 +648,63 @@ async function compositeHumanCircle(uiClipPath, humanClipPath, dur, outPath, geo
 // countdown, and how the timeup→CTA screen switch happens mid-clip.
 //
 //   events: [{ at: <seconds into the clip>, fn: async (page) => {...} }]
-// ─── SCREENSHOT → VIDEO (replaces PuppeteerScreenRecorder) ──────────────
-// PuppeteerScreenRecorder uses Chrome's Page.screencast API which produces
-// BLACK FRAMES when --disable-gpu is active (required on GitHub Actions CI).
-// page.screenshot() works perfectly in --disable-gpu mode.
+// ─── RECORD UI WITH MID-CLIP EVENTS ──────────────────────────────────
+// Uses PuppeteerScreenRecorder (Chrome's Page.screencast API). Verified to
+// deliver fully-rendered frames under headless + --disable-gpu on CI.
 //
-// Approach:
-//  1. Fire any "before" events (e.g. show the right screen)
-//  2. Take ONE screenshot of the current page state
-//  3. Fire timed mid-clip events (50/50, slide switch) by taking additional
-//     screenshots and stitching clips together with FFmpeg concat
-//  4. Mux the final video with the audio track
+// An earlier revision replaced this with page.screenshot() after blaming the
+// recorder for black video. The true cause was an unclosed </style> in
+// AVATAR_CSS which left the page empty; screenshots were ~8x slower and
+// could not show the countdown ticking. Recorder restored.
 //
-// This is MORE reliable than screen recording for static quiz screens because:
-//  - Screenshots always work (no GPU compositor needed)
-//  - Each "event" creates a new screenshot so the visual change is captured
-//  - CSS animations (countdown ring, 50/50 fade) are baked in via the
-//    screenshot timing rather than relying on live capture
+// events: [{ at: <seconds into the clip>, fn: async (page) => {...} }]
+//   fired WHILE recording, so the 50/50 fade, the hint reveal and the
+//   timeup->CTA slide switch are all captured as real motion.
 async function recordUiWithEvents(page, audioPath, dur, workDir, name, events = []) {
-  const outPath = path.join(workDir, `${name}.mp4`);
+  const rawPath  = path.join(workDir, `${name}_raw.mp4`);
+  const h264Path = path.join(workDir, `${name}_h264.mp4`);
+  const outPath  = path.join(workDir, `${name}.mp4`);
 
-  // Sort events by time
+  const rec = new PuppeteerScreenRecorder(page, {
+    fps: 30,
+    videoFrame: { width: VIDEO_W, height: VIDEO_H },
+    aspectRatio: '9:16',
+    followNewTab: false
+  });
+  await rec.start(rawPath);
+
+  const t0 = Date.now();
   const queue = [...events].sort((a, b) => a.at - b.at);
 
-  // Build a list of {pngPath, segDur} segments. Each segment is one screenshot
-  // held for its duration.
-  const segments = [];
-
-  // Helper: take a screenshot and return the png path
-  const snap = async (label) => {
-    const pngPath = path.join(workDir, `${name}_snap_${label}.png`);
-    await page.screenshot({ path: pngPath, fullPage: false, type: 'png' });
-    return pngPath;
-  };
-
-  // Initial screenshot (before any events)
-  const firstPng = await snap('0000');
-  let lastEventAt = 0;
-
-  for (let i = 0; i < queue.length; i++) {
-    const ev = queue[i];
-    const segDur = ev.at - lastEventAt;
-    if (segDur > 0) segments.push({ png: firstPng, dur: segDur });
-    // Fire the event (DOM mutation: class add, screen switch, etc.)
+  for (const ev of queue) {
+    const waitMs = ev.at * 1000 - (Date.now() - t0);
+    if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
     try {
       await ev.fn(page);
-      await new Promise(r => setTimeout(r, 120)); // brief settle for CSS
-      console.log(`[REC:${name}] event fired at t=${ev.at.toFixed(2)}s`);
+      console.log(`[REC:${name}] event fired at t=${((Date.now() - t0) / 1000).toFixed(2)}s`);
     } catch (e) {
-      console.warn(`[REC:${name}] event failed: ${e.message.slice(0,80)}`);
+      console.warn(`[REC:${name}] event failed: ${e.message.slice(0, 90)}`);
     }
-    // Snapshot AFTER the event
-    const evPng = await snap(String(i + 1).padStart(4, '0'));
-    const nextAt = queue[i + 1]?.at ?? dur;
-    const afterDur = nextAt - ev.at;
-    if (afterDur > 0) segments.push({ png: evPng, dur: afterDur });
-    lastEventAt = ev.at;
   }
 
-  // If no events (or after the last event), fill remaining duration with
-  // the last screenshot
-  if (segments.length === 0) {
-    segments.push({ png: firstPng, dur });
-  } else {
-    // Make sure total segment time = dur
-    const segTotal = segments.reduce((s, x) => s + x.dur, 0);
-    const gap = dur - segTotal;
-    if (gap > 0.01) segments[segments.length - 1].dur += gap;
-  }
+  const remainMs = dur * 1000 - (Date.now() - t0);
+  if (remainMs > 0) await new Promise(r => setTimeout(r, remainMs));
 
-  // Convert each screenshot to a short video clip, then concat them
-  const segClips = [];
-  for (let i = 0; i < segments.length; i++) {
-    const { png, dur: segDur } = segments[i];
-    const segPath = path.join(workDir, `${name}_seg${i}.mp4`);
-    await ffmpeg(
-      `-y -loop 1 -framerate 30 -i "${png}" ` +
-      `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p ` +
-      `-vf "scale=${VIDEO_W}:${VIDEO_H}:flags=lanczos" ` +
-      `-t ${segDur.toFixed(3)} "${segPath}"`,
-      `${name}_seg${i}`
-    );
-    segClips.push(segPath);
-  }
+  await withTimeout(rec.stop(), TIMEOUT_RECORDER, `${name}.stop`);
 
-  // Concat all segments into one silent video
-  let silentVideo;
-  if (segClips.length === 1) {
-    silentVideo = segClips[0];
-  } else {
-    const concatTxt = path.join(workDir, `${name}_concat.txt`);
-    await fs.writeFile(concatTxt,
-      segClips.map(p => `file '${p.replace(/'/g, "'\\''")}' `).join('\n')
-    );
-    silentVideo = path.join(workDir, `${name}_silent.mp4`);
-    await ffmpeg(
-      `-y -f concat -safe 0 -i "${concatTxt}" ` +
-      `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 "${silentVideo}"`,
-      `${name}_catsegs`
-    );
-  }
+  // PuppeteerScreenRecorder emits VP8; re-encode to H264 before any concat.
+  await ffmpeg(
+    `-y -i "${rawPath}" -an ` +
+    `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 ` +
+    `-vf "scale=${VIDEO_W}:${VIDEO_H}" "${h264Path}"`,
+    `${name}_enc`
+  );
 
-  // Mux with audio
   if (audioPath && await fileExists(audioPath)) {
+    // -stream_loop on the video guards against a recording that came out a
+    // few frames short of `dur`; -t clamps the result to the audio length.
     await ffmpeg(
-      `-y -i "${silentVideo}" -i "${audioPath}" ` +
+      `-y -stream_loop -1 -i "${h264Path}" -i "${audioPath}" ` +
       `-map 0:v:0 -map 1:a:0 ` +
       `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 ` +
       `-c:a aac -b:a 128k -ar 44100 -ac 1 -t ${dur} "${outPath}"`,
@@ -761,12 +712,13 @@ async function recordUiWithEvents(page, audioPath, dur, workDir, name, events = 
     );
   } else {
     await ffmpeg(
-      `-y -i "${silentVideo}" -c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 -an -t ${dur} "${outPath}"`,
+      `-y -stream_loop -1 -i "${h264Path}" -an ` +
+      `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 -t ${dur} "${outPath}"`,
       `${name}_vid`
     );
   }
 
-  console.log(`[REC:${name}] ${segments.length} screenshot(s) → ${dur.toFixed(2)}s video`);
+  console.log(`[REC:${name}] recorded ${dur.toFixed(2)}s (${queue.length} event(s))`);
   return { path: outPath, dur };
 }
 
@@ -967,7 +919,32 @@ async function buildShortVideo(quiz, workDir) {
   // base64 data URIs as CSS custom properties.
   let videoPhotoStyleBlock = '';
   let videoPhotoClass      = 'no-photo';
-  const bgImageUrl = quiz.hero_image_url || quiz.topic_image_url || null;
+
+  // Same image worker10 (long) puts behind the video at 30% opacity.
+  // Order: topic_image_url (what worker10 uses) -> hero -> inline -> thumbnail
+  //        -> the blog post's hero/inline image for this quiz.
+  let bgImageUrl = null, bgImageSrc = null;
+  for (const [srcName, url] of [
+    ['topic_image_url',  quiz.topic_image_url],
+    ['hero_image_url',   quiz.hero_image_url],
+    ['inline_image_url', quiz.inline_image_url],
+    ['thumbnail_url',    quiz.thumbnail_url],
+  ]) {
+    if (url && String(url).startsWith('http')) { bgImageUrl = url; bgImageSrc = srcName; break; }
+  }
+  if (!bgImageUrl) {
+    try {
+      const bp = await fetchSupabase(
+        `quiz_blog_posts?quiz_id=eq.${quiz.id}&select=hero_image_url,inline_image_url&limit=1`
+      );
+      const cand = bp?.[0]?.hero_image_url || bp?.[0]?.inline_image_url || null;
+      if (cand) { bgImageUrl = cand; bgImageSrc = 'quiz_blog_posts'; }
+    } catch (e) {
+      console.warn(`[SHORT-BG] blog-post lookup failed: ${e.message.slice(0,60)}`);
+    }
+  }
+  if (bgImageUrl) console.log(`[SHORT-BG] source=${bgImageSrc}`);
+
   if (bgImageUrl) {
     try {
       const imgRes = await fetch(bgImageUrl, { headers: { 'User-Agent': 'AutoQuiz/1.0 short renderer' } });
@@ -982,7 +959,7 @@ async function buildShortVideo(quiz, workDir) {
         }
       } else { console.log(`[SHORT-BG] HTTP ${imgRes.status}`); }
     } catch (e) { console.warn(`[SHORT-BG] ${e.message.slice(0,80)}`); }
-  } else { console.log('[SHORT-BG] No image URL on quiz row'); }
+  } else { console.log('[SHORT-BG] No image on quiz row or blog post — background photo skipped'); }
 
   // ── Theme ──────────────────────────────────────────────────────────
   const { themeCss, decoHtml } = await resolveTheme(quiz);
@@ -1058,21 +1035,35 @@ async function buildShortVideo(quiz, workDir) {
   box-sizing: border-box !important;
 }
 
-/* ── HINT: COMPLETELY REMOVED from the flow.
-   The hint covers the last option because the template renders it
-   below the options grid and it overlaps at short-format heights.
-   In short format we show 50/50 instead — hint is redundant. ── */
-.short-fmt .qp-hint,
-.short-fmt .hint-wrap,
-.short-fmt .hint-text,
-.short-fmt [class*="hint"] {
-  display: none !important;
-  visibility: hidden !important;
-  height: 0 !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  overflow: hidden !important;
+/* ── HINT: shown 1s AFTER the countdown starts ──
+   _base.css makes .qp-hint position:absolute; bottom:380px, which lands on
+   top of option D once the avatar strip shrinks the usable height. We pull it
+   back into normal flow underneath the options, and reserve its space with
+   visibility:hidden so revealing it causes NO layout shift.
+   The template's own animation-delay:var(--hint-time) is disabled; the worker
+   reveals it with a timed event instead. */
+.short-fmt .qp-hint {
+  position: static !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  margin: 14px 40px 0 !important;
+  z-index: auto !important;
+  animation: none !important;
+  opacity: 1 !important;
+  visibility: hidden !important;   /* space reserved, not painted */
 }
+.short-fmt .qp-hint.hint-visible {
+  visibility: visible !important;
+  animation: hintPop 0.35s ease-out both !important;
+}
+@keyframes hintPop {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── Black marquee bar removed in short format (unreadable at this size) ── */
+.short-fmt .niche-marquee { display: none !important; }
 
 /* ── Q+OPTIONS: appear simultaneously (short format = no stagger) ── */
 .short-fmt .question-phase .qp-question,
@@ -1222,11 +1213,35 @@ ${AVATAR_CSS}`;
   // display:none !important on .dog-gif-wrap / .dog-photo-wrap / .dog-css-only.
   // Nothing further needed here.
 
-  // Hide avatar strip until step 3
+  // Avatar strip is laid out from the very first frame so both circle slots
+  // can be measured BEFORE step 1+2 uses them. Previously `dogSlot` was
+  // declared down in step 3 while step 1+2 referenced it -> a temporal-dead-zone
+  // ReferenceError that the surrounding try/catch swallowed, which is why the
+  // dog never appeared on the hook clip.
   await page.evaluate(() => {
     const strip = document.getElementById('avatar-strip');
-    if (strip) strip.style.display = 'none';
+    if (strip) strip.style.display = 'flex';
   });
+  // quiz_template.html gives every screen a .topic-photo-overlay EXCEPT
+  // .question-phase -- the exact screen steps 3 and 4 use. Without this div
+  // the background photo can never appear there. Inject it into any screen
+  // that lacks one.
+  const injected = await page.evaluate((photoClass) => {
+    let added = 0;
+    document.querySelectorAll('.screen').forEach(sc => {
+      if (!sc.querySelector('.topic-photo-overlay')) {
+        const d = document.createElement('div');
+        d.className = 'topic-photo-overlay' + (photoClass ? ' ' + photoClass : '');
+        sc.insertBefore(d, sc.firstChild);
+        added++;
+      }
+    });
+    return added;
+  }, videoPhotoClass);
+  console.log(`[SHORT-BG] injected overlay into ${injected} screen(s)`);
+
+  const hostSlot = await measureHostSlot(page);
+  const dogSlot  = await measureDogSlot(page);
 
   const clips       = [];
   const voiceRanges = [];
@@ -1281,13 +1296,6 @@ ${AVATAR_CSS}`;
   // plays. Host circle shows the SILENT clip (same dress_code).
   console.log('[SHORT] -- Step 3: Q + options + dog TTS');
 
-  await page.evaluate(() => {
-    const s = document.getElementById('avatar-strip');
-    if (s) s.style.display = 'flex';
-  });
-  // Measure the real host-circle box ONCE, now that the strip is laid out.
-  const hostSlot = await measureHostSlot(page);
-  const dogSlot  = await measureDogSlot(page);
   await setAvatarMode(page, 'dog_speaking');
   await showScreen(page, '.question-phase');
 
@@ -1384,18 +1392,40 @@ ${AVATAR_CSS}`;
   // THE 50/50: fire the elimination mid-recording, exactly at t=3s
   const step4Ui = await recordUiWithEvents(
     page, cdAudio, SHORT_COUNTDOWN, workDir, 'sh_step4_ui',
-    [{
-      at: SHORT_FIFTY_AT,
-      fn: async (pg) => {
-        const n = await pg.evaluate(() => {
-          const scope = document.querySelector('.screen.question-phase') || document;
-          const targets = scope.querySelectorAll('.qp-option.opt-elim-target');
-          targets.forEach(el => { el.classList.remove('opt-elim-target'); el.classList.add('opt-eliminated'); });
-          return targets.length;
-        });
-        console.log(`[SHORT] 50/50 eliminated ${n} options`);
+    [
+      {
+        // HINT — exactly 1s after the countdown begins
+        at: SHORT_HINT_AT,
+        fn: async (pg) => {
+          const shown = await pg.evaluate(() => {
+            const scope = document.querySelector('.screen.question-phase') || document;
+            const hint  = scope.querySelector('.qp-hint');
+            if (!hint) return false;
+            // Don't show an empty hint box
+            const txt = (hint.textContent || '').replace(/[^a-zA-Z0-9]/g, '').trim();
+            if (txt.length < 3 || /^Hint$/i.test(txt)) return false;
+            hint.classList.add('hint-visible');
+            return true;
+          });
+          console.log(shown
+            ? `[SHORT] hint revealed at t=${SHORT_HINT_AT}s`
+            : '[SHORT] hint skipped (empty)');
+        }
+      },
+      {
+        // 50/50 — at t=3s
+        at: SHORT_FIFTY_AT,
+        fn: async (pg) => {
+          const n = await pg.evaluate(() => {
+            const scope = document.querySelector('.screen.question-phase') || document;
+            const targets = scope.querySelectorAll('.qp-option.opt-elim-target');
+            targets.forEach(el => { el.classList.remove('opt-elim-target'); el.classList.add('opt-eliminated'); });
+            return targets.length;
+          });
+          console.log(`[SHORT] 50/50 eliminated ${n} options at t=${SHORT_FIFTY_AT}s`);
+        }
       }
-    }]
+    ]
   );
 
   let step4Final = step4Ui;
@@ -1458,16 +1488,48 @@ ${AVATAR_CSS}`;
     document.querySelector('.comment-cta-screen') ? '.comment-cta-screen' : '.pre-reveal-slide'
   );
 
+  // The CTA screen staggers LIKE / SHARE / SUBSCRIBE / CTA4 / arrow with
+  // animation-delay up to 2.8s. It only becomes visible at `splitAt`, so on a
+  // short clip the later pills would never appear (you'd see only "LIKE").
+  // On switch we compress every delay to fit the remaining time.
+  const ctaRemaining = Math.max(0.6, step56Dur - splitAt);
+
   const step56Ui = await recordUiWithEvents(
     page, step56Audio, step56Dur, workDir, 'sh_step56_ui',
     [{
       at: splitAt,
       fn: async (pg) => {
-        await pg.evaluate((sel) => {
+        const info = await pg.evaluate((sel, remaining) => {
           document.querySelectorAll('.screen').forEach(e => e.classList.remove('active'));
-          document.querySelector(sel)?.classList.add('active');
-        }, ctaSel);
-        console.log('[SHORT] switched to CTA slide');
+          const screen = document.querySelector(sel);
+          if (!screen) return { switched: false, scaled: 0 };
+          screen.classList.add('active');
+
+          // Longest original delay in the template is 2.8s (the arrow).
+          const LAST_DELAY = 2.8;
+          // Leave ~35% of the window after the final element lands.
+          const target = remaining * 0.65;
+          const scale  = Math.min(1, Math.max(0.08, target / LAST_DELAY));
+
+          const els = screen.querySelectorAll(
+            '.cta-pill, .cta-divider, .cta-combined-card, .cta-combined-arrow'
+          );
+          els.forEach(el => {
+            const cur = parseFloat(el.style.animationDelay) || 0;
+            // Restart the animation before re-timing it. Mutating
+            // animation-delay on an already-running animation does not
+            // retroactively reschedule it.
+            el.style.animation = 'none';
+            void el.offsetHeight;            // force reflow
+            el.style.animation = '';
+            el.style.animationDelay    = (cur * scale).toFixed(3) + 's';
+            el.style.animationFillMode = 'both';
+          });
+          return { switched: true, scaled: els.length, scale: +scale.toFixed(3) };
+        }, ctaSel, ctaRemaining);
+
+        console.log(`[SHORT] CTA slide shown; ${info.scaled} elements re-timed ` +
+                    `(scale=${info.scale}, window=${ctaRemaining.toFixed(2)}s)`);
       }
     }]
   );
