@@ -132,9 +132,10 @@ function pickRandom(arr) {
 // 'dog_image' is NOT a required section (no dress_code constraint on it).
 // It is a single shared image used for ALL dress codes.
 const AVATAR_SECTIONS = ['hook', 'silent', 'cta4'];
+const DOG_SECTIONS    = ['dog_image', 'dog_gif_talking', 'dog_gif_idle'];
 
 async function fetchAvatarSet() {
-  const empty = { dressCode: null, hook: null, silent: null, cta4: null, timeupSplitSec: null, dogImage: null };
+  const empty = { dressCode: null, hook: null, silent: null, cta4: null, timeupSplitSec: null, dogImage: null, dogGifTalking: null, dogGifIdle: null };
 
   let rows;
   try {
@@ -146,11 +147,15 @@ async function fetchAvatarSet() {
     return empty;
   }
 
-  // dog_image rows have section='dog_image'; they are shared (dress_code-agnostic)
-  const dogImageRows = (rows || []).filter(r => r.section === 'dog_image' && r.video_url);
-  const dogImageUrl  = dogImageRows.length ? dogImageRows[Math.floor(Math.random()*dogImageRows.length)].video_url : null;
-  if (dogImageUrl) console.log('[AVATAR] dog_image found:', dogImageUrl.slice(0,60));
-  else             console.log('[AVATAR] no dog_image row — CSS placeholder used');
+  // Dog assets: shared across dress codes. One per type, picked at random.
+  const pickDogUrl = sec => {
+    const dr = (rows||[]).filter(r=>r.section===sec && r.video_url);
+    return dr.length ? dr[Math.floor(Math.random()*dr.length)].video_url : null;
+  };
+  const dogImageUrl      = pickDogUrl('dog_image');
+  const dogGifTalkingUrl = pickDogUrl('dog_gif_talking');
+  const dogGifIdleUrl    = pickDogUrl('dog_gif_idle');
+  console.log('[AVATAR] dog: image='+(dogImageUrl?'OK':'none')+' gif_talk='+(dogGifTalkingUrl?'OK':'none')+' gif_idle='+(dogGifIdleUrl?'OK':'none'));
 
   const usable = (rows || []).filter(r =>
     r.video_url && r.dress_code != null && AVATAR_SECTIONS.includes(r.section)
@@ -187,7 +192,7 @@ async function fetchAvatarSet() {
         if (s === 'cta4') fb.timeupSplitSec = anyRow.timeup_split_sec ?? null;
       }
     }
-    fb.dogImage = dogImageUrl;
+    fb.dogImage = dogImageUrl; fb.dogGifTalking = dogGifTalkingUrl; fb.dogGifIdle = dogGifIdleUrl;
     return fb;
   }
 
@@ -203,7 +208,7 @@ async function fetchAvatarSet() {
     console.log(`[AVATAR] dress=${dressCode} ${s}: picked 1 of ${pool.length} takes`);
   }
 
-  set.dogImage = dogImageUrl;
+  set.dogImage = dogImageUrl; set.dogGifTalking = dogGifTalkingUrl; set.dogGifIdle = dogGifIdleUrl;
   console.log(`[AVATAR] Host outfit locked to dress_code=${dressCode} for entire video`);
   return set;
 }
@@ -399,31 +404,25 @@ async function resolveTheme(quiz) {
 // ──────────────────────────────────────────────────────────────────────
 const AVATAR_STRIP_HTML = `
 <div id="avatar-strip">
-  <!-- HOST: placeholder; FFmpeg composites the real video into this circle -->
   <div id="av-human" class="av-circle av-human av-placeholder">
     <span class="av-placeholder-icon">&#128100;</span>
   </div>
-
-  <!-- DOG: HD photo background + CSS overlays for mouth/tail/rings -->
   <div id="av-dog" class="av-circle av-dog">
-    <!-- Photo layer: hidden when no dog_image is in avatar_assets.
-         The CSS override block above sets display:block when URL is available. -->
-    <div class="dog-photo"></div>
-    <!-- Blink band: enabled together with the photo -->
-    <div class="dog-blink"></div>
-
-    <!-- CSS speaking overlay: amber rings + mouth-open / tail-wag.
-         Sit ON TOP of the photo via z-index.
-         Active only when .dog-talking is on #av-dog. -->
-    <div class="dog-overlay">
-      <div class="dog-ring dog-ring-1"></div>
-      <div class="dog-ring dog-ring-2"></div>
-      <div class="dog-ring dog-ring-3"></div>
-      <div class="dog-tail-anim"></div>
-      <div class="dog-mouth-slit"></div>
+    <div class="dog-gif-wrap">
+      <img class="dog-gif dog-gif-talk" src="" alt="" draggable="false">
+      <img class="dog-gif dog-gif-idle" src="" alt="" draggable="false">
     </div>
-
-    <!-- Fallback CSS rig (visible when no HD photo) -->
+    <div class="dog-photo-wrap">
+      <div class="dog-photo"></div>
+      <div class="dog-blink"></div>
+      <div class="dog-overlay">
+        <div class="dog-ring dog-ring-1"></div>
+        <div class="dog-ring dog-ring-2"></div>
+        <div class="dog-ring dog-ring-3"></div>
+        <div class="dog-tail-anim"></div>
+        <div class="dog-mouth-slit"></div>
+      </div>
+    </div>
     <div class="dog-stage dog-css-only">
       <div class="dog-tail"></div>
       <div class="dog-body"></div>
@@ -440,6 +439,7 @@ const AVATAR_STRIP_HTML = `
     </div>
   </div>
 </div>`;
+
 
 // All dog geometry scales off --av (the circle diameter), so changing
 // AVATAR_SIZE automatically resizes the whole dog.
@@ -493,287 +493,43 @@ const AVATAR_CSS = `
 }
 
 /* ══════════════ DOG ══════════════ */
-.av-dog {
-  background: radial-gradient(circle at 50% 40%, #3a2a12 0%, #1a1206 70%, #100b04 100%);
-}
+.av-dog { background:radial-gradient(circle at 50% 40%,#3a2a12,#1a1206 70%,#100b04 100%); --dog-eye-y:38%; --dog-eye-h:7%; }
 
-/* ── HD photo layer ──
-   Tunable eye position for the blink overlay. Override per-image if the
-   default doesn't line up with your dog photo's eyes:
-     --dog-eye-y : distance from circle top to the eye line   (default 38%)
-     --dog-eye-h : eyelid thickness                            (default 7%)  */
-.av-dog {
-  --dog-eye-y: 38%;
-  --dog-eye-h: 7%;
-}
-.dog-photo {
-  display: none;           /* shown when dog_image URL is available (see inline <style>) */
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background-size: cover;
-  background-position: center top;
-  background-repeat: no-repeat;
-  z-index: 1;
-  /* HEAD SHAKE — always on, gentle. Speeds up while talking. */
-  animation: dogHeadShake 2.8s ease-in-out infinite alternate;
-  transform-origin: 50% 80%;   /* pivot near the neck, not the centre */
-}
-.dog-talking .dog-photo { animation-duration: 1.05s; }
-@keyframes dogHeadShake {
-  from { transform: rotate(-2.6deg) scale(1.03); }
-  to   { transform: rotate( 2.6deg) scale(1.03); }
-}
+/* LAYER A: GIF pair */
+.dog-gif-wrap { position:absolute;inset:0;border-radius:50%;overflow:hidden;display:none;z-index:1; }
+.dog-gif { width:100%;height:100%;object-fit:cover;object-position:center top;border-radius:50%;display:block; }
+.dog-gif-talk { display:none; }
+.dog-gif-idle { display:block; }
+.av-dog.dog-talking .dog-gif-talk { display:block !important; }
+.av-dog.dog-talking .dog-gif-idle { display:none  !important; }
+.av-dog.dog-talking::after { content:'';position:absolute;inset:-4px;border-radius:50%;border:3px solid rgba(255,200,50,0.85);animation:gifRingPulse 0.55s ease-out infinite;pointer-events:none;z-index:10; }
+@keyframes gifRingPulse { 0%{opacity:1;transform:scale(1.00)} 100%{opacity:0;transform:scale(1.18)} }
 
-/* ── EYE BLINK overlay — always on, works over the HD photo ──
-   A thin dark band snaps down across the eye line every ~4.2s. Because it
-   sits inside the circle and shares the photo's colour, it reads as a blink.
-   Only rendered when the photo layer is active. */
-.dog-blink {
-  position: absolute;
-  left: 12%;
-  right: 12%;
-  top: var(--dog-eye-y);
-  height: var(--dog-eye-h);
-  border-radius: 40%;
-  background: rgba(30,18,8,0.92);
-  transform: scaleY(0);
-  transform-origin: 50% 0;
-  z-index: 2;
-  display: none;                 /* enabled with the photo (inline <style>) */
-  animation: dogBlink 4.2s ease-in-out infinite;
-}
-@keyframes dogBlink {
-  0%, 90%, 100% { transform: scaleY(0);   }
-  93%           { transform: scaleY(1);   }
-  96%           { transform: scaleY(0);   }
-}
+/* LAYER B: HD photo + CSS overlays */
+.dog-photo-wrap { position:absolute;inset:0;border-radius:50%;display:none;z-index:1; }
+.dog-photo { position:absolute;inset:0;border-radius:50%;background-size:cover;background-position:center top;animation:dogHeadShake 2.8s ease-in-out infinite alternate;transform-origin:50% 80%; }
+.dog-talking .dog-photo { animation-duration:1.05s; }
+@keyframes dogHeadShake { from{transform:rotate(-2.6deg) scale(1.03)} to{transform:rotate(2.6deg) scale(1.03)} }
+.dog-blink { display:none;position:absolute;left:12%;right:12%;top:var(--dog-eye-y);height:var(--dog-eye-h);border-radius:40%;background:rgba(30,18,8,0.92);transform:scaleY(0);transform-origin:50% 0;z-index:2;animation:dogBlink 4.2s ease-in-out infinite; }
+@keyframes dogBlink { 0%,90%,100%{transform:scaleY(0)} 93%{transform:scaleY(1)} 96%{transform:scaleY(0)} }
+.dog-overlay { position:absolute;inset:0;border-radius:50%;z-index:2;pointer-events:none;overflow:visible; }
+.dog-ring { position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);border-radius:50%;border:3px solid rgba(255,200,50,0);width:var(--av);height:var(--av); }
+.dog-talking .dog-ring-1{animation:dogRing 0.50s ease-out infinite 0.00s}
+.dog-talking .dog-ring-2{animation:dogRing 0.50s ease-out infinite 0.17s}
+.dog-talking .dog-ring-3{animation:dogRing 0.50s ease-out infinite 0.34s}
+@keyframes dogRing { 0%{transform:translate(-50%,-50%) scale(1.00);border-color:rgba(255,200,50,0.80);opacity:1} 100%{transform:translate(-50%,-50%) scale(1.60);border-color:rgba(255,200,50,0.00);opacity:0} }
+.dog-mouth-slit { position:absolute;bottom:22%;left:50%;transform:translateX(-50%);width:calc(var(--av)*0.30);height:calc(var(--av)*0.02);background:rgba(20,8,4,0.70);border-radius:0 0 50% 50%; }
+.dog-talking .dog-mouth-slit { animation:photoMouth 0.28s steps(1,end) infinite; }
+@keyframes photoMouth { 0%{height:calc(var(--av)*0.02)} 25%{height:calc(var(--av)*0.07)} 50%{height:calc(var(--av)*0.13)} 75%{height:calc(var(--av)*0.07)} }
+.dog-tail-anim { position:absolute;top:12%;right:8%;width:calc(var(--av)*0.14);height:calc(var(--av)*0.32);background:linear-gradient(180deg,rgba(180,120,40,.90),rgba(140,90,30,.70));border-radius:calc(var(--av)*0.07);transform-origin:50% 100%;animation:tailWagOverlay 0.72s ease-in-out infinite alternate;z-index:3; }
+.dog-talking .dog-tail-anim { animation-duration:0.26s; }
+@keyframes tailWagOverlay { from{transform:rotate(-28deg)} to{transform:rotate(28deg)} }
+.av-dog.dog-talking { border-color:#ffc832;box-shadow:0 0 0 5px rgba(255,200,50,0.22),0 6px 30px rgba(0,0,0,0.5); }
 
-/* ── Overlay rings + mouth slit + tail (all above the photo) ── */
-.dog-overlay {
-  position: absolute; inset: 0;
-  border-radius: 50%;
-  z-index: 2;
-  pointer-events: none;
-  overflow: visible;
-}
-
-/* Three amber expanding rings — fire only while .dog-talking */
-.dog-ring {
-  position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  border: 3px solid rgba(255,200,50,0.0);
-  width: var(--av); height: var(--av);
-}
-.dog-talking .dog-ring-1 { animation: dogRing 0.50s ease-out infinite 0.00s; }
-.dog-talking .dog-ring-2 { animation: dogRing 0.50s ease-out infinite 0.17s; }
-.dog-talking .dog-ring-3 { animation: dogRing 0.50s ease-out infinite 0.34s; }
-@keyframes dogRing {
-  0%   { transform:translate(-50%,-50%) scale(1.00); border-color:rgba(255,200,50,0.80); opacity:1; }
-  100% { transform:translate(-50%,-50%) scale(1.60); border-color:rgba(255,200,50,0.00); opacity:0; }
-}
-
-/* Mouth slit at bottom-centre of circle — simulates open/close on photo */
-.dog-mouth-slit {
-  position: absolute;
-  bottom: 22%;
-  left: 50%;
-  transform: translateX(-50%);
-  width:  calc(var(--av) * 0.30);
-  height: calc(var(--av) * 0.02);   /* closed */
-  background: rgba(20,8,4,0.70);
-  border-radius: 0 0 50% 50%;
-  transition: height 0.08s ease;
-}
-.dog-talking .dog-mouth-slit {
-  animation: photoMouth 0.28s steps(1,end) infinite;
-}
-@keyframes photoMouth {
-  0%   { height: calc(var(--av) * 0.02); }
-  25%  { height: calc(var(--av) * 0.07); }
-  50%  { height: calc(var(--av) * 0.13); }
-  75%  { height: calc(var(--av) * 0.07); }
-  100% { height: calc(var(--av) * 0.02); }
-}
-
-/* Animated tail wedge at top-right of the circle (visible on photo) */
-.dog-tail-anim {
-  position: absolute;
-  top: 12%;
-  right: 8%;
-  width:  calc(var(--av) * 0.14);
-  height: calc(var(--av) * 0.32);
-  background: linear-gradient(180deg, rgba(180,120,40,0.90), rgba(140,90,30,0.70));
-  border-radius: calc(var(--av)*0.07);
-  transform-origin: 50% 100%;
-  animation: tailWagOverlay 0.72s ease-in-out infinite alternate;
-  z-index: 3;
-}
-.dog-talking .dog-tail-anim { animation-duration: 0.26s; }
-@keyframes tailWagOverlay {
-  from { transform: rotate(-28deg); }
-  to   { transform: rotate( 28deg); }
-}
-
-/* When HD photo is active, hide the CSS-only fallback rig */
-.dog-photo[style*="block"] ~ .dog-overlay ~ .dog-css-only,
-.dog-photo:not([style]) ~ .dog-css-only { display: flex; }   /* CSS rig visible by default */
-
-/* Hide CSS rig when photo is showing */
-#av-dog .dog-photo { display: none; }            /* overridden by inline <style> when image loaded */
-
-/* CSS-only fallback stage */
-.dog-stage {
-  position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
-}
-/* Shown/hidden by the dog-photo display override below */
-.dog-css-only { display: flex; }
-
-/* ── Tail: always wagging, faster while talking ── */
-.dog-tail {
-  position: absolute;
-  right: calc(var(--av) * 0.10);
-  bottom: calc(var(--av) * 0.26);
-  width:  calc(var(--av) * 0.055);
-  height: calc(var(--av) * 0.26);
-  background: linear-gradient(180deg, #b5762e, #8a5620);
-  border-radius: calc(var(--av) * 0.03);
-  transform-origin: 50% 100%;
-  animation: tailWag 0.72s ease-in-out infinite alternate;
-  z-index: 1;
-}
-.dog-talking .dog-tail { animation-duration: 0.26s; }
-@keyframes tailWag {
-  from { transform: rotate(-32deg); }
-  to   { transform: rotate( 32deg); }
-}
-
-/* ── Body ── */
-.dog-body {
-  position: absolute;
-  bottom: calc(var(--av) * 0.10);
-  width:  calc(var(--av) * 0.52);
-  height: calc(var(--av) * 0.32);
-  background: linear-gradient(180deg, #d08c39, #a56823);
-  border-radius: 50% 50% 42% 42%;
-  z-index: 2;
-}
-
-/* ── Head ── */
-.dog-head {
-  position: absolute;
-  top: calc(var(--av) * 0.16);
-  width:  calc(var(--av) * 0.58);
-  height: calc(var(--av) * 0.54);
-  background: linear-gradient(180deg, #e39a41, #c07c2c);
-  border-radius: 48% 48% 44% 44%;
-  z-index: 3;
-  animation: headBob 3s ease-in-out infinite;
-}
-.dog-talking .dog-head { animation: headBob 0.9s ease-in-out infinite; }
-@keyframes headBob {
-  0%,100% { transform: translateY(0)   rotate(0deg); }
-  50%     { transform: translateY(-2%) rotate(1.5deg); }
-}
-
-/* ── Ears ── */
-.dog-ear {
-  position: absolute;
-  top: calc(var(--av) * -0.03);
-  width:  calc(var(--av) * 0.16);
-  height: calc(var(--av) * 0.26);
-  background: linear-gradient(180deg, #8a5620, #6d4318);
-  border-radius: 50% 50% 40% 40%;
-}
-.dog-ear-l { left:  calc(var(--av) * -0.035); transform: rotate(-18deg); transform-origin: 50% 0;
-             animation: earL 1.6s ease-in-out infinite alternate; }
-.dog-ear-r { right: calc(var(--av) * -0.035); transform: rotate( 18deg); transform-origin: 50% 0;
-             animation: earR 1.6s ease-in-out infinite alternate; }
-.dog-talking .dog-ear-l, .dog-talking .dog-ear-r { animation-duration: 0.5s; }
-@keyframes earL { from { transform: rotate(-18deg); } to { transform: rotate(-26deg); } }
-@keyframes earR { from { transform: rotate( 18deg); } to { transform: rotate( 26deg); } }
-
-/* ── Eyes ── */
-.dog-eye {
-  position: absolute;
-  top: calc(var(--av) * 0.16);
-  width:  calc(var(--av) * 0.075);
-  height: calc(var(--av) * 0.075);
-  background: #14100a;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 2px rgba(255,255,255,0.12);
-  animation: blink 4.2s infinite;
-}
-.dog-eye-l { left:  calc(var(--av) * 0.13); }
-.dog-eye-r { right: calc(var(--av) * 0.13); }
-@keyframes blink {
-  0%, 92%, 100% { transform: scaleY(1); }
-  95%           { transform: scaleY(0.1); }
-}
-
-/* ── Snout + nose ── */
-.dog-snout {
-  position: absolute;
-  bottom: calc(var(--av) * 0.02);
-  left: 50%;
-  transform: translateX(-50%);
-  width:  calc(var(--av) * 0.30);
-  height: calc(var(--av) * 0.24);
-  background: linear-gradient(180deg, #f2c88a, #dba965);
-  border-radius: 44% 44% 50% 50%;
-  display: flex; flex-direction: column; align-items: center;
-}
-.dog-nose {
-  margin-top: calc(var(--av) * 0.012);
-  width:  calc(var(--av) * 0.085);
-  height: calc(var(--av) * 0.062);
-  background: #16110b;
-  border-radius: 50% 50% 46% 46%;
-}
-
-/* ── MOUTH — the talking element ──
-   Closed by default (thin line). While .dog-talking is on the wrapper it
-   cycles closed → half-open → full-open on a fast loop, which reads as
-   speech at 30fps. */
-.dog-mouth {
-  margin-top: calc(var(--av) * 0.014);
-  width:  calc(var(--av) * 0.145);
-  height: calc(var(--av) * 0.014);          /* closed */
-  background: #2a1408;
-  border-radius: 0 0 50% 50%;
-  overflow: hidden;
-  position: relative;
-  display: flex; justify-content: center;
-}
-.dog-talking .dog-mouth {
-  animation: dogMouth 0.30s steps(1, end) infinite;
-}
-@keyframes dogMouth {
-  0%   { height: calc(var(--av) * 0.014); }  /* closed    */
-  33%  { height: calc(var(--av) * 0.055); }  /* half open */
-  66%  { height: calc(var(--av) * 0.105); }  /* full open */
-  100% { height: calc(var(--av) * 0.045); }  /* half close*/
-}
-
-/* Tongue only visible when the mouth is open enough */
-.dog-tongue {
-  position: absolute;
-  bottom: 0;
-  width:  calc(var(--av) * 0.085);
-  height: calc(var(--av) * 0.075);
-  background: linear-gradient(180deg, #e2607a, #c2405c);
-  border-radius: 0 0 50% 50%;
-}
-
-/* Subtle glow ring while the dog speaks */
-.av-dog.dog-talking {
-  border-color: #ffc832;
-  box-shadow: 0 0 0 5px rgba(255,200,50,0.22), 0 6px 30px rgba(0,0,0,0.5);
-}
-</style>`;
+/* LAYER C: pure CSS rig fallback */
+.dog-stage { position:absolute;inset:0;display:flex;align-items:center;justify-content:center; }
+.dog-css-only { display:flex; }
+`;
 
 // ─── MEASURE THE HOST SLOT FROM THE LIVE PAGE ────────────────────────
 // Read the real pixel box of the #av-human placeholder. FFmpeg then overlays
@@ -800,54 +556,6 @@ async function measureHostSlot(page) {
     console.warn(`[AVATAR] measure failed: ${e.message.slice(0,60)} — using constants`);
   }
   return null;
-}
-
-// ─── MEASURE THE DOG SLOT ─────────────────────────────────────────────
-async function measureDogSlot(page) {
-  try {
-    const box = await page.evaluate(() => {
-      const el = document.getElementById('av-dog');
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      if (!r.width || !r.height) return null;
-      return { x: Math.round(r.left), y: Math.round(r.top), size: Math.round(r.width) };
-    });
-    if (box) { console.log(`[AVATAR] dog slot: x=${box.x} y=${box.y} size=${box.size}`); return box; }
-  } catch (e) { console.warn(`[AVATAR] dog measure failed: ${e.message.slice(0,60)}`); }
-  return null;
-}
-
-// ─── COMPOSITE THE DOG CIRCLE FROM A UI CLIP ONTO A BASE CLIP ────────
-// Used for step 1+2, where the base video is the FULL-SCREEN host clip and
-// Puppeteer never runs. We record a short "dog only" UI clip, crop the dog
-// circle out of it, apply a circular alpha mask, and overlay it on the host.
-// Base clip's audio is preserved.
-async function compositeDogFromUi(baseClipPath, uiClipPath, geom, dur, outPath) {
-  const size = geom?.size ?? AVATAR_SIZE;
-  const r    = size / 2;
-  const gx   = geom?.x ?? (VIDEO_W - AVATAR_PAD_X - size);
-  const gy   = geom?.y ?? (VIDEO_H - AVATAR_PAD_Y - size);
-
-  const filter = [
-    // crop the dog square out of the UI recording
-    `[1:v]crop=${size}:${size}:${gx}:${gy}[dogsq]`,
-    // circular alpha mask (cb/cr copied so colour is preserved)
-    `[dogsq]format=yuva420p,geq=` +
-      `lum='p(X,Y)':cb='p(X,Y)':cr='p(X,Y)':` +
-      `a='if(lte(pow(X-${r}\\,2)+pow(Y-${r}\\,2)\\,pow(${r}\\,2))\\,255\\,0)'` +
-      `[dogcircle]`,
-    // overlay back at the same coordinates on the host clip
-    `[0:v][dogcircle]overlay=${gx}:${gy}:shortest=1[vout]`
-  ].join(';');
-
-  await ffmpeg(
-    `-y -i "${baseClipPath}" -stream_loop -1 -i "${uiClipPath}" ` +
-    `-filter_complex "${filter}" ` +
-    `-map "[vout]" -map 0:a? ` +
-    `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 ` +
-    `-c:a aac -b:a 128k -ar 44100 -ac 1 -t ${dur} "${outPath}"`,
-    'composite_dog'
-  );
 }
 
 // ─── FFMPEG COMPOSITE: overlay host circle onto a UI clip ─────────────
@@ -1090,14 +798,17 @@ async function buildShortVideo(quiz, workDir) {
   ]);
 
   // ── Dog HD image download ─────────────────────────────────────────
-  let dogImageFileUrl = null;   // file:// URL injected into dog circle CSS
-  if (avatarSet.dogImage) {
-    const dogImgFile = await download(avatarSet.dogImage, 'av_dog_img');
-    if (dogImgFile) {
-      dogImageFileUrl = `file://${dogImgFile}`;
-      console.log('[SHORT] Dog HD image downloaded OK');
-    }
-  }
+  let dogImageFileUrl  = null;
+  let dogGifTalkingUrl = null;
+  let dogGifIdleUrl    = null;
+  const [dogImgFile, dogGifTalkFile, dogGifIdleFile] = await Promise.all([
+    avatarSet.dogImage      ? download(avatarSet.dogImage,      'av_dog_img')  : Promise.resolve(null),
+    avatarSet.dogGifTalking ? download(avatarSet.dogGifTalking, 'av_dog_talk') : Promise.resolve(null),
+    avatarSet.dogGifIdle    ? download(avatarSet.dogGifIdle,    'av_dog_idle') : Promise.resolve(null),
+  ]);
+  if (dogGifTalkFile) { dogGifTalkingUrl = `file://${dogGifTalkFile}`; console.log('[SHORT] Dog talking GIF OK'); }
+  if (dogGifIdleFile) { dogGifIdleUrl    = `file://${dogGifIdleFile}`; console.log('[SHORT] Dog idle GIF OK'); }
+  if (dogImgFile)     { dogImageFileUrl  = `file://${dogImgFile}`;     console.log('[SHORT] Dog HD image OK'); }
 
   // ── Host clip downloads (all share one dress_code) ────────────────
   console.log('[SHORT] Downloading host clips...');
@@ -1126,21 +837,7 @@ async function buildShortVideo(quiz, workDir) {
   // base64 data URIs as CSS custom properties.
   let videoPhotoStyleBlock = '';
   let videoPhotoClass      = 'no-photo';
-
-  // Priority: quiz.hero_image_url -> quiz.topic_image_url -> quiz.inline_image_url
-  // -> the blog post's hero/inline image (Tavily-sourced) for this quiz.
-  let bgImageUrl = quiz.hero_image_url || quiz.topic_image_url || quiz.inline_image_url || null;
-  if (!bgImageUrl) {
-    try {
-      const bp = await fetchSupabase(
-        `quiz_blog_posts?quiz_id=eq.${quiz.id}&select=hero_image_url,inline_image_url&limit=1`
-      );
-      bgImageUrl = bp?.[0]?.hero_image_url || bp?.[0]?.inline_image_url || null;
-      if (bgImageUrl) console.log('[SHORT-BG] Using blog-post image as fallback');
-    } catch (e) {
-      console.warn(`[SHORT-BG] blog-post lookup failed: ${e.message.slice(0,60)}`);
-    }
-  }
+  const bgImageUrl = quiz.hero_image_url || quiz.topic_image_url || null;
   if (bgImageUrl) {
     try {
       const imgRes = await fetch(bgImageUrl, { headers: { 'User-Agent': 'AutoQuiz/1.0 short renderer' } });
@@ -1235,6 +932,7 @@ async function buildShortVideo(quiz, workDir) {
    The hint covers the last option because the template renders it
    below the options grid and it overlaps at short-format heights.
    In short format we show 50/50 instead — hint is redundant. ── */
+.short-fmt .qp-hint,
 .short-fmt .hint-wrap,
 .short-fmt .hint-text,
 .short-fmt [class*="hint"] {
@@ -1247,9 +945,6 @@ async function buildShortVideo(quiz, workDir) {
 }
 
 /* ── Q+OPTIONS: appear simultaneously (short format = no stagger) ── */
-/* :not(.opt-eliminated) is ESSENTIAL. Without it, this rule's
-   opacity:1 !important and animation:none !important override the
-   fiftyFade animation and the 50/50 silently does nothing. */
 .short-fmt .question-phase .qp-question,
 .short-fmt .question-phase .qp-options,
 .short-fmt .question-phase .qp-option:not(.opt-eliminated) {
@@ -1266,15 +961,8 @@ async function buildShortVideo(quiz, workDir) {
   color: unset !important;
 }
 
-/* ── 50/50 ──
-   Template option class is .qp-option (NOT .option-btn). Using the wrong
-   selector meant zero elements matched and the 50/50 never fired.
-   Also neutralise the template's own .eliminate animation-delay rule. */
-/* CAUTION: do NOT put opacity:1 !important here. Per CSS spec an !important
-   declaration overrides a running animation, so the fiftyFade keyframes
-   below would be silently ignored and nothing would ever disappear. */
+/* ── 50/50 ── */
 .short-fmt .qp-option.opt-elim-target { opacity: 1; animation: none !important; }
-.short-fmt .qp-option.eliminate       { animation: none !important; }
 .short-fmt .qp-option.opt-eliminated {
   animation: fiftyFade 0.45s ease-out forwards !important;
   pointer-events: none !important;
@@ -1342,12 +1030,31 @@ ${AVATAR_CSS}`;
   //        captures for real. Defined once as AVATAR_STRIP_HTML.
   // Build avatar strip HTML — dog image URL is injected via a CSS var
   // so the const AVATAR_STRIP_HTML doesn't need to change per quiz.
-  const dogImgCssOverride = dogImageFileUrl
-    ? `<style>
-        #av-dog .dog-photo{background-image:url("${dogImageFileUrl}") !important;display:block !important;}
-        #av-dog .dog-blink{display:block !important;}
-       </style>`
-    : '';
+  const dogImgCssOverride = '';
+  if (dogGifTalkingUrl && dogGifIdleUrl) {
+    dogImgCssOverride = `<style>
+#av-dog .dog-gif-wrap{display:block !important}
+#av-dog .dog-photo-wrap{display:none !important}
+#av-dog .dog-css-only{display:none !important}
+</style><script>(function(){
+  var t=document.querySelector('#av-dog .dog-gif-talk');
+  var i=document.querySelector('#av-dog .dog-gif-idle');
+  if(t) t.src="${dogGifTalkingUrl}";
+  if(i) i.src="${dogGifIdleUrl}";
+})();</script>`;
+    console.log('[SHORT] Dog: GIF pair mode');
+  } else if (dogImageFileUrl) {
+    dogImgCssOverride = `<style>
+#av-dog .dog-photo-wrap{display:block !important}
+#av-dog .dog-gif-wrap{display:none !important}
+#av-dog .dog-css-only{display:none !important}
+#av-dog .dog-photo{background-image:url("${dogImageFileUrl}") !important}
+#av-dog .dog-blink{display:block !important}
+</style>`;
+    console.log('[SHORT] Dog: HD photo + overlay mode');
+  } else {
+    console.log('[SHORT] Dog: CSS rig fallback mode');
+  }
   html = html.replace('</body>', `${dogImgCssOverride}${AVATAR_STRIP_HTML}\n</body>`);
 
   const htmlPath = path.join(workDir, 'short_index.html');
@@ -1391,51 +1098,17 @@ ${AVATAR_CSS}`;
   await new Promise(r => setTimeout(r, 1200));
   await page.evaluate(() => { document.body.classList.add('short-fmt'); });
 
-  // ── Inject the missing .topic-photo-overlay into any screen lacking it ──
-  // quiz_template.html gives every screen a .topic-photo-overlay EXCEPT
-  // .question-phase -- which is the exact screen the short format uses for
-  // steps 3 and 4. That is why the background photo never appeared. We add
-  // the div at runtime so every screen gets the overlay.
-  await page.evaluate((photoClass) => {
-    let added = 0;
-    document.querySelectorAll('.screen').forEach(sc => {
-      if (!sc.querySelector('.topic-photo-overlay')) {
-        const d = document.createElement('div');
-        d.className = 'topic-photo-overlay' + (photoClass ? ' ' + photoClass : '');
-        sc.insertBefore(d, sc.firstChild);
-        added++;
-      }
-    });
-    return added;
-  }, videoPhotoClass).then(n => console.log(`[SHORT-BG] injected overlay into ${n} screen(s)`));
-
   // If the HD dog photo loaded, hide the CSS-only fallback rig so they
   // don't stack. The inline <style> already sets .dog-photo { display:block }.
-  await page.evaluate(() => {
-    const photo = document.querySelector('#av-dog .dog-photo');
-    const cssRig = document.querySelector('#av-dog .dog-css-only');
-    if (photo && cssRig) {
-      const isShowing = window.getComputedStyle(photo).display !== 'none';
-      if (isShowing) {
-        cssRig.style.display = 'none';
-        console.log('[DOG] HD photo active — CSS rig hidden');
-      } else {
-        console.log('[DOG] No HD photo — CSS fallback rig shown');
-      }
-    }
-  });
+  // The CSS override block has already hidden the unused layers via
+  // display:none !important on .dog-gif-wrap / .dog-photo-wrap / .dog-css-only.
+  // Nothing further needed here.
 
-  // Avatar strip is visible from the VERY FIRST FRAME. The dog circle must
-  // appear during step 1+2 (the full-screen host clip) too -- we record a
-  // dog-only UI clip and composite the dog circle onto the host clip.
+  // Hide avatar strip until step 3
   await page.evaluate(() => {
     const strip = document.getElementById('avatar-strip');
-    if (strip) strip.style.display = 'flex';
+    if (strip) strip.style.display = 'none';
   });
-
-  // Measure both slots ONCE, now that the strip is laid out.
-  const hostSlot = await measureHostSlot(page);
-  const dogSlot  = await measureDogSlot(page);
 
   const clips       = [];
   const voiceRanges = [];
@@ -1451,41 +1124,11 @@ ${AVATAR_CSS}`;
   // ══ STEP 1+2 — FULL-SCREEN HOST CLIP (hook + question intro) ═══════
   // The hook clip IS the video for this step; its own audio track carries
   // both the hook line and the question intro. Not recorded by Puppeteer.
-  console.log('[SHORT] -- Step 1+2: full-screen host clip + dog circle');
+  console.log('[SHORT] -- Step 1+2: full-screen host clip');
   const step12Result = await buildHookStep(hostHookFile, workDir);
 
   if (step12Result) {
-    // Record a dog-only UI pass for the hook duration, then composite the
-    // dog circle onto the full-screen host clip so the dog is on screen
-    // from the very first frame.
-    let step12Final = step12Result;
-    try {
-      await showScreen(page, '.hook-slide');
-      await setAvatarMode(page, 'both_silent');   // dog idle: tail wag + blink
-      // Hide the host placeholder so only the dog is drawn in this pass
-      await page.evaluate(() => {
-        const h = document.getElementById('av-human');
-        if (h) h.style.visibility = 'hidden';
-      });
-
-      const dogUi = await recordUiWithEvents(
-        page, null, step12Result.dur, workDir, 'sh_step12_dogui'
-      );
-
-      // restore placeholder for later steps
-      await page.evaluate(() => {
-        const h = document.getElementById('av-human');
-        if (h) h.style.visibility = '';
-      });
-
-      const cp = path.join(workDir, 'sh_step12_final.mp4');
-      await compositeDogFromUi(step12Result.path, dogUi.path, dogSlot, step12Result.dur, cp);
-      step12Final = { path: cp, dur: step12Result.dur };
-      console.log('[SHORT] Step 1+2: dog circle composited onto host clip');
-    } catch (e) {
-      console.warn(`[SHORT] Step 1+2 dog composite failed (non-fatal): ${e.message.slice(0,90)}`);
-    }
-    pushClip(step12Final, true);
+    pushClip(step12Result, true);
   } else {
     console.log('[SHORT] Step 1+2 fallback: recording hook slide');
     await showScreen(page, '.hook-slide');
@@ -1499,6 +1142,12 @@ ${AVATAR_CSS}`;
   // plays. Host circle shows the SILENT clip (same dress_code).
   console.log('[SHORT] -- Step 3: Q + options + dog TTS');
 
+  await page.evaluate(() => {
+    const s = document.getElementById('avatar-strip');
+    if (s) s.style.display = 'flex';
+  });
+  // Measure the real host-circle box ONCE, now that the strip is laid out.
+  const hostSlot = await measureHostSlot(page);
   await setAvatarMode(page, 'dog_speaking');
   await showScreen(page, '.question-phase');
 
@@ -1591,14 +1240,9 @@ ${AVATAR_CSS}`;
       at: SHORT_FIFTY_AT,
       fn: async (pg) => {
         const n = await pg.evaluate(() => {
-          // .qp-option is the real template class. Scope to the ACTIVE screen
-          // so we don't hit the duplicate option markup on other screens.
           const scope = document.querySelector('.screen.question-phase') || document;
           const targets = scope.querySelectorAll('.qp-option.opt-elim-target');
-          targets.forEach(el => {
-            el.classList.remove('opt-elim-target');   // drop the animation:none guard
-            el.classList.add('opt-eliminated');
-          });
+          targets.forEach(el => { el.classList.remove('opt-elim-target'); el.classList.add('opt-eliminated'); });
           return targets.length;
         });
         console.log(`[SHORT] 50/50 eliminated ${n} options`);
