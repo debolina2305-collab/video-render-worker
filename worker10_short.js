@@ -1140,6 +1140,55 @@ async function buildShortVideo(quiz, workDir) {
   animation: cdBarDrain ${SHORT_COUNTDOWN}s linear forwards !important;
 }
 @keyframes cdBarDrain { from { width:100%; } to { width:0%; } }
+
+/* ── CTA SCREEN (comment-cta-screen) layout fix ─────────────────────────
+   Problems in short format:
+   1. .persistent-logo (position:absolute; top:38px) floats over the LIKE pill
+   2. .challenge-no (position:absolute; top:155px) overlaps pills
+   3. .niche-marquee was already hidden (display:none) but still leaves a gap
+   4. .content has justify-content:flex-start which pushes pills to the top
+   Fixes: hide logo+challenge-no, add generous padding-top, centre the pills. */
+
+/* Hide the floating logo and challenge ID on CTA screen in short format */
+.short-fmt .comment-cta-screen .persistent-logo  { display: none !important; }
+.short-fmt .comment-cta-screen .challenge-no     { display: none !important; }
+
+/* Push content down so it starts below where the logo was */
+.short-fmt .comment-cta-screen .content {
+  justify-content: center !important;
+  padding-top: 60px !important;
+  padding-bottom: ${AVATAR_SIZE + 80}px !important;
+  gap: 28px !important;
+}
+
+/* Give pills more breathing room */
+.short-fmt .comment-cta-screen .cta-pill {
+  padding: 28px 40px !important;
+  font-size: 50px !important;
+  margin: 0 !important;
+}
+
+/* CTA4 card - main text centred, legible */
+.short-fmt .comment-cta-screen .cta-combined-card {
+  padding: 24px 32px !important;
+  gap: 16px !important;
+  text-align: center !important;
+}
+.short-fmt .comment-cta-screen .cta-combined-text {
+  font-size: 44px !important;
+  line-height: 1.25 !important;
+  text-align: center !important;
+}
+.short-fmt .comment-cta-screen .cta-combined-icon {
+  font-size: 52px !important;
+}
+.short-fmt .comment-cta-screen .cta-divider {
+  margin: 4px 0 !important;
+}
+.short-fmt .comment-cta-screen .cta-combined-arrow {
+  font-size: 52px !important;
+  margin-top: 4px !important;
+}
 </style>
 ${AVATAR_CSS}`;
 
