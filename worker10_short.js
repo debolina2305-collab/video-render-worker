@@ -409,6 +409,8 @@ const AVATAR_STRIP_HTML = `
     <!-- Photo layer: hidden when no dog_image is in avatar_assets.
          The CSS override block above sets display:block when URL is available. -->
     <div class="dog-photo"></div>
+    <!-- Blink band: enabled together with the photo -->
+    <div class="dog-blink"></div>
 
     <!-- CSS speaking overlay: amber rings + mouth-open / tail-wag.
          Sit ON TOP of the photo via z-index.
@@ -495,7 +497,15 @@ const AVATAR_CSS = `
   background: radial-gradient(circle at 50% 40%, #3a2a12 0%, #1a1206 70%, #100b04 100%);
 }
 
-/* ── HD photo layer ── */
+/* ── HD photo layer ──
+   Tunable eye position for the blink overlay. Override per-image if the
+   default doesn't line up with your dog photo's eyes:
+     --dog-eye-y : distance from circle top to the eye line   (default 38%)
+     --dog-eye-h : eyelid thickness                            (default 7%)  */
+.av-dog {
+  --dog-eye-y: 38%;
+  --dog-eye-h: 7%;
+}
 .dog-photo {
   display: none;           /* shown when dog_image URL is available (see inline <style>) */
   position: absolute;
@@ -505,6 +515,38 @@ const AVATAR_CSS = `
   background-position: center top;
   background-repeat: no-repeat;
   z-index: 1;
+  /* HEAD SHAKE — always on, gentle. Speeds up while talking. */
+  animation: dogHeadShake 2.8s ease-in-out infinite alternate;
+  transform-origin: 50% 80%;   /* pivot near the neck, not the centre */
+}
+.dog-talking .dog-photo { animation-duration: 1.05s; }
+@keyframes dogHeadShake {
+  from { transform: rotate(-2.6deg) scale(1.03); }
+  to   { transform: rotate( 2.6deg) scale(1.03); }
+}
+
+/* ── EYE BLINK overlay — always on, works over the HD photo ──
+   A thin dark band snaps down across the eye line every ~4.2s. Because it
+   sits inside the circle and shares the photo's colour, it reads as a blink.
+   Only rendered when the photo layer is active. */
+.dog-blink {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: var(--dog-eye-y);
+  height: var(--dog-eye-h);
+  border-radius: 40%;
+  background: rgba(30,18,8,0.92);
+  transform: scaleY(0);
+  transform-origin: 50% 0;
+  z-index: 2;
+  display: none;                 /* enabled with the photo (inline <style>) */
+  animation: dogBlink 4.2s ease-in-out infinite;
+}
+@keyframes dogBlink {
+  0%, 90%, 100% { transform: scaleY(0);   }
+  93%           { transform: scaleY(1);   }
+  96%           { transform: scaleY(0);   }
 }
 
 /* ── Overlay rings + mouth slit + tail (all above the photo) ── */
@@ -758,6 +800,54 @@ async function measureHostSlot(page) {
     console.warn(`[AVATAR] measure failed: ${e.message.slice(0,60)} — using constants`);
   }
   return null;
+}
+
+// ─── MEASURE THE DOG SLOT ─────────────────────────────────────────────
+async function measureDogSlot(page) {
+  try {
+    const box = await page.evaluate(() => {
+      const el = document.getElementById('av-dog');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return null;
+      return { x: Math.round(r.left), y: Math.round(r.top), size: Math.round(r.width) };
+    });
+    if (box) { console.log(`[AVATAR] dog slot: x=${box.x} y=${box.y} size=${box.size}`); return box; }
+  } catch (e) { console.warn(`[AVATAR] dog measure failed: ${e.message.slice(0,60)}`); }
+  return null;
+}
+
+// ─── COMPOSITE THE DOG CIRCLE FROM A UI CLIP ONTO A BASE CLIP ────────
+// Used for step 1+2, where the base video is the FULL-SCREEN host clip and
+// Puppeteer never runs. We record a short "dog only" UI clip, crop the dog
+// circle out of it, apply a circular alpha mask, and overlay it on the host.
+// Base clip's audio is preserved.
+async function compositeDogFromUi(baseClipPath, uiClipPath, geom, dur, outPath) {
+  const size = geom?.size ?? AVATAR_SIZE;
+  const r    = size / 2;
+  const gx   = geom?.x ?? (VIDEO_W - AVATAR_PAD_X - size);
+  const gy   = geom?.y ?? (VIDEO_H - AVATAR_PAD_Y - size);
+
+  const filter = [
+    // crop the dog square out of the UI recording
+    `[1:v]crop=${size}:${size}:${gx}:${gy}[dogsq]`,
+    // circular alpha mask (cb/cr copied so colour is preserved)
+    `[dogsq]format=yuva420p,geq=` +
+      `lum='p(X,Y)':cb='p(X,Y)':cr='p(X,Y)':` +
+      `a='if(lte(pow(X-${r}\\,2)+pow(Y-${r}\\,2)\\,pow(${r}\\,2))\\,255\\,0)'` +
+      `[dogcircle]`,
+    // overlay back at the same coordinates on the host clip
+    `[0:v][dogcircle]overlay=${gx}:${gy}:shortest=1[vout]`
+  ].join(';');
+
+  await ffmpeg(
+    `-y -i "${baseClipPath}" -stream_loop -1 -i "${uiClipPath}" ` +
+    `-filter_complex "${filter}" ` +
+    `-map "[vout]" -map 0:a? ` +
+    `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 ` +
+    `-c:a aac -b:a 128k -ar 44100 -ac 1 -t ${dur} "${outPath}"`,
+    'composite_dog'
+  );
 }
 
 // ─── FFMPEG COMPOSITE: overlay host circle onto a UI clip ─────────────
@@ -1036,7 +1126,21 @@ async function buildShortVideo(quiz, workDir) {
   // base64 data URIs as CSS custom properties.
   let videoPhotoStyleBlock = '';
   let videoPhotoClass      = 'no-photo';
-  const bgImageUrl = quiz.hero_image_url || quiz.topic_image_url || null;
+
+  // Priority: quiz.hero_image_url -> quiz.topic_image_url -> quiz.inline_image_url
+  // -> the blog post's hero/inline image (Tavily-sourced) for this quiz.
+  let bgImageUrl = quiz.hero_image_url || quiz.topic_image_url || quiz.inline_image_url || null;
+  if (!bgImageUrl) {
+    try {
+      const bp = await fetchSupabase(
+        `quiz_blog_posts?quiz_id=eq.${quiz.id}&select=hero_image_url,inline_image_url&limit=1`
+      );
+      bgImageUrl = bp?.[0]?.hero_image_url || bp?.[0]?.inline_image_url || null;
+      if (bgImageUrl) console.log('[SHORT-BG] Using blog-post image as fallback');
+    } catch (e) {
+      console.warn(`[SHORT-BG] blog-post lookup failed: ${e.message.slice(0,60)}`);
+    }
+  }
   if (bgImageUrl) {
     try {
       const imgRes = await fetch(bgImageUrl, { headers: { 'User-Agent': 'AutoQuiz/1.0 short renderer' } });
@@ -1143,25 +1247,35 @@ async function buildShortVideo(quiz, workDir) {
 }
 
 /* ── Q+OPTIONS: appear simultaneously (short format = no stagger) ── */
-.short-fmt .question-phase .question-text,
-.short-fmt .question-phase .options-grid,
-.short-fmt .question-phase .option-btn {
+/* :not(.opt-eliminated) is ESSENTIAL. Without it, this rule's
+   opacity:1 !important and animation:none !important override the
+   fiftyFade animation and the 50/50 silently does nothing. */
+.short-fmt .question-phase .qp-question,
+.short-fmt .question-phase .qp-options,
+.short-fmt .question-phase .qp-option:not(.opt-eliminated) {
   animation: none !important;
   opacity: 1 !important;
   transform: translateY(0) !important;
 }
 
 /* ── No answer colour reveal in this format ── */
-.short-fmt .option-btn.correct,
-.short-fmt .option-btn.wrong {
+.short-fmt .qp-option.correct,
+.short-fmt .qp-option.wrong {
   background: unset !important;
   border-color: unset !important;
   color: unset !important;
 }
 
-/* ── 50/50 ── */
-.short-fmt .option-btn.opt-elim-target { opacity: 1; }
-.short-fmt .option-btn.opt-eliminated {
+/* ── 50/50 ──
+   Template option class is .qp-option (NOT .option-btn). Using the wrong
+   selector meant zero elements matched and the 50/50 never fired.
+   Also neutralise the template's own .eliminate animation-delay rule. */
+/* CAUTION: do NOT put opacity:1 !important here. Per CSS spec an !important
+   declaration overrides a running animation, so the fiftyFade keyframes
+   below would be silently ignored and nothing would ever disappear. */
+.short-fmt .qp-option.opt-elim-target { opacity: 1; animation: none !important; }
+.short-fmt .qp-option.eliminate       { animation: none !important; }
+.short-fmt .qp-option.opt-eliminated {
   animation: fiftyFade 0.45s ease-out forwards !important;
   pointer-events: none !important;
 }
@@ -1229,7 +1343,10 @@ ${AVATAR_CSS}`;
   // Build avatar strip HTML — dog image URL is injected via a CSS var
   // so the const AVATAR_STRIP_HTML doesn't need to change per quiz.
   const dogImgCssOverride = dogImageFileUrl
-    ? `<style>#av-dog .dog-photo{background-image:url("${dogImageFileUrl}") !important;display:block !important;}</style>`
+    ? `<style>
+        #av-dog .dog-photo{background-image:url("${dogImageFileUrl}") !important;display:block !important;}
+        #av-dog .dog-blink{display:block !important;}
+       </style>`
     : '';
   html = html.replace('</body>', `${dogImgCssOverride}${AVATAR_STRIP_HTML}\n</body>`);
 
@@ -1274,6 +1391,24 @@ ${AVATAR_CSS}`;
   await new Promise(r => setTimeout(r, 1200));
   await page.evaluate(() => { document.body.classList.add('short-fmt'); });
 
+  // ── Inject the missing .topic-photo-overlay into any screen lacking it ──
+  // quiz_template.html gives every screen a .topic-photo-overlay EXCEPT
+  // .question-phase -- which is the exact screen the short format uses for
+  // steps 3 and 4. That is why the background photo never appeared. We add
+  // the div at runtime so every screen gets the overlay.
+  await page.evaluate((photoClass) => {
+    let added = 0;
+    document.querySelectorAll('.screen').forEach(sc => {
+      if (!sc.querySelector('.topic-photo-overlay')) {
+        const d = document.createElement('div');
+        d.className = 'topic-photo-overlay' + (photoClass ? ' ' + photoClass : '');
+        sc.insertBefore(d, sc.firstChild);
+        added++;
+      }
+    });
+    return added;
+  }, videoPhotoClass).then(n => console.log(`[SHORT-BG] injected overlay into ${n} screen(s)`));
+
   // If the HD dog photo loaded, hide the CSS-only fallback rig so they
   // don't stack. The inline <style> already sets .dog-photo { display:block }.
   await page.evaluate(() => {
@@ -1290,11 +1425,17 @@ ${AVATAR_CSS}`;
     }
   });
 
-  // Hide avatar strip until step 3
+  // Avatar strip is visible from the VERY FIRST FRAME. The dog circle must
+  // appear during step 1+2 (the full-screen host clip) too -- we record a
+  // dog-only UI clip and composite the dog circle onto the host clip.
   await page.evaluate(() => {
     const strip = document.getElementById('avatar-strip');
-    if (strip) strip.style.display = 'none';
+    if (strip) strip.style.display = 'flex';
   });
+
+  // Measure both slots ONCE, now that the strip is laid out.
+  const hostSlot = await measureHostSlot(page);
+  const dogSlot  = await measureDogSlot(page);
 
   const clips       = [];
   const voiceRanges = [];
@@ -1310,11 +1451,41 @@ ${AVATAR_CSS}`;
   // ══ STEP 1+2 — FULL-SCREEN HOST CLIP (hook + question intro) ═══════
   // The hook clip IS the video for this step; its own audio track carries
   // both the hook line and the question intro. Not recorded by Puppeteer.
-  console.log('[SHORT] -- Step 1+2: full-screen host clip');
+  console.log('[SHORT] -- Step 1+2: full-screen host clip + dog circle');
   const step12Result = await buildHookStep(hostHookFile, workDir);
 
   if (step12Result) {
-    pushClip(step12Result, true);
+    // Record a dog-only UI pass for the hook duration, then composite the
+    // dog circle onto the full-screen host clip so the dog is on screen
+    // from the very first frame.
+    let step12Final = step12Result;
+    try {
+      await showScreen(page, '.hook-slide');
+      await setAvatarMode(page, 'both_silent');   // dog idle: tail wag + blink
+      // Hide the host placeholder so only the dog is drawn in this pass
+      await page.evaluate(() => {
+        const h = document.getElementById('av-human');
+        if (h) h.style.visibility = 'hidden';
+      });
+
+      const dogUi = await recordUiWithEvents(
+        page, null, step12Result.dur, workDir, 'sh_step12_dogui'
+      );
+
+      // restore placeholder for later steps
+      await page.evaluate(() => {
+        const h = document.getElementById('av-human');
+        if (h) h.style.visibility = '';
+      });
+
+      const cp = path.join(workDir, 'sh_step12_final.mp4');
+      await compositeDogFromUi(step12Result.path, dogUi.path, dogSlot, step12Result.dur, cp);
+      step12Final = { path: cp, dur: step12Result.dur };
+      console.log('[SHORT] Step 1+2: dog circle composited onto host clip');
+    } catch (e) {
+      console.warn(`[SHORT] Step 1+2 dog composite failed (non-fatal): ${e.message.slice(0,90)}`);
+    }
+    pushClip(step12Final, true);
   } else {
     console.log('[SHORT] Step 1+2 fallback: recording hook slide');
     await showScreen(page, '.hook-slide');
@@ -1328,12 +1499,6 @@ ${AVATAR_CSS}`;
   // plays. Host circle shows the SILENT clip (same dress_code).
   console.log('[SHORT] -- Step 3: Q + options + dog TTS');
 
-  await page.evaluate(() => {
-    const s = document.getElementById('avatar-strip');
-    if (s) s.style.display = 'flex';
-  });
-  // Measure the real host-circle box ONCE, now that the strip is laid out.
-  const hostSlot = await measureHostSlot(page);
   await setAvatarMode(page, 'dog_speaking');
   await showScreen(page, '.question-phase');
 
@@ -1426,8 +1591,14 @@ ${AVATAR_CSS}`;
       at: SHORT_FIFTY_AT,
       fn: async (pg) => {
         const n = await pg.evaluate(() => {
-          const targets = document.querySelectorAll('.option-btn.opt-elim-target');
-          targets.forEach(el => el.classList.add('opt-eliminated'));
+          // .qp-option is the real template class. Scope to the ACTIVE screen
+          // so we don't hit the duplicate option markup on other screens.
+          const scope = document.querySelector('.screen.question-phase') || document;
+          const targets = scope.querySelectorAll('.qp-option.opt-elim-target');
+          targets.forEach(el => {
+            el.classList.remove('opt-elim-target');   // drop the animation:none guard
+            el.classList.add('opt-eliminated');
+          });
           return targets.length;
         });
         console.log(`[SHORT] 50/50 eliminated ${n} options`);
