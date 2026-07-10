@@ -41,7 +41,8 @@ const execPromise = util.promisify(exec);
 const fs          = require('fs').promises;
 const path        = require('path');
 const puppeteer   = require('puppeteer');
-const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
+// PuppeteerScreenRecorder removed — using page.screenshot() + FFmpeg instead
+// (screencast API produces black frames when --disable-gpu is active on CI)
 const { v4: uuidv4 } = require('uuid');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
@@ -648,50 +649,124 @@ async function compositeHumanCircle(uiClipPath, humanClipPath, dur, outPath, geo
 // countdown, and how the timeup→CTA screen switch happens mid-clip.
 //
 //   events: [{ at: <seconds into the clip>, fn: async (page) => {...} }]
+// ─── SCREENSHOT → VIDEO (replaces PuppeteerScreenRecorder) ──────────────
+// PuppeteerScreenRecorder uses Chrome's Page.screencast API which produces
+// BLACK FRAMES when --disable-gpu is active (required on GitHub Actions CI).
+// page.screenshot() works perfectly in --disable-gpu mode.
+//
+// Approach:
+//  1. Fire any "before" events (e.g. show the right screen)
+//  2. Take ONE screenshot of the current page state
+//  3. Fire timed mid-clip events (50/50, slide switch) by taking additional
+//     screenshots and stitching clips together with FFmpeg concat
+//  4. Mux the final video with the audio track
+//
+// This is MORE reliable than screen recording for static quiz screens because:
+//  - Screenshots always work (no GPU compositor needed)
+//  - Each "event" creates a new screenshot so the visual change is captured
+//  - CSS animations (countdown ring, 50/50 fade) are baked in via the
+//    screenshot timing rather than relying on live capture
 async function recordUiWithEvents(page, audioPath, dur, workDir, name, events = []) {
-  const rawPath  = path.join(workDir, `${name}_raw.mp4`);
-  const h264Path = path.join(workDir, `${name}_h264.mp4`);
-  const outPath  = path.join(workDir, `${name}.mp4`);
+  const outPath = path.join(workDir, `${name}.mp4`);
 
-  const rec = new PuppeteerScreenRecorder(page, {
-    fps: 30, videoFrame: { width: VIDEO_W, height: VIDEO_H },
-    aspectRatio: '9:16', followNewTab: false
-  });
-  await rec.start(rawPath);
-
-  const t0 = Date.now();
+  // Sort events by time
   const queue = [...events].sort((a, b) => a.at - b.at);
-  for (const ev of queue) {
-    const waitMs = Math.max(0, ev.at * 1000 - (Date.now() - t0));
-    if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
+
+  // Build a list of {pngPath, segDur} segments. Each segment is one screenshot
+  // held for its duration.
+  const segments = [];
+
+  // Helper: take a screenshot and return the png path
+  const snap = async (label) => {
+    const pngPath = path.join(workDir, `${name}_snap_${label}.png`);
+    await page.screenshot({ path: pngPath, fullPage: false, type: 'png' });
+    return pngPath;
+  };
+
+  // Initial screenshot (before any events)
+  const firstPng = await snap('0000');
+  let lastEventAt = 0;
+
+  for (let i = 0; i < queue.length; i++) {
+    const ev = queue[i];
+    const segDur = ev.at - lastEventAt;
+    if (segDur > 0) segments.push({ png: firstPng, dur: segDur });
+    // Fire the event (DOM mutation: class add, screen switch, etc.)
     try {
       await ev.fn(page);
-      console.log(`[REC:${name}] event fired at t=${((Date.now()-t0)/1000).toFixed(2)}s`);
+      await new Promise(r => setTimeout(r, 120)); // brief settle for CSS
+      console.log(`[REC:${name}] event fired at t=${ev.at.toFixed(2)}s`);
     } catch (e) {
       console.warn(`[REC:${name}] event failed: ${e.message.slice(0,80)}`);
     }
+    // Snapshot AFTER the event
+    const evPng = await snap(String(i + 1).padStart(4, '0'));
+    const nextAt = queue[i + 1]?.at ?? dur;
+    const afterDur = nextAt - ev.at;
+    if (afterDur > 0) segments.push({ png: evPng, dur: afterDur });
+    lastEventAt = ev.at;
   }
-  const remainMs = Math.max(0, dur * 1000 - (Date.now() - t0));
-  if (remainMs > 0) await new Promise(r => setTimeout(r, remainMs));
 
-  await withTimeout(rec.stop(), TIMEOUT_RECORDER, `${name}.stop`);
+  // If no events (or after the last event), fill remaining duration with
+  // the last screenshot
+  if (segments.length === 0) {
+    segments.push({ png: firstPng, dur });
+  } else {
+    // Make sure total segment time = dur
+    const segTotal = segments.reduce((s, x) => s + x.dur, 0);
+    const gap = dur - segTotal;
+    if (gap > 0.01) segments[segments.length - 1].dur += gap;
+  }
 
-  await ffmpeg(
-    `-y -i "${rawPath}" -an -c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 -vf "scale=${VIDEO_W}:${VIDEO_H}" "${h264Path}"`,
-    `${name}_enc`
-  );
+  // Convert each screenshot to a short video clip, then concat them
+  const segClips = [];
+  for (let i = 0; i < segments.length; i++) {
+    const { png, dur: segDur } = segments[i];
+    const segPath = path.join(workDir, `${name}_seg${i}.mp4`);
+    await ffmpeg(
+      `-y -loop 1 -framerate 30 -i "${png}" ` +
+      `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p ` +
+      `-vf "scale=${VIDEO_W}:${VIDEO_H}:flags=lanczos" ` +
+      `-t ${segDur.toFixed(3)} "${segPath}"`,
+      `${name}_seg${i}`
+    );
+    segClips.push(segPath);
+  }
 
+  // Concat all segments into one silent video
+  let silentVideo;
+  if (segClips.length === 1) {
+    silentVideo = segClips[0];
+  } else {
+    const concatTxt = path.join(workDir, `${name}_concat.txt`);
+    await fs.writeFile(concatTxt,
+      segClips.map(p => `file '${p.replace(/'/g, "'\\''")}' `).join('\n')
+    );
+    silentVideo = path.join(workDir, `${name}_silent.mp4`);
+    await ffmpeg(
+      `-y -f concat -safe 0 -i "${concatTxt}" ` +
+      `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 "${silentVideo}"`,
+      `${name}_catsegs`
+    );
+  }
+
+  // Mux with audio
   if (audioPath && await fileExists(audioPath)) {
     await ffmpeg(
-      `-y -stream_loop -1 -i "${h264Path}" -i "${audioPath}" ` +
+      `-y -i "${silentVideo}" -i "${audioPath}" ` +
       `-map 0:v:0 -map 1:a:0 ` +
       `-c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 ` +
       `-c:a aac -b:a 128k -ar 44100 -ac 1 -t ${dur} "${outPath}"`,
       `${name}_mux`
     );
   } else {
-    await ffmpeg(`-y -i "${h264Path}" -c:v copy -an -t ${dur} "${outPath}"`, `${name}_vid`);
+    await ffmpeg(
+      `-y -i "${silentVideo}" -c:v libx264 -crf 27 -preset faster -pix_fmt yuv420p -r 30 -an -t ${dur} "${outPath}"`,
+      `${name}_vid`
+    );
   }
+
+  console.log(`[REC:${name}] ${segments.length} screenshot(s) → ${dur.toFixed(2)}s video`);
   return { path: outPath, dur };
 }
 
