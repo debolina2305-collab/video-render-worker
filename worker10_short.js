@@ -527,7 +527,7 @@ const AVATAR_CSS = `
 /* LAYER C: pure CSS rig fallback */
 .dog-stage { position:absolute;inset:0;display:flex;align-items:center;justify-content:center; }
 .dog-css-only { display:flex; }
-`;
+</style>`;
 
 // ─── MEASURE THE HOST SLOT FROM THE LIVE PAGE ────────────────────────
 // Read the real pixel box of the #av-human placeholder. FFmpeg then overlays
