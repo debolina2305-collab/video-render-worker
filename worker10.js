@@ -1073,7 +1073,7 @@ async function processJobs() {
   // Claim: set both video_status (legacy compat) and long_status (new system)
   const claimPatch = { video_status: 'processing', updated_at: new Date().toISOString() };
   if (quiz.long_status === 'pending_long') claimPatch.long_status = 'rendering_long';
-  await fetchSupabase(`quiz?id=eq.\${quiz.id}`,{method:'PATCH',body:JSON.stringify(claimPatch)});
+  await fetchSupabase(`quiz?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(claimPatch)});
 
   const workDir = `/tmp/video_${uuidv4()}`;
   await ensureDir(workDir);
