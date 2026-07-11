@@ -186,6 +186,20 @@ def is_quizable_trend(keyword):
     for bad in TRENDSPYG_REJECT_KEYWORDS:
         if bad in k:
             return False, f'blocklisted("{bad}")'
+    # ── Non-English rejection ──────────────────────────────────────────────
+    # Google Trends for geo=US sometimes surfaces Spanish-language trending
+    # queries (e.g. "españa - bélgica", "cómo va españa"). These are trending
+    # in the US among Spanish speakers, but our quiz pipeline is English-only:
+    # the Tavily query returns Spanish sources, W8's LLM generates Spanish
+    # questions, and the TTS uses the wrong voice. Reject if the keyword
+    # contains non-ASCII letters (accented vowels, ñ, etc.) OR if the ratio
+    # of ASCII word-chars to total chars is below 0.80 (tolerates punctuation
+    # like "-" and "–" but catches heavy accent or non-Latin character loads).
+    non_ascii_letters = sum(
+        1 for c in k if ord(c) > 127 and c.isalpha()
+    )
+    if non_ascii_letters > 0:
+        return False, f'non_english({non_ascii_letters} non-ASCII letters)'
     return True, 'ok'
 
 # -- Niche classifier ----------------------------------------------------------
@@ -416,6 +430,11 @@ def tavily_search(topic, country_code):
             query                       = f'{topic} {country_name}',
             search_depth                = 'advanced',   # was 'basic' -- richer per-source content
             max_results                 = 8,
+            # Restrict results to English pages. This prevents Spanish/non-English
+            # grounding text from reaching Worker 8 even when a topic slips through
+            # the is_quizable_trend non-ASCII filter (e.g. edge cases with
+            # ASCII-only Spanish words like "espana belgica").
+            search_language             = 'en',
             include_images              = True,         # was missing entirely -- no images were ever requested
             include_image_descriptions  = True,
             # Exclude social media domains from image results.
@@ -831,6 +850,21 @@ def quality_check(topic, tavily_data, min_words=TAVILY_MIN_WORDS):
         'snapchat.com', 'www.snapchat.com',
         'lookaside.instagram.com',  # Instagram CDN — also blocks bots
         'lookaside.fbsbx.com',
+        # Paywall / article pages — Tavily sometimes returns an article URL as
+        # an image URL when the article page has an Open Graph image meta tag.
+        # Fetching these returns HTML (the article page), not a raw image file.
+        # They pass the MIME check only if the server happens to send a 200 with
+        # an image Content-Type for the OG image redirect, but usually they
+        # return text/html. Block them here rather than rely on MIME filtering.
+        'nytimes.com', 'www.nytimes.com',
+        'theathletic.com', 'www.theathletic.com',
+        'washingtonpost.com', 'www.washingtonpost.com',
+        'wsj.com', 'www.wsj.com',
+        'ft.com', 'www.ft.com',
+        'bloomberg.com', 'www.bloomberg.com',
+        'newyorker.com', 'www.newyorker.com',
+        'wired.com', 'www.wired.com',
+        'theatlantic.com', 'www.theatlantic.com',
     }
 
     # ── RELEVANCE FILTER (Problem 3) ──────────────────────────────────────
