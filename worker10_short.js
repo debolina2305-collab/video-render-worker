@@ -81,10 +81,10 @@ const SHORT_COUNTDOWN   = 6;    // countdown length (was 5)
 const SHORT_FIFTY_AT    = 3;    // 50/50 fires at t=3s INTO the countdown
 const SHORT_HINT_AT     = 1;    // hint appears t=1s INTO the countdown
 // Avatar circle size (px) — matches CSS below
-// Circle diameter = 33% of the 1080px video width (host and dog each).
+// Circle diameter = 40% of the 1080px video width (host and dog each).
 const VIDEO_W           = 1080;
 const VIDEO_H           = 1920;
-const AVATAR_SIZE       = Math.round(VIDEO_W * 0.33);   // 356px
+const AVATAR_SIZE       = Math.round(VIDEO_W * 0.40);   // 432px
 const AVATAR_PAD_X      = 32;   // px from left/right frame edge to circle edge
 const AVATAR_PAD_Y      = 36;   // px from bottom frame edge to circle edge
 
@@ -1134,13 +1134,13 @@ async function buildShortVideo(quiz, workDir) {
   height: 96px !important;
 }
 .short-fmt .qp-timer-number {
-  font-size: 30px !important;
+  font-size: 38px !important;
   font-weight: 900 !important;
   line-height: 1 !important;
 }
 /* cd-digital: large block countdown number */
 .short-fmt .cd-digital {
-  font-size: 44px !important;
+  font-size: 55px !important;
   font-weight: 900 !important;
   text-align: center !important;
   line-height: 96px !important;
@@ -1148,8 +1148,8 @@ async function buildShortVideo(quiz, workDir) {
   text-shadow: 0 0 14px rgba(255,200,0,0.9), 0 2px 6px rgba(0,0,0,0.8) !important;
 }
 /* cd-hourglass: show emoji + number */
-.short-fmt .cd-hourglass     { font-size: 36px !important; }
-.short-fmt .cd-hourglass-num { font-size: 32px !important; font-weight: 900 !important; }
+.short-fmt .cd-hourglass     { font-size: 45px !important; }
+.short-fmt .cd-hourglass-num { font-size: 40px !important; font-weight: 900 !important; }
 /* cd-bar: full-width progress bar below options */
 .short-fmt .cd-bar-wrap {
   width: 100% !important; height: 10px !important;
@@ -1186,7 +1186,7 @@ async function buildShortVideo(quiz, workDir) {
 /* Give pills more breathing room */
 .short-fmt .comment-cta-screen .cta-pill {
   padding: 28px 40px !important;
-  font-size: 50px !important;
+  font-size: 63px !important;
   margin: 0 !important;
 }
 
@@ -1197,18 +1197,18 @@ async function buildShortVideo(quiz, workDir) {
   text-align: center !important;
 }
 .short-fmt .comment-cta-screen .cta-combined-text {
-  font-size: 44px !important;
+  font-size: 55px !important;
   line-height: 1.25 !important;
   text-align: center !important;
 }
 .short-fmt .comment-cta-screen .cta-combined-icon {
-  font-size: 52px !important;
+  font-size: 65px !important;
 }
 .short-fmt .comment-cta-screen .cta-divider {
   margin: 4px 0 !important;
 }
 .short-fmt .comment-cta-screen .cta-combined-arrow {
-  font-size: 52px !important;
+  font-size: 65px !important;
   margin-top: 4px !important;
 }
 </style>
