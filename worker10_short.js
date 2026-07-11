@@ -1030,12 +1030,23 @@ async function buildShortVideo(quiz, workDir) {
 /* ── LAYOUT ──────────────────────────────────────────────────────────────
    The template places a spinning logo (position:absolute; top:38px; h=100px)
    and challenge-no (position:absolute; top:155px; ~30px tall) on every screen.
-   Without a matching padding-top they overlap the question box.
-   230px = 155px (challenge-no top) + 30px (its height) + 45px breathing room.
-   The +200px the client requested is relative to the previous ~30-80px default,
-   so 230px is the correct absolute value. ── */
+   In LONG format the .niche-marquee (margin-top:220px, ~88px tall, in normal
+   flow) is the natural spacer that pushes .content below that header. SHORT
+   format hides the marquee (see rule below), removing that spacer — so on any
+   screen where the question box is top-aligned the box slides up UNDER the
+   logo/challenge-no (the reported overlap).
+
+   Fix: reserve the header space explicitly on EVERY top-aligned screen that
+   shows the persistent logo + challenge-no + question box. Previously only
+   .question-phase and .pre-reveal-slide were padded, which is why the earlier
+   attempt still overlapped on .question-static / .question-appear-slide /
+   .options-waiting-slide. All of them are covered now.
+   230px = 155px (challenge-no top) + 30px (its height) + 45px breathing room. ── */
 .short-fmt .question-phase,
-.short-fmt .pre-reveal-slide {
+.short-fmt .pre-reveal-slide,
+.short-fmt .question-appear-slide,
+.short-fmt .options-waiting-slide,
+.short-fmt .question-static {
   padding-top:    230px !important;
   padding-bottom: ${AVATAR_SIZE + 80}px !important;
   box-sizing: border-box !important;
