@@ -990,8 +990,16 @@ async function processJobs() {
   // Dual query: rows assigned to long format use long_status=pending_long;
   // legacy rows (pre-migration, assigned_format null) fall back to video_status=pending.
   // OR filter covers both so worker10 handles whichever it finds.
+  // CRITICAL: exclude rows explicitly assigned to short or medium format —
+  // those belong to worker10_short / worker10_medium only. Without this exclusion
+  // a short-assigned row whose video_status='pending' would be picked up by both
+  // the short worker (via short_status=pending_short) AND by the long worker's
+  // legacy fallback (assigned_format is not null so the IS NULL check should
+  // exclude it — but a race where the short worker hasn't claimed it yet means
+  // the long worker can grab it first). Belt-and-suspenders: filter it out here.
   const pendingRows = await fetchSupabase(
     'quiz?or=(long_status.eq.pending_long,and(assigned_format.is.null,video_status.eq.pending))' +
+    '&assigned_format.neq.short&assigned_format.neq.medium' +
     '&is_active=eq.true&quiz_enriched=eq.true' +
     '&select=id,topic,topic_slug,created_at,assigned_format,long_status&order=created_at.desc&limit=500'
   );
