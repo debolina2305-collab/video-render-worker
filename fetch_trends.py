@@ -361,6 +361,49 @@ def _topic_tokens(text):
     s = re.sub(r'\s+', ' ', s).strip()               # collapse whitespace
     return s
 
+# -- Topic relevance filtering -------------------------------------------------
+# Tavily returns images and source blocks tied to the pages it matched. A
+# trending keyword can collide with an UNRELATED subject that merely shares a
+# word (e.g. a search for a person surfaced a medical page whose text loosely
+# matched), which caused two real bugs:
+#   • wrong image        — an MRCP/ERCP medical diagram was stored for the
+#                          topic "Conor McGregor"
+#   • incoherent quiz    — the LLM built a question from one subject and the
+#                          answer/explanation from another (keyword collision)
+# These helpers keep only content that shares the topic's *distinctive* tokens,
+# so both the grounding text and the images stay on the dominant subject.
+
+# Generic words that don't identify a subject — never count as a relevance hit.
+_REL_STOP = {
+    'the','and','for','with','from','that','this','into','over','after','before',
+    'vs','v','of','in','on','to','by','at','is','are','was','were','be','has','had',
+    'new','latest','update','updates','news','live','today','date','time','best','top',
+    'us','usa','united','states','america','american','india','indian','world','national',
+    'video','photo','photos','image','images','story','report','watch','full',
+}
+
+def _relevance_tokens(topic):
+    """Distinctive lowercase tokens for a topic (drops stopwords / short words).
+    "Conor McGregor"        -> ['conor', 'mcgregor']
+    "soccer fifa world cup" -> ['soccer', 'fifa', 'cup']   (world/us/etc dropped)
+    """
+    toks = _topic_tokens(topic).split()
+    return [t for t in toks if len(t) >= 3 and t not in _REL_STOP]
+
+def _relevance_hits(text, topic_toks):
+    """Count how many distinctive topic tokens appear as whole words in text."""
+    if not topic_toks:
+        return 0
+    hay = ' ' + _topic_tokens(text) + ' '
+    return sum(1 for t in topic_toks if (' ' + t + ' ') in hay)
+
+def _is_on_topic(text, topic_toks, min_hits=1):
+    """True if `text` is relevant to the topic. If the topic has no distinctive
+    tokens (all stopwords/too short) we can't judge, so keep it (return True)."""
+    if not topic_toks:
+        return True
+    return _relevance_hits(text, topic_toks) >= min_hits
+
 # -- Tavily quality filter -----------------------------------------------------
 def extract_domain(url):
     m = re.search(r'https?://(?:www\.)?([^/]+)', url or '')
@@ -713,7 +756,30 @@ def quality_check(topic, tavily_data, min_words=TAVILY_MIN_WORDS):
     results    = tavily_data['results']
     if len(results) < TAVILY_MIN_RESULTS:
         return False, f'too_few_results({len(results)})', '', [], 0.0, *EMPTY
-    combined   = ' '.join((r.get('content') or r.get('snippet') or '') for r in results).strip()
+
+    # ── COHERENCE FILTER (Problem 4) ──────────────────────────────────────
+    # Build the grounding blob from ON-TOPIC sources only. When a trending
+    # keyword collides with an unrelated subject, some of Tavily's result
+    # blocks describe a DIFFERENT subject; concatenating them lets the LLM
+    # pull the question from one subject and the answer from another. We keep
+    # only sources that share the topic's distinctive tokens — but fall back
+    # to all sources if filtering would leave too little grounding (so we
+    # never starve a legitimately thin-but-valid topic).
+    rel_toks = _relevance_tokens(topic)
+    on_topic_results = [
+        r for r in results
+        if _is_on_topic(((r.get('title', '') or '') + ' ' +
+                         (r.get('content') or r.get('snippet') or '')), rel_toks)
+    ]
+    combined_all  = ' '.join((r.get('content') or r.get('snippet') or '') for r in results).strip()
+    combined_filt = ' '.join((r.get('content') or r.get('snippet') or '') for r in on_topic_results).strip()
+    if on_topic_results and len(on_topic_results) >= 2 and len(combined_filt.split()) >= min_words:
+        combined = combined_filt
+        if len(on_topic_results) < len(results):
+            log.info(f'[RELEVANCE] "{topic[:50]}": kept {len(on_topic_results)}/{len(results)} '
+                     f'on-topic source(s) for grounding (dropped keyword-collision sources)')
+    else:
+        combined = combined_all
     word_count = len(combined.split())
     if word_count < min_words:
         return False, f'thin({word_count}w<{min_words}w)', '', [], 0.0, *EMPTY
@@ -767,9 +833,24 @@ def quality_check(topic, tavily_data, min_words=TAVILY_MIN_WORDS):
         'lookaside.fbsbx.com',
     }
 
-    for img_idx, img in enumerate(raw_images[:6]):
+    # ── RELEVANCE FILTER (Problem 3) ──────────────────────────────────────
+    # Tavily's image results are page-associated, not query-matched, so on a
+    # keyword collision it can return a completely unrelated image (an MRCP
+    # medical diagram was stored for "Conor McGregor"). The MIME/size check in
+    # upload_image_to_r2 only rejects non-images — it can't tell a wrong image
+    # from a right one. So here we require each image's description (or, if
+    # absent, its source URL slug) to share at least one distinctive token
+    # with the topic. Images are then ordered best-match-first so index 0 (used
+    # as topic_image/hero/thumbnail) is the most relevant. If NOTHING passes,
+    # tavily_images stays empty and Worker 8 falls back to the Wikipedia image.
+    # rel_toks was computed above for the grounding filter.
+    scored = []   # (hits, original_index, raw_url, desc)
+    for img_idx, img in enumerate(raw_images[:10]):
         raw_url = img['url'] if isinstance(img, dict) else (img if isinstance(img, str) else None)
-        desc    = img.get('description', topic) if isinstance(img, dict) else topic
+        # Tavily fills description when include_image_descriptions=True; only
+        # fall back to '' (not the topic) so an absent description can't create
+        # a false relevance match.
+        desc    = (img.get('description') or '') if isinstance(img, dict) else ''
         if not raw_url:
             continue
 
@@ -783,9 +864,25 @@ def quality_check(topic, tavily_data, min_words=TAVILY_MIN_WORDS):
             log.info(f'[IMG] Skipping social media URL (bot-redirect risk): {raw_url[:80]}')
             continue
 
+        # Relevance: description + URL path must share a distinctive topic token.
+        hits = _relevance_hits(f'{desc} {raw_url}', rel_toks)
+        if rel_toks and hits == 0:
+            log.info(f'[IMG] Skipping OFF-TOPIC image (0 topic tokens): {raw_url[:80]} '
+                     f'desc="{desc[:60]}"')
+            continue
+        scored.append((hits, img_idx, raw_url, desc))
+
+    # Best matches first (more shared tokens wins; stable by original order).
+    scored.sort(key=lambda x: (-x[0], x[1]))
+
+    for rank, (hits, _orig_idx, raw_url, desc) in enumerate(scored[:6]):
         # Try to upload to R2; fall back to original URL if R2 not configured
-        cdn_url = upload_image_to_r2(raw_url, safe_key_slug, img_idx) or raw_url
-        tavily_images.append({'url': cdn_url, 'description': desc})
+        cdn_url = upload_image_to_r2(raw_url, safe_key_slug, rank) or raw_url
+        tavily_images.append({'url': cdn_url, 'description': desc or topic})
+
+    if raw_images and not tavily_images:
+        log.warning(f'[IMG] "{topic[:50]}": all {len(raw_images)} Tavily image(s) were '
+                    f'off-topic — Worker 8 will fall back to the Wikipedia image.')
 
     return True, 'ok', combined, tavily_titles, avg_score, tavily_sources, tavily_images
 
