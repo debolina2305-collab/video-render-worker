@@ -321,15 +321,17 @@ async function concatAudio(parts, outPath, workDir) {
   console.log(`[CAT] concatenated ${normalised.length} parts -> ${finalDur.toFixed(2)}s`);
 }
 
-async function tts(text, voice, outPath, retries = 3, rate = '+20%') {
+async function tts(text, voice, outPath, retries = 3, rate = '+8%') {
   if (!text?.trim()) { await silence(0.5, outPath); return; }
   const safe = text.replace(/"/g, "'").replace(/[^\x00-\x7F]/g, ' ').slice(0, 500);
-  // rate='+20%' → edge-tts speaks 1.2× faster by default for short format.
-  // Keeps videos snappy. Caller can override with rate=null for normal speed.
+  // rate='+8%' → edge-tts speaks ~1.1× faster (previous +20% was too fast).
+  // Caller can override with rate=null for normal speed.
   const rateArg = rate ? ` --rate="${rate}"` : '';
+  // volume='+10%' → louder output so it cuts through background music clearly.
+  const volArg  = ' --volume="+10%"';
   for (let i = 0; i < retries; i++) {
     try {
-      await execPromise(`edge-tts --voice "${voice}"${rateArg} --text "${safe}" --write-media "${outPath}"`);
+      await execPromise(`edge-tts --voice "${voice}"${rateArg}${volArg} --text "${safe}" --write-media "${outPath}"`);
       if (await fileExists(outPath)) return;
     } catch (e) {
       console.warn(`[TTS] attempt ${i+1}: ${e.message.slice(0,80)}`);
@@ -1037,9 +1039,9 @@ async function buildShortVideo(quiz, workDir) {
    and quiz_template.html so both formats look consistent.
    ════════════════════════════════════════════════════════════════════════ */
 
-/* ── CHALLENGE ID: 1.5× bigger than base (matches worker10 long readability) ── */
+/* ── CHALLENGE ID: 1.5× bigger than base → then -20% = 1.2× net ── */
 .short-fmt .challenge-no {
-  font-size: 30px !important;        /* was ~20px in _base.css */
+  font-size: 24px !important;        /* 30px × 0.8 */
   letter-spacing: 2px !important;
   font-weight: 900 !important;
 }
@@ -1064,20 +1066,19 @@ async function buildShortVideo(quiz, workDir) {
   align-items:        stretch !important;
 }
 
-/* ── QUESTION TEXT: 1.5× worker10 long base size ─────────────────────── */
-/* worker10 long base: 72px hook, 52px question. Short: 78px. */
+/* ── QUESTION TEXT: 1.5× base × 0.8 = 1.2× net ─────────────────── */
 .short-fmt .qp-question {
-  font-size:   78px !important;     /* 52px × 1.5 */
+  font-size:   62px !important;     /* 52px × 1.2 */
   font-weight: 800 !important;
   line-height: 1.25 !important;
   text-align:  center !important;
   padding:     0 24px !important;
-  margin:      0 0 24px 0 !important;
+  margin:      0 0 20px 0 !important;
 }
 
-/* ── OPTION LABEL: matches worker10 long "Option A / B / C / D" ── */
+/* ── OPTION LABEL ("Option A" prefix) ── */
 .short-fmt .qp-option-label {
-  font-size:   27px !important;     /* 18px × 1.5 */
+  font-size:   22px !important;     /* 18px × 1.2 */
   font-weight: 900 !important;
   text-transform: uppercase !important;
   letter-spacing: 2px !important;
@@ -1085,34 +1086,51 @@ async function buildShortVideo(quiz, workDir) {
   opacity: 0.75 !important;
 }
 
-/* ── OPTION ROWS: 1.5× base sizing ─────────────────────────────────────
+/* ── OPTION ROWS: 1.2× base sizing ─────────────────────────────────────
    _base.css: .qp-option { font-size:50px; padding:28px 32px }.
-   Short: 75px / 42px 48px.                                              ── */
+   Short: 60px / 34px 38px.                                              ── */
 .short-fmt .qp-options {
   display:        flex !important;
   flex-direction: column !important;
-  gap:            18px !important;
-  padding:        0 20px !important;
+  gap:            14px !important;
+  padding:        0 16px !important;
+}
+
+/* ── OPTION BASE STATE: hidden until .opt-show added by JS ─────────────
+   IMPORTANT: only ONE .short-fmt .qp-option rule — do not split into two
+   blocks or the later opacity:0 !important will override the opt-show rule
+   (both have !important; last declaration wins in cascade).
+   Solution: encode both states in a single rule using :not(.opt-show).   ── */
+.short-fmt .qp-option:not(.opt-show):not(.opt-eliminated) {
+  opacity:   0 !important;
+  transform: translateX(-24px) scale(0.97) !important;
+  transition: none !important;
 }
 .short-fmt .qp-option {
-  font-size:     75px !important;   /* 50px × 1.5 */
+  font-size:     60px !important;   /* 50px × 1.2 */
   font-weight:   700 !important;
-  padding:       42px 48px !important;
+  padding:       34px 38px !important;
   border-radius: 22px !important;
   text-align:    left !important;
   line-height:   1.2 !important;
 }
 .short-fmt .qp-option-badge {
-  width:       70px !important;    /* 46px × 1.5 */
-  height:      70px !important;
-  font-size:   36px !important;    /* 24px × 1.5 */
+  width:       56px !important;    /* 46px × 1.2 */
+  height:      56px !important;
+  font-size:   29px !important;    /* 24px × 1.2 */
   flex-shrink: 0 !important;
-  margin-right: 20px !important;
+  margin-right: 16px !important;
+}
+/* opt-show: slide in from left */
+.short-fmt .qp-option.opt-show {
+  animation: shortOptSlide 0.38s cubic-bezier(0.34,1.56,0.64,1) both !important;
+}
+@keyframes shortOptSlide {
+  from { opacity:0; transform: translateX(-28px) scale(0.97); }
+  to   { opacity:1; transform: none; }
 }
 
-/* ── QUESTION ENTRY: worker10 long uses slideUp + fade-in per element.
-   Question first. Then each option gets .opt-show class via JS with 0.5s gap.
-   We keep options opacity:0 until the JS event adds .opt-show.             ── */
+/* ── QUESTION ENTRY ANIMATION ── */
 .short-fmt .qp-question {
   animation: shortQSlide 0.45s cubic-bezier(0.34,1.56,0.64,1) both !important;
 }
@@ -1121,34 +1139,18 @@ async function buildShortVideo(quiz, workDir) {
   to   { opacity:1; transform: none; }
 }
 
-/* Options hidden initially — revealed one-by-one via .opt-show class */
-.short-fmt .qp-option {
-  opacity: 0 !important;
-  transform: translateX(-24px) scale(0.97) !important;
-  transition: none !important;
-}
-.short-fmt .qp-option.opt-show {
-  animation: shortOptSlide 0.38s cubic-bezier(0.34,1.56,0.64,1) both !important;
-  opacity: 1 !important;
-  transform: none !important;
-}
-@keyframes shortOptSlide {
-  from { opacity:0; transform: translateX(-28px) scale(0.97); }
-  to   { opacity:1; transform: none; }
-}
-
 /* ── HINT: in normal flow below options, hidden until JS reveals it ── */
 .short-fmt .qp-hint {
   position:   static !important;
   left: auto !important; right: auto !important; bottom: auto !important;
-  margin:     18px 28px 0 !important;
+  margin:     14px 22px 0 !important;
   z-index:    auto !important;
   animation:  none !important;
   opacity:    1 !important;
   visibility: hidden !important;
-  font-size:  45px !important;   /* 30px × 1.5 */
+  font-size:  36px !important;   /* 30px × 1.2 */
   font-weight: 700 !important;
-  padding:    20px 28px !important;
+  padding:    16px 22px !important;
 }
 .short-fmt .qp-hint.hint-visible {
   visibility: visible !important;
@@ -1171,7 +1173,7 @@ async function buildShortVideo(quiz, workDir) {
 }
 
 /* ── 50/50 ── */
-.short-fmt .qp-option.opt-elim-target { opacity: 1; animation: none !important; }
+.short-fmt .qp-option.opt-elim-target { animation: none !important; }
 .short-fmt .qp-option.opt-eliminated {
   animation: fiftyFade 0.45s ease-out forwards !important;
   pointer-events: none !important;
@@ -1181,49 +1183,44 @@ async function buildShortVideo(quiz, workDir) {
   100% { opacity: 0; transform: scale(0.90); filter: blur(3px); }
 }
 
-/* ── COUNTDOWN TIMER: BIG ring / digital / hourglass / bar ─────────────
-   All sizes scaled 1.5× from worker10 long base values.                 ── */
+/* ── COUNTDOWN TIMER: BIG ring / digital / hourglass / bar (1.2× base) ── */
 .short-fmt .qp-timer-wrap {
   display:    flex !important;
   visibility: visible !important;
   opacity:    1 !important;
-  width:      150px !important;   /* was 96px */
-  height:     150px !important;
-  min-width:  150px !important;
-  min-height: 150px !important;
-  margin:     16px auto !important;
+  width:      120px !important;
+  height:     120px !important;
+  min-width:  120px !important;
+  min-height: 120px !important;
+  margin:     12px auto !important;
   position:   relative !important;
 }
 .short-fmt .qp-timer-ring {
-  width:  150px !important;
-  height: 150px !important;
+  width:  120px !important;
+  height: 120px !important;
 }
-/* Ring SVG stroke — make it thicker & larger */
 .short-fmt .qp-timer-ring svg,
 .short-fmt .qp-timer-ring circle {
-  width:  150px !important;
-  height: 150px !important;
+  width:  120px !important;
+  height: 120px !important;
 }
 .short-fmt .qp-timer-number {
-  font-size:   58px !important;   /* 38px × 1.5 */
+  font-size:   46px !important;
   font-weight: 900 !important;
   line-height: 1 !important;
 }
-/* cd-digital */
 .short-fmt .cd-digital {
-  font-size:   83px !important;   /* 55px × 1.5 */
+  font-size:   66px !important;
   font-weight: 900 !important;
   text-align:  center !important;
-  line-height: 150px !important;
+  line-height: 120px !important;
   color: #fff !important;
   text-shadow: 0 0 20px rgba(255,200,0,0.9), 0 2px 8px rgba(0,0,0,0.8) !important;
 }
-/* cd-hourglass */
-.short-fmt .cd-hourglass     { font-size: 68px !important; }   /* 45 × 1.5 */
-.short-fmt .cd-hourglass-num { font-size: 60px !important; font-weight: 900 !important; }
-/* cd-bar: thicker, full-width progress bar */
+.short-fmt .cd-hourglass     { font-size: 54px !important; }
+.short-fmt .cd-hourglass-num { font-size: 48px !important; font-weight: 900 !important; }
 .short-fmt .cd-bar-wrap {
-  width: 100% !important; height: 18px !important;
+  width: 100% !important; height: 16px !important;
   background: rgba(255,255,255,0.18) !important;
   border-radius: 99px !important; overflow: hidden !important;
 }
@@ -1234,9 +1231,10 @@ async function buildShortVideo(quiz, workDir) {
 }
 @keyframes cdBarDrain { from { width:100%; } to { width:0%; } }
 
-/* ── CTA SCREEN: LIKE/SHARE/SUBSCRIBE centred vertically ───────────────
-   Logo + challenge-no are hidden so the screen is clean for the CTA pills.
-   Pills are centred in the available space above the avatar strip.        ── */
+/* ── CTA SCREEN: hidden until JS switches to it — then centred vertically ──
+   The screen starts invisible (.screen without .active). When .active is added
+   mid-recording, the pills animate in. Logo + challenge-no are hidden so the
+   full height is available for the pills.                                  ── */
 .short-fmt .comment-cta-screen .persistent-logo { display: none !important; }
 .short-fmt .comment-cta-screen .challenge-no    { display: none !important; }
 
@@ -1249,38 +1247,34 @@ async function buildShortVideo(quiz, workDir) {
   padding-bottom:  ${AVATAR_SIZE + 80}px !important;
   box-sizing:      border-box !important;
 }
-/* .content flex container inside CTA screen */
 .short-fmt .comment-cta-screen .content {
   justify-content: center !important;
   align-items:     center !important;
-  gap:             32px !important;
+  gap:             26px !important;
   width:           100% !important;
 }
-
-/* Pills: 1.5× base size */
+/* Pills: 1.2× base */
 .short-fmt .comment-cta-screen .cta-pill {
-  padding:   28px 40px !important;
-  font-size: 63px !important;
-  margin:    0 !important;
-  width:     88% !important;
+  padding:    22px 32px !important;
+  font-size:  50px !important;     /* 63px × 0.8 = 50px */
+  margin:     0 !important;
+  width:      88% !important;
   text-align: center !important;
 }
-
-/* CTA combined card */
 .short-fmt .comment-cta-screen .cta-combined-card {
-  padding: 28px 36px !important;
-  gap:     18px !important;
+  padding: 22px 28px !important;
+  gap:     14px !important;
   text-align: center !important;
   width:   88% !important;
 }
 .short-fmt .comment-cta-screen .cta-combined-text {
-  font-size:   55px !important;
+  font-size:   44px !important;    /* 55px × 0.8 = 44px */
   line-height: 1.25 !important;
   text-align:  center !important;
 }
-.short-fmt .comment-cta-screen .cta-combined-icon  { font-size: 65px !important; }
+.short-fmt .comment-cta-screen .cta-combined-icon  { font-size: 52px !important; }
 .short-fmt .comment-cta-screen .cta-divider        { margin: 4px 0 !important; }
-.short-fmt .comment-cta-screen .cta-combined-arrow { font-size: 65px !important; margin-top: 4px !important; }
+.short-fmt .comment-cta-screen .cta-combined-arrow { font-size: 52px !important; margin-top: 4px !important; }
 </style>
 ${AVATAR_CSS}`;
 
@@ -1709,22 +1703,55 @@ ${AVATAR_CSS}`;
       : step56Dur * 0.45;
     console.log(`[SHORT] Step 5+6: ${step56Dur.toFixed(2)}s, slide switch at ${splitAt.toFixed(2)}s`);
   } else {
-    // No cta4 clip — fall back to TTS for both lines
-    console.log('[SHORT] Step 5+6: no cta4 host clip — TTS fallback');
+    // No host cta4 clip — fall back to quiz.cta4_audio_url (prerecorded) or TTS
+    console.log('[SHORT] Step 5+6: no cta4 host clip — audio fallback');
     const tuTts = path.join(workDir, 'sh_timeup_tts.mp3');
-    await tts(quiz.timeup_text || "Time's up!", voice, tuTts, 3);
+    // Try prerecorded timeup audio first, then TTS
+    const timeupPrerecorded = avatarSet.timeupAudio
+      ? await download(avatarSet.timeupAudio, 'av_timeup_audio').catch(() => null)
+      : null;
+    if (timeupPrerecorded && await fileExists(timeupPrerecorded)) {
+      const silG = path.join(workDir, 'sh_tu_gap.mp3');
+      await silence(0.15, silG);
+      await concatAudio([silG, timeupPrerecorded], tuTts, workDir);
+    } else {
+      await tts(quiz.timeup_text || "Time's up! Here comes the answer.", voice, tuTts, 3);
+    }
     const ctaTts = path.join(workDir, 'sh_cta4_tts.mp3');
-    await tts(quiz.cta4_text || 'Write your answer in the comments!', voice, ctaTts, 3);
+    // Prefer quiz.cta4_audio_url (prerecorded) over TTS generation
+    const cta4PrerecordedFile = quiz.cta4_audio_url
+      ? await download(quiz.cta4_audio_url, `sh_cta4audio_${quiz.id}`).catch(() => null)
+      : null;
+    if (cta4PrerecordedFile && await fileExists(cta4PrerecordedFile)) {
+      const silG2 = path.join(workDir, 'sh_cta4_gap.mp3');
+      await silence(0.15, silG2);
+      await concatAudio([silG2, cta4PrerecordedFile], ctaTts, workDir);
+      console.log('[SHORT] Step 5+6: using prerecorded cta4_audio_url');
+    } else {
+      await tts(quiz.cta4_text || 'Write your answer in the comments!', voice, ctaTts, 3);
+    }
     splitAt = Math.max(await audioDur(tuTts), 0.8);
     step56Audio = path.join(workDir, 'sh_step56_audio.mp3');
     await concatAudio([tuTts, ctaTts], step56Audio, workDir);
-    step56Dur = Math.max(await audioDur(step56Audio), 2.0);
+    // Ensure enough total duration for CTA to be visible: at least splitAt + 3s
+    step56Dur = Math.max(await audioDur(step56Audio), splitAt + 3.0, 4.0);
   }
 
-  // Which slide to switch TO at splitAt
-  const ctaSel = await page.evaluate(() =>
-    document.querySelector('.comment-cta-screen') ? '.comment-cta-screen' : '.pre-reveal-slide'
-  );
+  // Which slide to switch TO at splitAt — try comment-cta-screen variants
+  const ctaSel = await page.evaluate(() => {
+    // Try all known class names for the CTA screen
+    const selectors = ['.comment-cta-screen', '.cta4-screen', '.cta-screen', '.cta2-slide'];
+    for (const s of selectors) {
+      if (document.querySelector(s)) return s;
+    }
+    return null;
+  });
+
+  if (!ctaSel) {
+    console.warn('[SHORT] Step 5+6: no CTA screen found in DOM — will stay on pre-reveal slide');
+  } else {
+    console.log(`[SHORT] Step 5+6: CTA selector = "${ctaSel}"`);
+  }
 
   // The CTA screen staggers LIKE / SHARE / SUBSCRIBE / CTA4 / arrow with
   // animation-delay up to 2.8s. It only becomes visible at `splitAt`, so on a
@@ -1734,7 +1761,7 @@ ${AVATAR_CSS}`;
 
   const step56Ui = await recordUiWithEvents(
     page, step56Audio, step56Dur, workDir, 'sh_step56_ui',
-    [{
+    ctaSel ? [{
       at: splitAt,
       fn: async (pg) => {
         const info = await pg.evaluate((sel, remaining) => {
@@ -1769,7 +1796,7 @@ ${AVATAR_CSS}`;
         console.log(`[SHORT] CTA slide shown; ${info.scaled} elements re-timed ` +
                     `(scale=${info.scale}, window=${ctaRemaining.toFixed(2)}s)`);
       }
-    }]
+    }] : []
   );
 
   let step56Final = step56Ui;
