@@ -958,52 +958,76 @@ async function buildShortVideo(quiz, workDir) {
     resolvedBgFile = await download(DEFAULT_BG_MUSIC, 'sh_bg_default');
   }
 
-  // ── Background photo overlay (30% opacity, same logic as worker10 long) ──
-  // Priority: hero_image_url -> topic_image_url -> none.
-  // Written as a temp file (file://) because Puppeteer can't use large
-  // base64 data URIs as CSS custom properties.
+  // ── VIDEO PHOTO OVERLAY — background image at 30% opacity behind all screens ──
+  //
+  // Root cause of "image not showing": the previous raw fetch() call was
+  // silently failing in GitHub Actions (network restrictions, slow response,
+  // non-200, etc.) with no useful log output. The download() function already
+  // used for audio has: 45s timeout, caching, and per-attempt logging —
+  // so we reuse it here. If it fails, we see EXACTLY why in the GA log.
+  //
+  // Priority: topic_image_url (Tavily R2 image — always present after W8) →
+  //           hero_image_url → inline_image_url → thumbnail_url (null at short
+  //           render time; set only after long video renders) → blog post images.
   let videoPhotoStyleBlock = '';
   let videoPhotoClass      = 'no-photo';
+  let bgLocalFile = null, bgImageSrc = null;
 
-  // Background photo: try thumbnail_url first (user request), then topic/hero/inline.
-  // thumbnail_url is the rendered quiz thumbnail — always the most relevant image.
-  let bgImageUrl = null, bgImageSrc = null;
   for (const [srcName, url] of [
-    ['thumbnail_url',    quiz.thumbnail_url],
     ['topic_image_url',  quiz.topic_image_url],
     ['hero_image_url',   quiz.hero_image_url],
     ['inline_image_url', quiz.inline_image_url],
+    ['thumbnail_url',    quiz.thumbnail_url],
   ]) {
-    if (url && String(url).startsWith('http')) { bgImageUrl = url; bgImageSrc = srcName; break; }
+    if (!url || !String(url).startsWith('http')) {
+      console.log(`[SHORT-BG] ${srcName}: null/empty — skip`);
+      continue;
+    }
+    console.log(`[SHORT-BG] Trying ${srcName}: ${url.slice(0, 70)}`);
+    // download() saves to CACHE_DIR (/tmp/audio_cache_short) — accessible
+    // via file:// since Puppeteer runs with --allow-file-access-from-files.
+    const dl = await download(url, `sh_bgphoto_${quiz.id}_${srcName}`).catch(e => {
+      console.warn(`[SHORT-BG] download() error for ${srcName}: ${e.message.slice(0, 60)}`);
+      return null;
+    });
+    if (dl && await fileExists(dl)) {
+      bgLocalFile = dl;
+      bgImageSrc  = srcName;
+      console.log(`[SHORT-BG] ✓ ${srcName} → ${dl}`);
+      break;
+    }
+    console.log(`[SHORT-BG] ${srcName} download returned null — trying next`);
   }
-  if (!bgImageUrl) {
+
+  // Last resort: blog post hero/inline images
+  if (!bgLocalFile) {
     try {
       const bp = await fetchSupabase(
         `quiz_blog_posts?quiz_id=eq.${quiz.id}&select=hero_image_url,inline_image_url&limit=1`
       );
       const cand = bp?.[0]?.hero_image_url || bp?.[0]?.inline_image_url || null;
-      if (cand) { bgImageUrl = cand; bgImageSrc = 'quiz_blog_posts'; }
+      if (cand && String(cand).startsWith('http')) {
+        const dl = await download(cand, `sh_bgphoto_${quiz.id}_blog`).catch(() => null);
+        if (dl && await fileExists(dl)) {
+          bgLocalFile = dl;
+          bgImageSrc  = 'quiz_blog_posts';
+          console.log(`[SHORT-BG] ✓ blog post fallback → ${dl}`);
+        }
+      }
     } catch (e) {
-      console.warn(`[SHORT-BG] blog-post lookup failed: ${e.message.slice(0,60)}`);
+      console.warn(`[SHORT-BG] blog-post lookup failed: ${e.message.slice(0, 60)}`);
     }
   }
-  if (bgImageUrl) console.log(`[SHORT-BG] source=${bgImageSrc}`);
 
-  if (bgImageUrl) {
-    try {
-      const imgRes = await fetch(bgImageUrl, { headers: { 'User-Agent': 'AutoQuiz/1.0 short renderer' } });
-      if (imgRes.ok) {
-        const buf = await imgRes.arrayBuffer();
-        if (buf.byteLength > 500) {
-          const imgPath = path.join(workDir, 'sh_bg_photo.jpg');
-          await fs.writeFile(imgPath, Buffer.from(buf));
-          videoPhotoStyleBlock = `<style>:root{--topic-photo-url:url("file://${imgPath}");}</style>`;
-          videoPhotoClass = '';
-          console.log(`[SHORT-BG] ${(buf.byteLength/1024).toFixed(0)}KB from ${bgImageUrl.slice(0,60)}`);
-        }
-      } else { console.log(`[SHORT-BG] HTTP ${imgRes.status}`); }
-    } catch (e) { console.warn(`[SHORT-BG] ${e.message.slice(0,80)}`); }
-  } else { console.log('[SHORT-BG] No image on quiz row or blog post — background photo skipped'); }
+  if (bgLocalFile) {
+    videoPhotoStyleBlock = `<style>
+:root { --topic-photo-url: url("file://${bgLocalFile}"); }
+</style>`;
+    videoPhotoClass = '';
+    console.log(`[SHORT-BG] Photo overlay active (${bgImageSrc})`);
+  } else {
+    console.log('[SHORT-BG] No background image found — overlay will be hidden (.no-photo)');
+  }
 
   // ── Theme ──────────────────────────────────────────────────────────
   const { themeCss, decoHtml, designEngineCss } = await resolveTheme(quiz);
@@ -1088,9 +1112,9 @@ async function buildShortVideo(quiz, workDir) {
   box-sizing: border-box !important;
 }
 
-/* ── QUESTION TEXT: base 52px × 1.35 = 70px ── */
+/* ── QUESTION TEXT: 65px ── */
 .short-fmt .qp-question {
-  font-size:   70px !important;
+  font-size:   65px !important;
   font-weight: 800 !important;
   line-height: 1.25 !important;
   text-align:  center !important;
@@ -1121,28 +1145,28 @@ async function buildShortVideo(quiz, workDir) {
   to   { opacity:1; transform: none; }
 }
 
-/* ── OPTIONS container + sizing: base 50px × 1.35 = 68px, then -60% → 27px ── */
+/* ── OPTIONS container + sizing: font 50px, badge 40px, padding 24/28 ── */
 .short-fmt .qp-options {
   display:        flex !important;
   flex-direction: column !important;
-  gap:            10px !important;
-  padding:        0 14px !important;
+  gap:            12px !important;
+  padding:        0 16px !important;
   opacity:        1 !important;
 }
 .short-fmt .qp-option {
-  font-size:     27px !important;   /* 68px × 0.4 = 27px */
+  font-size:     50px !important;
   font-weight:   700 !important;
-  padding:       14px 18px !important;
-  border-radius: 16px !important;
+  padding:       24px 28px !important;
+  border-radius: 18px !important;
   text-align:    left !important;
   line-height:   1.2 !important;
 }
 .short-fmt .qp-option-badge {
-  width:        25px !important;    /* 62px × 0.4 = 25px */
-  height:       25px !important;
-  font-size:    13px !important;
+  width:        40px !important;
+  height:       40px !important;
+  font-size:    20px !important;
   flex-shrink:  0 !important;
-  margin-right: 10px !important;
+  margin-right: 14px !important;
 }
 
 /* ── FAIL-SAFE STAGGERED OPTION REVEAL ─────────────────────────────────
