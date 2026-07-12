@@ -17,7 +17,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ── GATE: Query DB before spending any CI minutes ─────────────────────
+      # Checks for pending LONG-format rows. If none found, all subsequent
+      # steps are skipped — no FFmpeg install, no npm, no rendering.
+      # This is the definitive fix for the double-render problem: even if both
+      # render.yml and render_short.yml fire simultaneously, each only proceeds
+      # when it has rows assigned to its own format.
+      - name: Gate — check for pending long-format rows
+        id: gate
+        env:
+          SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          ROWS=$(curl -sf \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            "$SUPABASE_URL/rest/v1/quiz?long_status=eq.pending_long&assigned_format=eq.long&is_active=eq.true&quiz_enriched=eq.true&select=id&limit=1" \
+          | jq 'length' 2>/dev/null || echo "0")
+          echo "pending=$ROWS" >> $GITHUB_OUTPUT
+          if [ "$ROWS" = "0" ]; then
+            echo "[GATE] No pending long-format rows — skipping render."
+          else
+            echo "[GATE] Found $ROWS pending long row(s) — proceeding with render."
+          fi
+
       - name: Install FFmpeg, Python and Chromium runtime deps
+        if: steps.gate.outputs.pending != '0'
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg python3 python3-pip \
@@ -28,19 +53,23 @@ jobs:
           pip3 install --break-system-packages edge-tts
 
       - name: Test edge-tts
+        if: steps.gate.outputs.pending != '0'
         run: |
           edge-tts --voice en-US-JennyNeural --text "Hello, this is a test." --write-media /tmp/test.mp3
           ls -la /tmp/test.mp3
 
       - name: Setup Node.js
+        if: steps.gate.outputs.pending != '0'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Install dependencies
+        if: steps.gate.outputs.pending != '0'
         run: npm install
 
       - name: Run video worker (Worker 10)
+        if: steps.gate.outputs.pending != '0'
         id: render
         env:
           SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
@@ -54,7 +83,7 @@ jobs:
 
       - name: Upload video artifact
         uses: actions/upload-artifact@v4
-        if: always()
+        if: steps.gate.outputs.pending != '0'
         with:
           name: rendered-video-${{ github.run_id }}
           path: /tmp/*.mp4
@@ -64,7 +93,7 @@ jobs:
       # All three downstream workers are fired simultaneously so they run
       # concurrently instead of sequentially — saves time.
       - name: Trigger downstream workers (Publish + Blog + Facebook)
-        if: success()
+        if: steps.gate.outputs.pending != '0' && success()
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.PIPELINE_TOKEN }}
