@@ -77,8 +77,8 @@ const TIMEOUT_JOB       = 25 * 60 * 1000;
 const TIMEOUT_RECORDER  = 90 * 1000;
 const BG_VOL_BASE       = 0.10;
 const BG_VOL_DUCK       = 0.035;
-const SHORT_COUNTDOWN   = 5;    // countdown length (5 sec per spec)
-const SHORT_FIFTY_AT    = 2.5;  // 50/50 fires at t=2.5s INTO the countdown (half-way)
+const SHORT_COUNTDOWN   = 6;    // countdown length (was 5)
+const SHORT_FIFTY_AT    = 3;    // 50/50 fires at t=3s INTO the countdown
 const SHORT_HINT_AT     = 1;    // hint appears t=1s INTO the countdown
 // Avatar circle size (px) — matches CSS below
 // Circle diameter = 40% of the 1080px video width (host and dog each).
@@ -321,14 +321,12 @@ async function concatAudio(parts, outPath, workDir) {
   console.log(`[CAT] concatenated ${normalised.length} parts -> ${finalDur.toFixed(2)}s`);
 }
 
-async function tts(text, voice, outPath, retries = 3, rate = null) {
+async function tts(text, voice, outPath, retries = 3) {
   if (!text?.trim()) { await silence(0.5, outPath); return; }
   const safe = text.replace(/"/g, "'").replace(/[^\x00-\x7F]/g, ' ').slice(0, 500);
-  // Normal speed/volume by default (rate=null). Caller can pass rate='+10%' etc.
-  const rateArg = rate ? ` --rate="${rate}"` : '';
   for (let i = 0; i < retries; i++) {
     try {
-      await execPromise(`edge-tts --voice "${voice}"${rateArg} --text "${safe}" --write-media "${outPath}"`);
+      await execPromise(`edge-tts --voice "${voice}" --text "${safe}" --write-media "${outPath}"`);
       if (await fileExists(outPath)) return;
     } catch (e) {
       console.warn(`[TTS] attempt ${i+1}: ${e.message.slice(0,80)}`);
@@ -390,37 +388,13 @@ async function videoToDataUri(localPath) {
 }
 
 // ─── THEME ────────────────────────────────────────────────────────────
-// Mirrors worker10 (long) resolveTheme so both formats look identical:
-//  - loads _base.css + the row's visual_theme_id css (fallback to default)
-//  - substitutes {{accent_primary/secondary/tertiary}} placeholders
-//  - applies quiz_background_css ONLY for the default particle_field theme
-//    (other themes define their own complete background)
 async function resolveTheme(quiz) {
-  const themeId = (quiz.visual_theme_id || DEFAULT_THEME).toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  const id   = (quiz.visual_theme_id || DEFAULT_THEME).toLowerCase().replace(/[^a-z0-9_]/g, '_');
   const base = await fs.readFile(path.join(THEMES_DIR, '_base.css'), 'utf8').catch(() => '');
-  let th = await fs.readFile(path.join(THEMES_DIR, `${themeId}.css`), 'utf8').catch(() => null);
-  if (th == null) {
-    console.warn(`[THEME] '${themeId}' not found — using ${DEFAULT_THEME}`);
-    th = await fs.readFile(path.join(THEMES_DIR, `${DEFAULT_THEME}.css`), 'utf8').catch(() => '');
-  }
-  let css = `${base}\n${th}`;
-  // Accent substitution — themes use {{accent_primary}} etc. placeholders.
-  const a1 = quiz.theme_accent_primary   || '#00e0ff';
-  const a2 = quiz.theme_accent_secondary || '#7b2ff7';
-  const a3 = quiz.theme_accent_tertiary  || '#ff2ec4';
-  css = css.split('{{accent_primary}}').join(a1)
-           .split('{{accent_secondary}}').join(a2)
-           .split('{{accent_tertiary}}').join(a3);
-  // Per-quiz dynamic background — default theme only (matches long worker).
-  const usedThemeId = th ? themeId : DEFAULT_THEME;
-  if (quiz.quiz_background_css?.trim() && usedThemeId === DEFAULT_THEME) {
-    console.log('[SHORT-THEME] Applying quiz_background_css (particle_field only)');
-    css += '\n/* === QUIZ-SPECIFIC BACKGROUND === */\n' + quiz.quiz_background_css;
-  } else if (quiz.quiz_background_css?.trim()) {
-    console.log(`[SHORT-THEME] Skipping quiz_background_css — theme=${usedThemeId} owns its background`);
-  }
+  const th   = await fs.readFile(path.join(THEMES_DIR, `${id}.css`), 'utf8')
+                 .catch(() => fs.readFile(path.join(THEMES_DIR, `${DEFAULT_THEME}.css`), 'utf8').catch(() => ''));
   const decoHtml = th.match(/\/\*\s*DECO_HTML\s*([\s\S]*?)\*\//)?.[1]?.trim() || '';
-  return { themeCss: css, decoHtml };
+  return { themeCss: `${base}\n${th}`, decoHtml };
 }
 
 // ─── AVATAR STRIP HTML + CSS ──────────────────────────────────────────
@@ -1053,148 +1027,85 @@ async function buildShortVideo(quiz, workDir) {
   // The dog CSS animation IS real and will appear correctly in the recording.
   const shortCss = `
 <style id="short-fmt-css">
-/* ══════════════════════════════════════════════════════════════════════════
-   SHORT-FORMAT CSS OVERRIDES
-   Reference: worker10 (long) design. All question/option sizing, padding,
-   margin, and animation patterns are taken from that worker's _base.css
-   and quiz_template.html so both formats look consistent.
-   ════════════════════════════════════════════════════════════════════════ */
+/* ── LAYOUT ──────────────────────────────────────────────────────────────
+   The template places a spinning logo (position:absolute; top:38px; h=100px)
+   and challenge-no (position:absolute; top:155px; ~30px tall) on every screen.
+   In LONG format the .niche-marquee (margin-top:220px, ~88px tall, in normal
+   flow) is the natural spacer that pushes .content below that header. SHORT
+   format hides the marquee (see rule below), removing that spacer — so on any
+   screen where the question box is top-aligned the box slides up UNDER the
+   logo/challenge-no (the reported overlap).
 
-/* ── CHALLENGE ID: 1.5× bigger than base → then -20% = 1.2× net ── */
-.short-fmt .challenge-no {
-  font-size: 24px !important;        /* 30px × 0.8 */
-  letter-spacing: 2px !important;
-  font-weight: 900 !important;
+   Fix: reserve the header space explicitly on EVERY top-aligned screen that
+   shows the persistent logo + challenge-no + question box. Previously only
+   .question-phase and .pre-reveal-slide were padded, which is why the earlier
+   attempt still overlapped on .question-static / .question-appear-slide /
+   .options-waiting-slide. All of them are covered now.
+   230px = 155px (challenge-no top) + 30px (its height) + 45px breathing room. ── */
+.short-fmt .question-phase,
+.short-fmt .pre-reveal-slide,
+.short-fmt .question-appear-slide,
+.short-fmt .options-waiting-slide,
+.short-fmt .question-static {
+  padding-top:    230px !important;
+  padding-bottom: ${AVATAR_SIZE + 80}px !important;
+  box-sizing: border-box !important;
 }
-
-/* ── LAYOUT: reserve header space + vertically centre the question block ──
-   The base .screen is already display:flex/column. We ONLY adjust padding and
-   the .content child's vertical centering. We do NOT re-declare display/flex on
-   .screen itself — doing so previously risked collapsing the background layers.
-   Header space: logo (38+100) + challenge-no (155+30) + breathing room.      ── */
-.short-fmt .question-phase .content,
-.short-fmt .pre-reveal-slide .content,
-.short-fmt .question-appear-slide .content,
-.short-fmt .options-waiting-slide .content,
-.short-fmt .question-static .content {
-  justify-content: center !important;
-  padding-top:     260px !important;
-  padding-bottom:  ${AVATAR_SIZE + 80}px !important;
-  box-sizing:      border-box !important;
-}
-
-/* ── QUESTION TEXT: 1.5× base × 0.8 = 1.2× net ─────────────────── */
-.short-fmt .qp-question {
-  font-size:   62px !important;     /* 52px × 1.2 */
-  font-weight: 800 !important;
-  line-height: 1.25 !important;
-  text-align:  center !important;
-  padding:     0 24px !important;
-  margin:      0 0 20px 0 !important;
+/* CTA screen handled separately — it hides logo+challenge-no so needs less top space */
+.short-fmt .comment-cta-screen {
+  padding-bottom: ${AVATAR_SIZE + 80}px !important;
+  box-sizing: border-box !important;
 }
 
-/* ── OPTION LABEL ("Option A" prefix) ── */
-.short-fmt .qp-option-label {
-  font-size:   22px !important;     /* 18px × 1.2 */
-  font-weight: 900 !important;
-  text-transform: uppercase !important;
-  letter-spacing: 2px !important;
-  margin-bottom:  4px !important;
-  opacity: 0.75 !important;
-}
-
-/* ── OPTION ROWS: 1.2× base sizing ─────────────────────────────────────
-   _base.css: .qp-option { font-size:50px; padding:28px 32px }.
-   Short: 60px / 34px 38px.                                              ── */
-.short-fmt .qp-options {
-  display:        flex !important;
-  flex-direction: column !important;
-  gap:            14px !important;
-  padding:        0 16px !important;
-  opacity:        1 !important;   /* container always visible */
-}
-
-/* ── OPTION SIZING (always applied) ── */
-.short-fmt .qp-option {
-  font-size:     60px !important;   /* 50px × 1.2 */
-  font-weight:   700 !important;
-  padding:       34px 38px !important;
-  border-radius: 22px !important;
-  text-align:    left !important;
-  line-height:   1.2 !important;
-}
-.short-fmt .qp-option-badge {
-  width:       56px !important;    /* 46px × 1.2 */
-  height:      56px !important;
-  font-size:   29px !important;    /* 24px × 1.2 */
-  flex-shrink: 0 !important;
-  margin-right: 16px !important;
-}
-
-/* ── FAIL-SAFE STAGGERED REVEAL ────────────────────────────────────────
-   Options are VISIBLE by default (opacity:1). To stagger them in, the worker
-   adds .opt-hidden to each option at step-3 start, then removes it one-by-one
-   with a 0.5s gap + sfx. If the JS reveal events ever fail to fire, the
-   options simply remain visible — they can never get permanently stuck
-   hidden (the previous bug). .opt-hidden is the ONLY thing that hides them. ── */
-.short-fmt .qp-option.opt-hidden {
-  opacity:    0 !important;
-  transform:  translateX(-24px) scale(0.97) !important;
-  transition: none !important;
-}
-/* When .opt-hidden is removed, the option slides in */
-.short-fmt .qp-option.opt-reveal {
-  animation: shortOptSlide 0.38s cubic-bezier(0.34,1.56,0.64,1) both !important;
-}
-@keyframes shortOptSlide {
-  from { opacity:0; transform: translateX(-28px) scale(0.97); }
-  to   { opacity:1; transform: none; }
-}
-
-/* ── QUESTION ENTRY ANIMATION ── */
-.short-fmt .qp-question {
-  animation: shortQSlide 0.45s cubic-bezier(0.34,1.56,0.64,1) both !important;
-}
-@keyframes shortQSlide {
-  from { opacity:0; transform: translateY(28px) scale(0.97); }
-  to   { opacity:1; transform: none; }
-}
-
-/* ── HINT: in normal flow below options, hidden until JS reveals it ── */
+/* ── HINT: shown 1s AFTER the countdown starts ──
+   _base.css makes .qp-hint position:absolute; bottom:380px, which lands on
+   top of option D once the avatar strip shrinks the usable height. We pull it
+   back into normal flow underneath the options, and reserve its space with
+   visibility:hidden so revealing it causes NO layout shift.
+   The template's own animation-delay:var(--hint-time) is disabled; the worker
+   reveals it with a timed event instead. */
 .short-fmt .qp-hint {
-  position:   static !important;
-  left: auto !important; right: auto !important; bottom: auto !important;
-  margin:     14px 22px 0 !important;
-  z-index:    auto !important;
-  animation:  none !important;
-  opacity:    1 !important;
-  visibility: hidden !important;
-  font-size:  36px !important;   /* 30px × 1.2 */
-  font-weight: 700 !important;
-  padding:    16px 22px !important;
+  position: static !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  margin: 14px 40px 0 !important;
+  z-index: auto !important;
+  animation: none !important;
+  opacity: 1 !important;
+  visibility: hidden !important;   /* space reserved, not painted */
 }
 .short-fmt .qp-hint.hint-visible {
   visibility: visible !important;
-  animation:  hintPop 0.35s ease-out both !important;
+  animation: hintPop 0.35s ease-out both !important;
 }
 @keyframes hintPop {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
   to   { opacity: 1; transform: none; }
 }
 
-/* ── MARQUEE: hidden in short format ── */
+/* ── Black marquee bar removed in short format (unreadable at this size) ── */
 .short-fmt .niche-marquee { display: none !important; }
+
+/* ── Q+OPTIONS: appear simultaneously (short format = no stagger) ── */
+.short-fmt .question-phase .qp-question,
+.short-fmt .question-phase .qp-options,
+.short-fmt .question-phase .qp-option:not(.opt-eliminated) {
+  animation: none !important;
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+}
 
 /* ── No answer colour reveal in this format ── */
 .short-fmt .qp-option.correct,
 .short-fmt .qp-option.wrong {
-  background:   unset !important;
+  background: unset !important;
   border-color: unset !important;
-  color:        unset !important;
+  color: unset !important;
 }
 
 /* ── 50/50 ── */
-.short-fmt .qp-option.opt-elim-target { animation: none !important; }
+.short-fmt .qp-option.opt-elim-target { opacity: 1; animation: none !important; }
 .short-fmt .qp-option.opt-eliminated {
   animation: fiftyFade 0.45s ease-out forwards !important;
   pointer-events: none !important;
@@ -1204,44 +1115,44 @@ async function buildShortVideo(quiz, workDir) {
   100% { opacity: 0; transform: scale(0.90); filter: blur(3px); }
 }
 
-/* ── COUNTDOWN TIMER: BIG ring / digital / hourglass / bar (1.2× base) ── */
+/* ── COUNTDOWN TIMER: always show a large, readable ring/digital.
+   The template hides small timers in some themes. We force it visible
+   and large enough to read in 9:16 at YouTube Shorts size.         ── */
 .short-fmt .qp-timer-wrap {
-  display:    flex !important;
+  display: flex !important;
   visibility: visible !important;
-  opacity:    1 !important;
-  width:      120px !important;
-  height:     120px !important;
-  min-width:  120px !important;
-  min-height: 120px !important;
-  margin:     12px auto !important;
-  position:   relative !important;
+  opacity: 1   !important;
+  width:  96px !important;
+  height: 96px !important;
+  min-width:  96px !important;
+  min-height: 96px !important;
+  margin: 6px auto !important;
+  position: relative !important;
 }
 .short-fmt .qp-timer-ring {
-  width:  120px !important;
-  height: 120px !important;
-}
-.short-fmt .qp-timer-ring svg,
-.short-fmt .qp-timer-ring circle {
-  width:  120px !important;
-  height: 120px !important;
+  width:  96px !important;
+  height: 96px !important;
 }
 .short-fmt .qp-timer-number {
-  font-size:   46px !important;
+  font-size: 38px !important;
   font-weight: 900 !important;
   line-height: 1 !important;
 }
+/* cd-digital: large block countdown number */
 .short-fmt .cd-digital {
-  font-size:   66px !important;
+  font-size: 55px !important;
   font-weight: 900 !important;
-  text-align:  center !important;
-  line-height: 120px !important;
+  text-align: center !important;
+  line-height: 96px !important;
   color: #fff !important;
-  text-shadow: 0 0 20px rgba(255,200,0,0.9), 0 2px 8px rgba(0,0,0,0.8) !important;
+  text-shadow: 0 0 14px rgba(255,200,0,0.9), 0 2px 6px rgba(0,0,0,0.8) !important;
 }
-.short-fmt .cd-hourglass     { font-size: 54px !important; }
-.short-fmt .cd-hourglass-num { font-size: 48px !important; font-weight: 900 !important; }
+/* cd-hourglass: show emoji + number */
+.short-fmt .cd-hourglass     { font-size: 45px !important; }
+.short-fmt .cd-hourglass-num { font-size: 40px !important; font-weight: 900 !important; }
+/* cd-bar: full-width progress bar below options */
 .short-fmt .cd-bar-wrap {
-  width: 100% !important; height: 16px !important;
+  width: 100% !important; height: 10px !important;
   background: rgba(255,255,255,0.18) !important;
   border-radius: 99px !important; overflow: hidden !important;
 }
@@ -1252,50 +1163,54 @@ async function buildShortVideo(quiz, workDir) {
 }
 @keyframes cdBarDrain { from { width:100%; } to { width:0%; } }
 
-/* ── CTA SCREEN: hidden until JS switches to it — then centred vertically ──
-   The screen starts invisible (.screen without .active). When .active is added
-   mid-recording, the pills animate in. Logo + challenge-no are hidden so the
-   full height is available for the pills.                                  ── */
-.short-fmt .comment-cta-screen .persistent-logo { display: none !important; }
-.short-fmt .comment-cta-screen .challenge-no    { display: none !important; }
+/* ── CTA SCREEN (comment-cta-screen) layout fix ─────────────────────────
+   Problems in short format:
+   1. .persistent-logo (position:absolute; top:38px) floats over the LIKE pill
+   2. .challenge-no (position:absolute; top:155px) overlaps pills
+   3. .niche-marquee was already hidden (display:none) but still leaves a gap
+   4. .content has justify-content:flex-start which pushes pills to the top
+   Fixes: hide logo+challenge-no, add generous padding-top, centre the pills. */
 
-.short-fmt .comment-cta-screen {
-  display:         flex !important;
-  flex-direction:  column !important;
-  justify-content: center !important;
-  align-items:     center !important;
-  padding-top:     60px !important;
-  padding-bottom:  ${AVATAR_SIZE + 80}px !important;
-  box-sizing:      border-box !important;
-}
+/* Hide the floating logo and challenge ID on CTA screen in short format */
+.short-fmt .comment-cta-screen .persistent-logo  { display: none !important; }
+.short-fmt .comment-cta-screen .challenge-no     { display: none !important; }
+
+/* Push content down so it starts below where the logo was */
 .short-fmt .comment-cta-screen .content {
   justify-content: center !important;
-  align-items:     center !important;
-  gap:             26px !important;
-  width:           100% !important;
+  padding-top: 60px !important;
+  padding-bottom: ${AVATAR_SIZE + 80}px !important;
+  gap: 28px !important;
 }
-/* Pills: 1.2× base */
+
+/* Give pills more breathing room */
 .short-fmt .comment-cta-screen .cta-pill {
-  padding:    22px 32px !important;
-  font-size:  50px !important;     /* 63px × 0.8 = 50px */
-  margin:     0 !important;
-  width:      88% !important;
-  text-align: center !important;
+  padding: 28px 40px !important;
+  font-size: 63px !important;
+  margin: 0 !important;
 }
+
+/* CTA4 card - main text centred, legible */
 .short-fmt .comment-cta-screen .cta-combined-card {
-  padding: 22px 28px !important;
-  gap:     14px !important;
+  padding: 24px 32px !important;
+  gap: 16px !important;
   text-align: center !important;
-  width:   88% !important;
 }
 .short-fmt .comment-cta-screen .cta-combined-text {
-  font-size:   44px !important;    /* 55px × 0.8 = 44px */
+  font-size: 55px !important;
   line-height: 1.25 !important;
-  text-align:  center !important;
+  text-align: center !important;
 }
-.short-fmt .comment-cta-screen .cta-combined-icon  { font-size: 52px !important; }
-.short-fmt .comment-cta-screen .cta-divider        { margin: 4px 0 !important; }
-.short-fmt .comment-cta-screen .cta-combined-arrow { font-size: 52px !important; margin-top: 4px !important; }
+.short-fmt .comment-cta-screen .cta-combined-icon {
+  font-size: 65px !important;
+}
+.short-fmt .comment-cta-screen .cta-divider {
+  margin: 4px 0 !important;
+}
+.short-fmt .comment-cta-screen .cta-combined-arrow {
+  font-size: 65px !important;
+  margin-top: 4px !important;
+}
 </style>
 ${AVATAR_CSS}`;
 
@@ -1447,167 +1362,50 @@ ${AVATAR_CSS}`;
     pushClip(fbFinal, false);
   }
 
-  // ══ STEP 3 — QUESTION appears, then OPTIONS stagger in with sfx ════════
-  //
-  // Architecture (matches worker10 long design):
-  //  t=0s   : question-phase screen shown; question text slides in (CSS anim)
-  //           sfx plays + question TTS plays (dog mouth cycles)
-  //  t=Q_DUR: 0.5s silence gap
-  //  t=Q_DUR+0.5s : Option A revealed (remove .opt-hidden) + sfx (low volume)
-  //  t+0.5s : Option B revealed + sfx
-  //  t+0.5s : Option C revealed + sfx
-  //  t+0.5s : Option D revealed + sfx
-  //  0.22s gap
-  //  "You have only N seconds — time starts now!" TTS
-  //
-  // The options appear via mid-recording JS events so their CSS slide-in
-  // animation is captured by PuppeteerScreenRecorder as real motion.
-  // Dog speaks during question TTS, goes silent during option reveal.
-  console.log('[SHORT] -- Step 3: question + staggered options with sfx');
+  // ══ STEP 3 — QUESTION + OPTIONS, DOG SPEAKS THE TTS ════════════════
+  // Options appear together with the question. Dog mouth cycles while TTS
+  // plays. Host circle shows the SILENT clip (same dress_code).
+  console.log('[SHORT] -- Step 3: Q + options + dog TTS');
 
   await setAvatarMode(page, 'dog_speaking');
   await showScreen(page, '.question-phase');
 
-  // Freeze the countdown — must not tick until step 4
+  // Freeze the countdown — it must not tick until step 4
   await page.evaluate(() => {
     document.querySelectorAll(
       '.countdown-timer,.timer-ring,.timer-bar,[class*="countdown"],[class*="timer"]'
     ).forEach(el => { el.style.animationPlayState = 'paused'; });
   });
 
-  // Hide options initially by adding .opt-hidden. They will be revealed one by
-  // one during recording. FAIL-SAFE: if the reveal events don't fire, the
-  // options stay visible (only .opt-hidden hides them, and we remove it below).
-  const optsHiddenCount = await page.evaluate(() => {
-    const opts = document.querySelectorAll('.screen.active .qp-option');
-    opts.forEach(el => el.classList.add('opt-hidden'));
-    return opts.length;
-  });
-  console.log(`[SHORT] Step 3: ${optsHiddenCount} options hidden, will reveal one-by-one`);
-
-  // -- Audio: sfx + question TTS --
-  const s3QParts = [];
+  // Audio: sfx -> question TTS -> gap -> "you have only 6 seconds..."
+  const s3Parts = [];
   if (sfxFile) {
-    s3QParts.push(sfxFile);
-    const sgQ = path.join(workDir, 'sh_sfxgap_q.mp3');
-    await silence(0.12, sgQ);
-    s3QParts.push(sgQ);
+    s3Parts.push(sfxFile);
+    const sg = path.join(workDir, 'sh_sfxgap.mp3');
+    await silence(0.12, sg);
+    s3Parts.push(sg);
   }
   const qTts = path.join(workDir, 'sh_q_tts.mp3');
   await tts(question, voice, qTts, 3);
-  s3QParts.push(qTts);
+  s3Parts.push(qTts);
 
-  const s3QAudio = path.join(workDir, 'sh_step3q.mp3');
-  await concatAudio(s3QParts, s3QAudio, workDir);
-  const qPartDur = await audioDur(s3QAudio);  // how long before options start
+  const microGap = path.join(workDir, 'sh_microgap.mp3');
+  await silence(0.22, microGap);
+  s3Parts.push(microGap);
 
-  // -- Build per-option sfx cues (low volume — softer than question sfx) --
-  // Each cue = silence pad (to align with the event offset) + sfx at 0.45 vol
-  // We mix four separate sfx cues into the audio stream at exact timestamps.
-  // Layout:
-  //   [0     …  qPartDur         ] question audio
-  //   [qPartDur … qPartDur+0.5   ] gap silence
-  //   [qPartDur+0.5              ] opt0 sfx
-  //   [qPartDur+0.5+0.5          ] opt1 sfx
-  //   [qPartDur+0.5+0.5+0.5      ] opt2 sfx
-  //   [qPartDur+0.5+0.5+0.5+0.5  ] opt3 sfx
-  //   [+0.22                     ] microgap
-  //   [prompt TTS                ]
-  const OPT_GAP   = 0.5;   // gap between options appearing
-  const PRE_OPT   = 0.5;   // silence before first option after question
-
-  const microGap3 = path.join(workDir, 'sh_microgap3.mp3');
-  await silence(0.22, microGap3);
-  const timerPrompt3 = path.join(workDir, 'sh_timerprompt3.mp3');
+  const timerPrompt = path.join(workDir, 'sh_timerprompt.mp3');
   await tts(
     `You have only ${SHORT_COUNTDOWN} seconds and your time starts now!`,
-    voice, timerPrompt3, 3
+    voice, timerPrompt, 3
   );
+  s3Parts.push(timerPrompt);
 
-  // Build full-step audio: Q TTS | silence | [opt sfx × 4 with gaps] | microgap | prompt
-  // For the option sfx we mix at specific timestamps using ffmpeg adelay so they
-  // overlay the (mostly silent) option-reveal window cleanly at low volume.
-  const preOptSil = path.join(workDir, 'sh_preopt_sil.mp3');
-  await silence(PRE_OPT + OPT_GAP * 4, preOptSil); // silence window for all 4 opts
-
-  const postOptParts = [microGap3, timerPrompt3];
-  const postOptAudio = path.join(workDir, 'sh_postopt.mp3');
-  await concatAudio(postOptParts, postOptAudio, workDir);
-
-  // Base track: Q audio | option-reveal silence | post-option speech
-  const baseParts = [s3QAudio, preOptSil, postOptAudio];
-  const baseTrack = path.join(workDir, 'sh_step3_base.mp3');
-  await concatAudio(baseParts, baseTrack, workDir);
-  const step3TotalDur = await audioDur(baseTrack);
-
-  // Mix per-option sfx into the base track at the correct timestamps
-  let step3Audio = baseTrack;
-  if (sfxFile) {
-    // Each opt sfx offset (ms) from the start of the combined audio
-    const opt0Ms = Math.round((qPartDur + PRE_OPT) * 1000);
-    const opt1Ms = opt0Ms + Math.round(OPT_GAP * 1000);
-    const opt2Ms = opt1Ms + Math.round(OPT_GAP * 1000);
-    const opt3Ms = opt2Ms + Math.round(OPT_GAP * 1000);
-    const sfxMixed = path.join(workDir, 'sh_step3_sfxmix.mp3');
-    await ffmpeg(
-      `-y -i "${baseTrack}" ` +
-      `-i "${sfxFile}" -i "${sfxFile}" -i "${sfxFile}" -i "${sfxFile}" ` +
-      `-filter_complex ` +
-      `"[1:a]volume=0.35,adelay=${opt0Ms}|${opt0Ms}[s0];` +
-       `[2:a]volume=0.35,adelay=${opt1Ms}|${opt1Ms}[s1];` +
-       `[3:a]volume=0.35,adelay=${opt2Ms}|${opt2Ms}[s2];` +
-       `[4:a]volume=0.35,adelay=${opt3Ms}|${opt3Ms}[s3];` +
-       `[0:a][s0][s1][s2][s3]amix=inputs=5:duration=first[a]" ` +
-      `-map "[a]" -ar 44100 -acodec libmp3lame -t ${step3TotalDur} "${sfxMixed}"`,
-      'sh_step3_sfxmix'
-    );
-    step3Audio = sfxMixed;
-  }
-
+  const step3Audio = path.join(workDir, 'sh_step3.mp3');
+  await concatAudio(s3Parts, step3Audio, workDir);
   const step3Dur = Math.max(await audioDur(step3Audio), 2.0);
-  console.log(`[SHORT] Step 3 audio: ${step3Dur.toFixed(2)}s (Q=${qPartDur.toFixed(2)}s, opts@${(qPartDur+PRE_OPT).toFixed(2)}s+)`);
+  console.log(`[SHORT] Step 3 audio: ${step3Dur.toFixed(2)}s`);
 
-  // JS events fired MID-RECORDING to reveal each option (CSS slide-in animation
-  // captured by PuppeteerScreenRecorder as real motion frames).
-  // Reveal = remove .opt-hidden + add .opt-reveal (triggers slide-in).
-  const optShowEvents = [0, 1, 2, 3].map(i => ({
-    at: qPartDur + PRE_OPT + OPT_GAP * i,
-    fn: async (pg) => {
-      await pg.evaluate((idx) => {
-        const opts = document.querySelectorAll('.screen.active .qp-option');
-        if (opts[idx]) {
-          opts[idx].classList.remove('opt-hidden');
-          opts[idx].classList.add('opt-reveal');
-        }
-      }, i);
-      console.log(`[SHORT] Option ${i} revealed at t=${(qPartDur + PRE_OPT + OPT_GAP * i).toFixed(2)}s`);
-    }
-  }));
-
-  // SAFETY NET: 0.3s before the clip ends, force-reveal ANY option still hidden
-  // (guards against a reveal event that didn't fire because the clip was short).
-  const optSafetyEvent = {
-    at: Math.max(0.1, step3Dur - 0.3),
-    fn: async (pg) => {
-      const n = await pg.evaluate(() => {
-        const hidden = document.querySelectorAll('.screen.active .qp-option.opt-hidden');
-        hidden.forEach(el => { el.classList.remove('opt-hidden'); el.classList.add('opt-reveal'); });
-        return hidden.length;
-      });
-      if (n > 0) console.log(`[SHORT] Safety net revealed ${n} still-hidden option(s)`);
-    }
-  };
-
-  // Dog: speaking during Q TTS, silent during option reveal phase
-  const dogSilentEvent = {
-    at: qPartDur + 0.1,
-    fn: async (pg) => { await setAvatarMode(pg, 'both_silent'); }
-  };
-
-  const step3Ui = await recordUiWithEvents(
-    page, step3Audio, step3Dur, workDir, 'sh_step3_ui',
-    [dogSilentEvent, ...optShowEvents, optSafetyEvent]
-  );
+  const step3Ui = await recordUiWithEvents(page, step3Audio, step3Dur, workDir, 'sh_step3_ui');
 
   // Composite host then dog onto the UI recording (two FFmpeg passes)
   let step3Final = step3Ui;
@@ -1744,125 +1542,67 @@ ${AVATAR_CSS}`;
       : step56Dur * 0.45;
     console.log(`[SHORT] Step 5+6: ${step56Dur.toFixed(2)}s, slide switch at ${splitAt.toFixed(2)}s`);
   } else {
-    // No host cta4 clip — fall back to quiz.cta4_audio_url (prerecorded) or TTS
-    console.log('[SHORT] Step 5+6: no cta4 host clip — audio fallback');
+    // No cta4 clip — fall back to TTS for both lines
+    console.log('[SHORT] Step 5+6: no cta4 host clip — TTS fallback');
     const tuTts = path.join(workDir, 'sh_timeup_tts.mp3');
-    // Try prerecorded timeup audio first, then TTS
-    const timeupPrerecorded = avatarSet.timeupAudio
-      ? await download(avatarSet.timeupAudio, 'av_timeup_audio').catch(() => null)
-      : null;
-    if (timeupPrerecorded && await fileExists(timeupPrerecorded)) {
-      const silG = path.join(workDir, 'sh_tu_gap.mp3');
-      await silence(0.15, silG);
-      await concatAudio([silG, timeupPrerecorded], tuTts, workDir);
-    } else {
-      await tts(quiz.timeup_text || "Time's up! Here comes the answer.", voice, tuTts, 3);
-    }
+    await tts(quiz.timeup_text || "Time's up!", voice, tuTts, 3);
     const ctaTts = path.join(workDir, 'sh_cta4_tts.mp3');
-    // Prefer quiz.cta4_audio_url (prerecorded) over TTS generation
-    const cta4PrerecordedFile = quiz.cta4_audio_url
-      ? await download(quiz.cta4_audio_url, `sh_cta4audio_${quiz.id}`).catch(() => null)
-      : null;
-    if (cta4PrerecordedFile && await fileExists(cta4PrerecordedFile)) {
-      const silG2 = path.join(workDir, 'sh_cta4_gap.mp3');
-      await silence(0.15, silG2);
-      await concatAudio([silG2, cta4PrerecordedFile], ctaTts, workDir);
-      console.log('[SHORT] Step 5+6: using prerecorded cta4_audio_url');
-    } else {
-      await tts(quiz.cta4_text || 'Write your answer in the comments!', voice, ctaTts, 3);
-    }
+    await tts(quiz.cta4_text || 'Write your answer in the comments!', voice, ctaTts, 3);
     splitAt = Math.max(await audioDur(tuTts), 0.8);
     step56Audio = path.join(workDir, 'sh_step56_audio.mp3');
     await concatAudio([tuTts, ctaTts], step56Audio, workDir);
-    // Ensure enough total duration for CTA to be visible: at least splitAt + 3s
-    step56Dur = Math.max(await audioDur(step56Audio), splitAt + 3.0, 4.0);
+    step56Dur = Math.max(await audioDur(step56Audio), 2.0);
   }
 
-  // Which slide to switch TO at splitAt — try comment-cta-screen variants
-  const ctaSel = await page.evaluate(() => {
-    // Try all known class names for the CTA screen
-    const selectors = ['.comment-cta-screen', '.cta4-screen', '.cta-screen', '.cta2-slide'];
-    for (const s of selectors) {
-      if (document.querySelector(s)) return s;
-    }
-    return null;
-  });
+  // Which slide to switch TO at splitAt
+  const ctaSel = await page.evaluate(() =>
+    document.querySelector('.comment-cta-screen') ? '.comment-cta-screen' : '.pre-reveal-slide'
+  );
 
-  if (!ctaSel) {
-    console.warn('[SHORT] Step 5+6: no CTA screen found in DOM — will stay on pre-reveal slide');
-  } else {
-    console.log(`[SHORT] Step 5+6: CTA selector = "${ctaSel}"`);
-  }
-
-  // The CTA screen staggers LIKE / SHARE / SUBSCRIBE / divider / CTA4 / arrow.
-  // Original template delays (0.1/0.8/1.5/2.1/2.3/2.8s) are too long for a short
-  // clip — CTA4 (2.3s) and the arrow (2.8s) would never appear. On switch we
-  // assign SHORT FIXED delays that always fit, and a safety net at the end
-  // forces every element fully visible no matter what.
+  // The CTA screen staggers LIKE / SHARE / SUBSCRIBE / CTA4 / arrow with
+  // animation-delay up to 2.8s. It only becomes visible at `splitAt`, so on a
+  // short clip the later pills would never appear (you'd see only "LIKE").
+  // On switch we compress every delay to fit the remaining time.
   const ctaRemaining = Math.max(0.6, step56Dur - splitAt);
 
   const step56Ui = await recordUiWithEvents(
     page, step56Audio, step56Dur, workDir, 'sh_step56_ui',
-    ctaSel ? [
-      {
-        at: splitAt,
-        fn: async (pg) => {
-          const info = await pg.evaluate((sel, remaining) => {
-            document.querySelectorAll('.screen').forEach(e => e.classList.remove('active'));
-            const screen = document.querySelector(sel);
-            if (!screen) return { switched: false, scaled: 0 };
-            screen.classList.add('active');
+    [{
+      at: splitAt,
+      fn: async (pg) => {
+        const info = await pg.evaluate((sel, remaining) => {
+          document.querySelectorAll('.screen').forEach(e => e.classList.remove('active'));
+          const screen = document.querySelector(sel);
+          if (!screen) return { switched: false, scaled: 0 };
+          screen.classList.add('active');
 
-            // Assign SHORT fixed delays scaled to the available window so all
-            // six elements (like/share/sub/divider/cta4/arrow) land in time.
-            // Spread them across ~70% of the remaining window.
-            const order = [
-              '.cta-pill-like', '.cta-pill-share', '.cta-pill-sub',
-              '.cta-divider', '.cta-combined-card', '.cta-combined-arrow'
-            ];
-            const span = Math.max(0.4, remaining * 0.7);
-            const step = span / order.length;   // gap between each element
-            let scaled = 0;
-            order.forEach((cls, idx) => {
-              const el = screen.querySelector(cls);
-              if (!el) return;
-              el.style.animation = 'none';
-              void el.offsetHeight;               // force reflow
-              el.style.animation = '';
-              el.style.animationDelay    = (idx * step).toFixed(3) + 's';
-              el.style.animationFillMode = 'both';
-              scaled++;
-            });
-            return { switched: true, scaled, step: +step.toFixed(3) };
-          }, ctaSel, ctaRemaining);
+          // Longest original delay in the template is 2.8s (the arrow).
+          const LAST_DELAY = 2.8;
+          // Leave ~35% of the window after the final element lands.
+          const target = remaining * 0.65;
+          const scale  = Math.min(1, Math.max(0.08, target / LAST_DELAY));
 
-          console.log(`[SHORT] CTA slide shown; ${info.scaled} elements re-timed ` +
-                      `(step=${info.step}s, window=${ctaRemaining.toFixed(2)}s)`);
-        }
-      },
-      {
-        // SAFETY NET: 0.25s before clip ends, force EVERY CTA element fully
-        // visible (opacity:1, no transform) so nothing can be stuck hidden.
-        at: Math.max(splitAt + 0.1, step56Dur - 0.25),
-        fn: async (pg) => {
-          const n = await pg.evaluate((sel) => {
-            const screen = document.querySelector(sel);
-            if (!screen) return 0;
-            const els = screen.querySelectorAll(
-              '.cta-pill, .cta-divider, .cta-combined-card, .cta-combined-arrow, ' +
-              '.cta-combined-icon, .cta-combined-text'
-            );
-            els.forEach(el => {
-              el.style.animation = 'none';
-              el.style.opacity   = '1';
-              el.style.transform = 'none';
-            });
-            return els.length;
-          }, ctaSel);
-          console.log(`[SHORT] CTA safety net: forced ${n} element(s) visible`);
-        }
+          const els = screen.querySelectorAll(
+            '.cta-pill, .cta-divider, .cta-combined-card, .cta-combined-arrow'
+          );
+          els.forEach(el => {
+            const cur = parseFloat(el.style.animationDelay) || 0;
+            // Restart the animation before re-timing it. Mutating
+            // animation-delay on an already-running animation does not
+            // retroactively reschedule it.
+            el.style.animation = 'none';
+            void el.offsetHeight;            // force reflow
+            el.style.animation = '';
+            el.style.animationDelay    = (cur * scale).toFixed(3) + 's';
+            el.style.animationFillMode = 'both';
+          });
+          return { switched: true, scaled: els.length, scale: +scale.toFixed(3) };
+        }, ctaSel, ctaRemaining);
+
+        console.log(`[SHORT] CTA slide shown; ${info.scaled} elements re-timed ` +
+                    `(scale=${info.scale}, window=${ctaRemaining.toFixed(2)}s)`);
       }
-    ] : []
+    }]
   );
 
   let step56Final = step56Ui;
