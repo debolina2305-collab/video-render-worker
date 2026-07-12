@@ -1145,7 +1145,7 @@ async function buildShortVideo(quiz, workDir) {
   to   { opacity:1; transform: none; }
 }
 
-/* ── OPTIONS container + sizing: font 50px, badge 40px, padding 24/28 ── */
+/* ── OPTIONS container + sizing: font 45px, badge 40px, padding 24/28 ── */
 .short-fmt .qp-options {
   display:        flex !important;
   flex-direction: column !important;
@@ -1154,7 +1154,7 @@ async function buildShortVideo(quiz, workDir) {
   opacity:        1 !important;
 }
 .short-fmt .qp-option {
-  font-size:     50px !important;
+  font-size:     45px !important;
   font-weight:   700 !important;
   padding:       24px 28px !important;
   border-radius: 18px !important;
