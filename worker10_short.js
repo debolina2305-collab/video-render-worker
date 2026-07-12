@@ -387,14 +387,59 @@ async function videoToDataUri(localPath) {
   } catch (e) { console.warn(`[VIDEO-URI] ${e.message}`); return null; }
 }
 
-// ─── THEME ────────────────────────────────────────────────────────────
+// ─── THEME (mirrors worker10 long exactly) ────────────────────────────────
+// Loads _base.css + theme-specific CSS, substitutes {{accent_*}} placeholders,
+// applies quiz_background_css (particle_field theme only), and loads the design
+// engine CSS (layout variants, countdown styles, transitions).
+// This matches worker10 long so both formats look identical.
+const DESIGN_ENGINE_CSS_PATH = path.join(__dirname, 'themes', 'design_engine.css');
+
 async function resolveTheme(quiz) {
-  const id   = (quiz.visual_theme_id || DEFAULT_THEME).toLowerCase().replace(/[^a-z0-9_]/g, '_');
-  const base = await fs.readFile(path.join(THEMES_DIR, '_base.css'), 'utf8').catch(() => '');
-  const th   = await fs.readFile(path.join(THEMES_DIR, `${id}.css`), 'utf8')
-                 .catch(() => fs.readFile(path.join(THEMES_DIR, `${DEFAULT_THEME}.css`), 'utf8').catch(() => ''));
-  const decoHtml = th.match(/\/\*\s*DECO_HTML\s*([\s\S]*?)\*\//)?.[1]?.trim() || '';
-  return { themeCss: `${base}\n${th}`, decoHtml };
+  const base    = await fs.readFile(path.join(THEMES_DIR, '_base.css'), 'utf8').catch(() => '');
+  const themeId = quiz.visual_theme_id || DEFAULT_THEME;
+  let themeFile = path.join(THEMES_DIR, `${themeId}.css`);
+  if (!(await fileExists(themeFile))) {
+    console.warn(`[SHORT-THEME] '${themeId}' not found — using ${DEFAULT_THEME}`);
+    themeFile = path.join(THEMES_DIR, `${DEFAULT_THEME}.css`);
+  }
+  let css = base + '\n' + (await fs.readFile(themeFile, 'utf8').catch(() => ''));
+  // Substitute accent colour placeholders
+  const a1 = quiz.theme_accent_primary   || '#00e0ff';
+  const a2 = quiz.theme_accent_secondary || '#7b2ff7';
+  const a3 = quiz.theme_accent_tertiary  || '#ff2ec4';
+  css = css.split('{{accent_primary}}').join(a1)
+           .split('{{accent_secondary}}').join(a2)
+           .split('{{accent_tertiary}}').join(a3);
+  // quiz_background_css: only for the default particle_field theme.
+  // All other themes own their complete background; overriding would break them.
+  if (quiz.quiz_background_css?.trim() && themeId === DEFAULT_THEME) {
+    console.log('[SHORT-THEME] Applying quiz_background_css (particle_field only)');
+    css += '\n/* === QUIZ-SPECIFIC BACKGROUND === */\n' + quiz.quiz_background_css;
+  } else if (quiz.quiz_background_css?.trim()) {
+    console.log(`[SHORT-THEME] Skipping quiz_background_css — theme=${themeId} controls its own bg`);
+  } else {
+    console.log('[SHORT-THEME] No quiz_background_css — using theme default');
+  }
+  // Design engine CSS (layout variants, countdown styles, transitions)
+  let designEngineCss = '';
+  try {
+    designEngineCss = await fs.readFile(DESIGN_ENGINE_CSS_PATH, 'utf8');
+    console.log(`[SHORT-DESIGN] theme=${themeId} layout=${quiz.layout_variant||'standard'} countdown=${quiz.countdown_style||'ring'} transition=${quiz.transition_style||'fade'}`);
+  } catch (e) {
+    console.warn(`[SHORT-DESIGN] design_engine.css not found — skipping (${e.message})`);
+  }
+  const decoHtml = _buildDecoHtml(themeId);
+  return { themeCss: css, decoHtml, designEngineCss };
+}
+
+function _buildDecoHtml(id) {
+  if (id === 'particle_field') {
+    return '<div class="theme-deco">' + Array.from({length:18}, (_, i) => {
+      const l = (i * 5 + 2) % 100, sz = 6 + (i % 5) * 3, d = 8 + (i % 6) * 2, dy = (i * 0.7) % 10;
+      return `<div class="particle" style="left:${l}%;bottom:-20px;width:${sz}px;height:${sz}px;animation-duration:${d}s;animation-delay:${dy}s;"></div>`;
+    }).join('') + '</div>';
+  }
+  return '';
 }
 
 // ─── AVATAR STRIP HTML + CSS ──────────────────────────────────────────
@@ -920,15 +965,14 @@ async function buildShortVideo(quiz, workDir) {
   let videoPhotoStyleBlock = '';
   let videoPhotoClass      = 'no-photo';
 
-  // Same image worker10 (long) puts behind the video at 30% opacity.
-  // Order: topic_image_url (what worker10 uses) -> hero -> inline -> thumbnail
-  //        -> the blog post's hero/inline image for this quiz.
+  // Background photo: try thumbnail_url first (user request), then topic/hero/inline.
+  // thumbnail_url is the rendered quiz thumbnail — always the most relevant image.
   let bgImageUrl = null, bgImageSrc = null;
   for (const [srcName, url] of [
+    ['thumbnail_url',    quiz.thumbnail_url],
     ['topic_image_url',  quiz.topic_image_url],
     ['hero_image_url',   quiz.hero_image_url],
     ['inline_image_url', quiz.inline_image_url],
-    ['thumbnail_url',    quiz.thumbnail_url],
   ]) {
     if (url && String(url).startsWith('http')) { bgImageUrl = url; bgImageSrc = srcName; break; }
   }
@@ -962,7 +1006,7 @@ async function buildShortVideo(quiz, workDir) {
   } else { console.log('[SHORT-BG] No image on quiz row or blog post — background photo skipped'); }
 
   // ── Theme ──────────────────────────────────────────────────────────
-  const { themeCss, decoHtml } = await resolveTheme(quiz);
+  const { themeCss, decoHtml, designEngineCss } = await resolveTheme(quiz);
 
   // ── Build HTML ─────────────────────────────────────────────────────
   const niceLabel = niche ? niche.charAt(0).toUpperCase() + niche.slice(1) : 'General';
@@ -973,7 +1017,7 @@ async function buildShortVideo(quiz, workDir) {
     '{{theme_css}}':         themeCss,
     '{{theme_deco_html}}':   decoHtml,
     '{{LOGO_DATA_URI}}':     logoDataUri,
-    '{{design_engine_css}}': '',
+    '{{design_engine_css}}': designEngineCss,
     '{{transition_style}}':  quiz.transition_style || 'fade',
     '{{countdown_style}}':   quiz.countdown_style  || 'ring',
     '{{layout_variant}}':    quiz.layout_variant   || 'standard',
@@ -1077,28 +1121,28 @@ async function buildShortVideo(quiz, workDir) {
   to   { opacity:1; transform: none; }
 }
 
-/* ── OPTIONS container + sizing (base 50px × 1.35 = 68px) ── */
+/* ── OPTIONS container + sizing: base 50px × 1.35 = 68px, then -60% → 27px ── */
 .short-fmt .qp-options {
   display:        flex !important;
   flex-direction: column !important;
-  gap:            16px !important;
-  padding:        0 18px !important;
+  gap:            10px !important;
+  padding:        0 14px !important;
   opacity:        1 !important;
 }
 .short-fmt .qp-option {
-  font-size:     68px !important;   /* 50px × 1.35 */
+  font-size:     27px !important;   /* 68px × 0.4 = 27px */
   font-weight:   700 !important;
-  padding:       36px 42px !important;
-  border-radius: 22px !important;
+  padding:       14px 18px !important;
+  border-radius: 16px !important;
   text-align:    left !important;
   line-height:   1.2 !important;
 }
 .short-fmt .qp-option-badge {
-  width:        62px !important;    /* ~46px × 1.35 */
-  height:       62px !important;
-  font-size:    32px !important;    /* ~24px × 1.35 */
+  width:        25px !important;    /* 62px × 0.4 = 25px */
+  height:       25px !important;
+  font-size:    13px !important;
   flex-shrink:  0 !important;
-  margin-right: 18px !important;
+  margin-right: 10px !important;
 }
 
 /* ── FAIL-SAFE STAGGERED OPTION REVEAL ─────────────────────────────────
@@ -1246,7 +1290,7 @@ async function buildShortVideo(quiz, workDir) {
 /* Push content down: +150px extra top padding per request */
 .short-fmt .comment-cta-screen .content {
   justify-content: center !important;
-  padding-top: 210px !important;     /* 60 + 150 extra */
+  padding-top: 310px !important;     /* 60 base + 150 + 100 extra = 310px */
   padding-bottom: ${AVATAR_SIZE + 80}px !important;
   gap: 26px !important;
 }
