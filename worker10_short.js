@@ -77,8 +77,8 @@ const TIMEOUT_JOB       = 25 * 60 * 1000;
 const TIMEOUT_RECORDER  = 90 * 1000;
 const BG_VOL_BASE       = 0.10;
 const BG_VOL_DUCK       = 0.035;
-const SHORT_COUNTDOWN   = 6;    // countdown length (was 5)
-const SHORT_FIFTY_AT    = 3;    // 50/50 fires at t=3s INTO the countdown
+const SHORT_COUNTDOWN   = 5;    // countdown length (5 sec per spec)
+const SHORT_FIFTY_AT    = 2.5;  // 50/50 fires at t=2.5s INTO the countdown (halfway)
 const SHORT_HINT_AT     = 1;    // hint appears t=1s INTO the countdown
 // Avatar circle size (px) — matches CSS below
 // Circle diameter = 40% of the 1080px video width (host and dog each).
@@ -1032,48 +1032,116 @@ async function buildShortVideo(quiz, workDir) {
    and challenge-no (position:absolute; top:155px; ~30px tall) on every screen.
    In LONG format the .niche-marquee (margin-top:220px, ~88px tall, in normal
    flow) is the natural spacer that pushes .content below that header. SHORT
-   format hides the marquee (see rule below), removing that spacer — so on any
-   screen where the question box is top-aligned the box slides up UNDER the
-   logo/challenge-no (the reported overlap).
-
-   Fix: reserve the header space explicitly on EVERY top-aligned screen that
-   shows the persistent logo + challenge-no + question box. Previously only
-   .question-phase and .pre-reveal-slide were padded, which is why the earlier
-   attempt still overlapped on .question-static / .question-appear-slide /
-   .options-waiting-slide. All of them are covered now.
-   230px = 155px (challenge-no top) + 30px (its height) + 45px breathing room. ── */
+   format hides the marquee, so we reserve the header space explicitly on
+   EVERY top-aligned screen. 240px = header height + breathing room.        ── */
 .short-fmt .question-phase,
 .short-fmt .pre-reveal-slide,
 .short-fmt .question-appear-slide,
 .short-fmt .options-waiting-slide,
 .short-fmt .question-static {
-  padding-top:    230px !important;
-  padding-bottom: ${AVATAR_SIZE + 80}px !important;
-  box-sizing: border-box !important;
-}
-/* CTA screen handled separately — it hides logo+challenge-no so needs less top space */
-.short-fmt .comment-cta-screen {
+  padding-top:    240px !important;
   padding-bottom: ${AVATAR_SIZE + 80}px !important;
   box-sizing: border-box !important;
 }
 
-/* ── HINT: shown 1s AFTER the countdown starts ──
-   _base.css makes .qp-hint position:absolute; bottom:380px, which lands on
-   top of option D once the avatar strip shrinks the usable height. We pull it
-   back into normal flow underneath the options, and reserve its space with
-   visibility:hidden so revealing it causes NO layout shift.
-   The template's own animation-delay:var(--hint-time) is disabled; the worker
-   reveals it with a timed event instead. */
+/* ── QUESTION TEXT: base 52px × 1.35 = 70px ── */
+.short-fmt .qp-question {
+  font-size:   70px !important;
+  font-weight: 800 !important;
+  line-height: 1.25 !important;
+  text-align:  center !important;
+  padding:     0 24px !important;
+  margin:      0 0 18px 0 !important;
+}
+
+/* ── "OPTIONS" LABEL — appears below the question, before option A ──────
+   The worker injects this element and reveals it 0.5s after the question.  ── */
+.short-fmt .qp-options-label,
+.short-fmt .short-options-label {
+  font-size:      40px !important;   /* ~30px × 1.35 */
+  font-weight:    900 !important;
+  letter-spacing: 4px !important;
+  text-transform: uppercase !important;
+  text-align:     center !important;
+  color:          #ffd24a !important;
+  text-shadow:    0 0 18px rgba(255,210,74,0.7), 0 2px 8px rgba(0,0,0,0.8) !important;
+  margin:         4px 0 14px 0 !important;
+}
+/* label hidden until the worker reveals it */
+.short-fmt .short-options-label.lbl-hidden { opacity: 0 !important; }
+.short-fmt .short-options-label.lbl-show {
+  animation: lblPop 0.35s cubic-bezier(0.34,1.56,0.64,1) both !important;
+}
+@keyframes lblPop {
+  from { opacity:0; transform: translateY(10px) scale(0.96); }
+  to   { opacity:1; transform: none; }
+}
+
+/* ── OPTIONS container + sizing (base 50px × 1.35 = 68px) ── */
+.short-fmt .qp-options {
+  display:        flex !important;
+  flex-direction: column !important;
+  gap:            16px !important;
+  padding:        0 18px !important;
+  opacity:        1 !important;
+}
+.short-fmt .qp-option {
+  font-size:     68px !important;   /* 50px × 1.35 */
+  font-weight:   700 !important;
+  padding:       36px 42px !important;
+  border-radius: 22px !important;
+  text-align:    left !important;
+  line-height:   1.2 !important;
+}
+.short-fmt .qp-option-badge {
+  width:        62px !important;    /* ~46px × 1.35 */
+  height:       62px !important;
+  font-size:    32px !important;    /* ~24px × 1.35 */
+  flex-shrink:  0 !important;
+  margin-right: 18px !important;
+}
+
+/* ── FAIL-SAFE STAGGERED OPTION REVEAL ─────────────────────────────────
+   Options are VISIBLE by default. The worker adds .opt-hidden to each at
+   step-3 start, then removes it one-by-one (0.5s apart) with soft sfx. If a
+   reveal event never fires, the option simply stays visible — it can never
+   get permanently stuck hidden. .opt-hidden is the ONLY thing that hides.  ── */
+.short-fmt .qp-option.opt-hidden {
+  opacity:    0 !important;
+  transform:  translateX(-22px) scale(0.97) !important;
+  transition: none !important;
+}
+.short-fmt .qp-option.opt-reveal {
+  animation: shortOptSlide 0.38s cubic-bezier(0.34,1.56,0.64,1) both !important;
+}
+@keyframes shortOptSlide {
+  from { opacity:0; transform: translateX(-26px) scale(0.97); }
+  to   { opacity:1; transform: none; }
+}
+
+/* ── QUESTION entry animation ── */
+.short-fmt .qp-question {
+  animation: shortQSlide 0.45s cubic-bezier(0.34,1.56,0.64,1) both !important;
+}
+@keyframes shortQSlide {
+  from { opacity:0; transform: translateY(26px) scale(0.97); }
+  to   { opacity:1; transform: none; }
+}
+
+/* ── HINT: shown 1s AFTER the countdown starts ── */
 .short-fmt .qp-hint {
   position: static !important;
   left: auto !important;
   right: auto !important;
   bottom: auto !important;
-  margin: 14px 40px 0 !important;
+  margin: 14px 34px 0 !important;
   z-index: auto !important;
   animation: none !important;
   opacity: 1 !important;
   visibility: hidden !important;   /* space reserved, not painted */
+  font-size: 40px !important;      /* ~30px × 1.35 */
+  font-weight: 700 !important;
+  padding: 18px 26px !important;
 }
 .short-fmt .qp-hint.hint-visible {
   visibility: visible !important;
@@ -1084,16 +1152,14 @@ async function buildShortVideo(quiz, workDir) {
   to   { opacity: 1; transform: none; }
 }
 
-/* ── Black marquee bar removed in short format (unreadable at this size) ── */
+/* ── Black marquee bar removed in short format ── */
 .short-fmt .niche-marquee { display: none !important; }
 
-/* ── Q+OPTIONS: appear simultaneously (short format = no stagger) ── */
-.short-fmt .question-phase .qp-question,
-.short-fmt .question-phase .qp-options,
-.short-fmt .question-phase .qp-option:not(.opt-eliminated) {
-  animation: none !important;
-  opacity: 1 !important;
-  transform: translateY(0) !important;
+/* ── CHALLENGE ID: base ~20px × 1.35 ≈ 27px ── */
+.short-fmt .challenge-no {
+  font-size: 27px !important;
+  letter-spacing: 2px !important;
+  font-weight: 900 !important;
 }
 
 /* ── No answer colour reveal in this format ── */
@@ -1105,7 +1171,7 @@ async function buildShortVideo(quiz, workDir) {
 }
 
 /* ── 50/50 ── */
-.short-fmt .qp-option.opt-elim-target { opacity: 1; animation: none !important; }
+.short-fmt .qp-option.opt-elim-target { animation: none !important; }
 .short-fmt .qp-option.opt-eliminated {
   animation: fiftyFade 0.45s ease-out forwards !important;
   pointer-events: none !important;
@@ -1115,44 +1181,48 @@ async function buildShortVideo(quiz, workDir) {
   100% { opacity: 0; transform: scale(0.90); filter: blur(3px); }
 }
 
-/* ── COUNTDOWN TIMER: always show a large, readable ring/digital.
-   The template hides small timers in some themes. We force it visible
-   and large enough to read in 9:16 at YouTube Shorts size.         ── */
+/* ── COUNTDOWN TIMER: BIG ring / digital / hourglass / bar ──────────────
+   All sizes scaled up (~1.5×) for readability at Shorts size.            ── */
 .short-fmt .qp-timer-wrap {
   display: flex !important;
   visibility: visible !important;
   opacity: 1   !important;
-  width:  96px !important;
-  height: 96px !important;
-  min-width:  96px !important;
-  min-height: 96px !important;
-  margin: 6px auto !important;
+  width:  150px !important;
+  height: 150px !important;
+  min-width:  150px !important;
+  min-height: 150px !important;
+  margin: 14px auto !important;
   position: relative !important;
 }
 .short-fmt .qp-timer-ring {
-  width:  96px !important;
-  height: 96px !important;
+  width:  150px !important;
+  height: 150px !important;
+}
+.short-fmt .qp-timer-ring svg,
+.short-fmt .qp-timer-ring circle {
+  width:  150px !important;
+  height: 150px !important;
 }
 .short-fmt .qp-timer-number {
-  font-size: 38px !important;
+  font-size: 56px !important;
   font-weight: 900 !important;
   line-height: 1 !important;
 }
 /* cd-digital: large block countdown number */
 .short-fmt .cd-digital {
-  font-size: 55px !important;
+  font-size: 80px !important;
   font-weight: 900 !important;
   text-align: center !important;
-  line-height: 96px !important;
+  line-height: 150px !important;
   color: #fff !important;
-  text-shadow: 0 0 14px rgba(255,200,0,0.9), 0 2px 6px rgba(0,0,0,0.8) !important;
+  text-shadow: 0 0 20px rgba(255,200,0,0.9), 0 2px 8px rgba(0,0,0,0.8) !important;
 }
 /* cd-hourglass: show emoji + number */
-.short-fmt .cd-hourglass     { font-size: 45px !important; }
-.short-fmt .cd-hourglass-num { font-size: 40px !important; font-weight: 900 !important; }
-/* cd-bar: full-width progress bar below options */
+.short-fmt .cd-hourglass     { font-size: 66px !important; }
+.short-fmt .cd-hourglass-num { font-size: 58px !important; font-weight: 900 !important; }
+/* cd-bar: thicker full-width progress bar */
 .short-fmt .cd-bar-wrap {
-  width: 100% !important; height: 10px !important;
+  width: 100% !important; height: 20px !important;
   background: rgba(255,255,255,0.18) !important;
   border-radius: 99px !important; overflow: hidden !important;
 }
@@ -1164,51 +1234,50 @@ async function buildShortVideo(quiz, workDir) {
 @keyframes cdBarDrain { from { width:100%; } to { width:0%; } }
 
 /* ── CTA SCREEN (comment-cta-screen) layout fix ─────────────────────────
-   Problems in short format:
-   1. .persistent-logo (position:absolute; top:38px) floats over the LIKE pill
-   2. .challenge-no (position:absolute; top:155px) overlaps pills
-   3. .niche-marquee was already hidden (display:none) but still leaves a gap
-   4. .content has justify-content:flex-start which pushes pills to the top
-   Fixes: hide logo+challenge-no, add generous padding-top, centre the pills. */
-
-/* Hide the floating logo and challenge ID on CTA screen in short format */
+   Hide the floating logo + challenge-no, centre the pills, and add extra
+   TOP padding (+150px) so the LIKE pill sits lower / more central.        ── */
 .short-fmt .comment-cta-screen .persistent-logo  { display: none !important; }
 .short-fmt .comment-cta-screen .challenge-no     { display: none !important; }
 
-/* Push content down so it starts below where the logo was */
+.short-fmt .comment-cta-screen {
+  padding-bottom: ${AVATAR_SIZE + 80}px !important;
+  box-sizing: border-box !important;
+}
+/* Push content down: +150px extra top padding per request */
 .short-fmt .comment-cta-screen .content {
   justify-content: center !important;
-  padding-top: 60px !important;
+  padding-top: 210px !important;     /* 60 + 150 extra */
   padding-bottom: ${AVATAR_SIZE + 80}px !important;
-  gap: 28px !important;
+  gap: 26px !important;
 }
 
-/* Give pills more breathing room */
+/* Pills (base 56px × 1.35 ≈ 68px, but cap at 60 to fit width) */
 .short-fmt .comment-cta-screen .cta-pill {
-  padding: 28px 40px !important;
-  font-size: 63px !important;
+  padding: 26px 38px !important;
+  font-size: 60px !important;
   margin: 0 !important;
+  width: 88% !important;
+  text-align: center !important;
 }
-
-/* CTA4 card - main text centred, legible */
 .short-fmt .comment-cta-screen .cta-combined-card {
   padding: 24px 32px !important;
   gap: 16px !important;
   text-align: center !important;
+  width: 88% !important;
 }
 .short-fmt .comment-cta-screen .cta-combined-text {
-  font-size: 55px !important;
+  font-size: 52px !important;
   line-height: 1.25 !important;
   text-align: center !important;
 }
 .short-fmt .comment-cta-screen .cta-combined-icon {
-  font-size: 65px !important;
+  font-size: 60px !important;
 }
 .short-fmt .comment-cta-screen .cta-divider {
   margin: 4px 0 !important;
 }
 .short-fmt .comment-cta-screen .cta-combined-arrow {
-  font-size: 65px !important;
+  font-size: 60px !important;
   margin-top: 4px !important;
 }
 </style>
@@ -1362,10 +1431,22 @@ ${AVATAR_CSS}`;
     pushClip(fbFinal, false);
   }
 
-  // ══ STEP 3 — QUESTION + OPTIONS, DOG SPEAKS THE TTS ════════════════
-  // Options appear together with the question. Dog mouth cycles while TTS
-  // plays. Host circle shows the SILENT clip (same dress_code).
-  console.log('[SHORT] -- Step 3: Q + options + dog TTS');
+  // ══ STEP 3 — QUESTION appears + TTS, then "OPTIONS" label, then options ══
+  //
+  // Timeline (per spec):
+  //   t=0.0s : question-phase shown; question slides in; question TTS starts
+  //            immediately and plays concurrently (we do NOT wait for it).
+  //   t=0.5s : "OPTIONS" label appears below the question.
+  //   t=1.0s : Option A slides in + very soft sfx.
+  //   t=1.5s : Option B slides in + soft sfx.
+  //   t=2.0s : Option C slides in + soft sfx.
+  //   t=2.5s : Option D slides in + soft sfx.
+  //   then   : short gap → "You have only 5 seconds, time starts now!" TTS.
+  //
+  // The question TTS length is independent of the reveal cadence — reveals are
+  // purely time-based every 0.5s. The soft option sfx are mixed into the audio
+  // at the exact reveal timestamps.
+  console.log('[SHORT] -- Step 3: question + TTS, then staggered options + sfx');
 
   await setAvatarMode(page, 'dog_speaking');
   await showScreen(page, '.question-phase');
@@ -1377,35 +1458,136 @@ ${AVATAR_CSS}`;
     ).forEach(el => { el.style.animationPlayState = 'paused'; });
   });
 
-  // Audio: sfx -> question TTS -> gap -> "you have only 6 seconds..."
-  const s3Parts = [];
-  if (sfxFile) {
-    s3Parts.push(sfxFile);
-    const sg = path.join(workDir, 'sh_sfxgap.mp3');
-    await silence(0.12, sg);
-    s3Parts.push(sg);
-  }
+  // Inject the "OPTIONS" label (hidden) just before the options container, and
+  // hide every option with .opt-hidden. FAIL-SAFE: only .opt-hidden hides them.
+  const optSetup = await page.evaluate(() => {
+    const scope = document.querySelector('.screen.active') || document;
+    const optionsBox = scope.querySelector('.qp-options');
+    let labelAdded = false;
+    if (optionsBox && !scope.querySelector('.short-options-label')) {
+      const lbl = document.createElement('div');
+      lbl.className = 'short-options-label lbl-hidden';
+      lbl.textContent = 'OPTIONS';
+      optionsBox.parentNode.insertBefore(lbl, optionsBox);
+      labelAdded = true;
+    }
+    const opts = scope.querySelectorAll('.qp-option');
+    opts.forEach(el => el.classList.add('opt-hidden'));
+    return { labelAdded, optCount: opts.length };
+  });
+  console.log(`[SHORT] Step 3: label=${optSetup.labelAdded}, ${optSetup.optCount} options hidden`);
+
+  // ── Reveal cadence (seconds from clip start) ──
+  const LABEL_AT = 0.5;                       // "OPTIONS" label
+  const OPT_GAP  = 0.5;                        // gap between reveals
+  const OPT0_AT  = LABEL_AT + OPT_GAP;         // 1.0s — Option A
+  const OPT1_AT  = OPT0_AT + OPT_GAP;          // 1.5s
+  const OPT2_AT  = OPT1_AT + OPT_GAP;          // 2.0s
+  const OPT3_AT  = OPT2_AT + OPT_GAP;          // 2.5s
+  const revealEnd = OPT3_AT;                   // 2.5s — last option in
+
+  // ── Audio base: question sfx + question TTS, padded to cover the reveal
+  //    window, then a small gap, then the timer prompt. ──
   const qTts = path.join(workDir, 'sh_q_tts.mp3');
   await tts(question, voice, qTts, 3);
-  s3Parts.push(qTts);
+  const qTtsDur = await audioDur(qTts);
 
-  const microGap = path.join(workDir, 'sh_microgap.mp3');
-  await silence(0.22, microGap);
-  s3Parts.push(microGap);
+  // Question segment = optional sfx + question TTS (starts at t=0).
+  const qSegParts = [];
+  if (sfxFile) {
+    qSegParts.push(sfxFile);
+    const sg = path.join(workDir, 'sh_sfxgap.mp3');
+    await silence(0.10, sg);
+    qSegParts.push(sg);
+  }
+  qSegParts.push(qTts);
+  const qSeg = path.join(workDir, 'sh_q_seg.mp3');
+  await concatAudio(qSegParts, qSeg, workDir);
+  const qSegDur = await audioDur(qSeg);
 
+  // The reveal window must last at least until the last option lands (2.5s)
+  // AND until the question TTS has finished, whichever is longer, + 0.3s.
+  const revealWindow = Math.max(revealEnd, qSegDur) + 0.3;
+
+  // Pad the question segment out to revealWindow with trailing silence so the
+  // timer prompt only starts AFTER all options are on screen.
+  const qPad = path.join(workDir, 'sh_q_pad.mp3');
+  const padSec = Math.max(0.05, revealWindow - qSegDur);
+  await silence(padSec, qPad);
+
+  // Timer prompt
   const timerPrompt = path.join(workDir, 'sh_timerprompt.mp3');
   await tts(
     `You have only ${SHORT_COUNTDOWN} seconds and your time starts now!`,
     voice, timerPrompt, 3
   );
-  s3Parts.push(timerPrompt);
+  const microGap = path.join(workDir, 'sh_microgap.mp3');
+  await silence(0.22, microGap);
 
-  const step3Audio = path.join(workDir, 'sh_step3.mp3');
-  await concatAudio(s3Parts, step3Audio, workDir);
-  const step3Dur = Math.max(await audioDur(step3Audio), 2.0);
-  console.log(`[SHORT] Step 3 audio: ${step3Dur.toFixed(2)}s`);
+  // Base track = [qSeg | pad | microgap | timerPrompt]
+  const step3Base = path.join(workDir, 'sh_step3_base.mp3');
+  await concatAudio([qSeg, qPad, microGap, timerPrompt], step3Base, workDir);
+  const step3Dur = Math.max(await audioDur(step3Base), 3.0);
 
-  const step3Ui = await recordUiWithEvents(page, step3Audio, step3Dur, workDir, 'sh_step3_ui');
+  // Mix SOFT option sfx into the base at each reveal timestamp (volume 0.25).
+  let step3Audio = step3Base;
+  if (sfxFile) {
+    const o0 = Math.round(OPT0_AT * 1000);
+    const o1 = Math.round(OPT1_AT * 1000);
+    const o2 = Math.round(OPT2_AT * 1000);
+    const o3 = Math.round(OPT3_AT * 1000);
+    const mixed = path.join(workDir, 'sh_step3_sfxmix.mp3');
+    await ffmpeg(
+      `-y -i "${step3Base}" ` +
+      `-i "${sfxFile}" -i "${sfxFile}" -i "${sfxFile}" -i "${sfxFile}" ` +
+      `-filter_complex ` +
+      `"[1:a]volume=0.25,adelay=${o0}|${o0}[s0];` +
+       `[2:a]volume=0.25,adelay=${o1}|${o1}[s1];` +
+       `[3:a]volume=0.25,adelay=${o2}|${o2}[s2];` +
+       `[4:a]volume=0.25,adelay=${o3}|${o3}[s3];` +
+       `[0:a][s0][s1][s2][s3]amix=inputs=5:duration=first:normalize=0[a]" ` +
+      `-map "[a]" -ar 44100 -ac 1 -acodec libmp3lame -t ${step3Dur} "${mixed}"`,
+      'sh_step3_sfxmix'
+    );
+    step3Audio = mixed;
+  }
+  console.log(`[SHORT] Step 3 audio: ${step3Dur.toFixed(2)}s (qTTS=${qTtsDur.toFixed(2)}s, reveals end@${revealEnd}s)`);
+
+  // Timed reveal events fired MID-RECORDING (captured as real motion)
+  const revealEvents = [
+    { at: LABEL_AT, fn: async (pg) => {
+        await pg.evaluate(() => {
+          const l = document.querySelector('.screen.active .short-options-label');
+          if (l) { l.classList.remove('lbl-hidden'); l.classList.add('lbl-show'); }
+        });
+        console.log(`[SHORT] "OPTIONS" label shown at t=${LABEL_AT}s`);
+      } },
+    ...[OPT0_AT, OPT1_AT, OPT2_AT, OPT3_AT].map((at, i) => ({
+      at,
+      fn: async (pg) => {
+        await pg.evaluate((idx) => {
+          const opts = document.querySelectorAll('.screen.active .qp-option');
+          if (opts[idx]) { opts[idx].classList.remove('opt-hidden'); opts[idx].classList.add('opt-reveal'); }
+        }, i);
+        console.log(`[SHORT] Option ${i} revealed at t=${at}s`);
+      }
+    })),
+    // SAFETY NET: 0.3s before end, reveal anything still hidden + label
+    { at: Math.max(0.1, step3Dur - 0.3), fn: async (pg) => {
+        const n = await pg.evaluate(() => {
+          const l = document.querySelector('.screen.active .short-options-label.lbl-hidden');
+          if (l) { l.classList.remove('lbl-hidden'); l.classList.add('lbl-show'); }
+          const hid = document.querySelectorAll('.screen.active .qp-option.opt-hidden');
+          hid.forEach(el => { el.classList.remove('opt-hidden'); el.classList.add('opt-reveal'); });
+          return hid.length;
+        });
+        if (n > 0) console.log(`[SHORT] Safety net revealed ${n} option(s)`);
+      } },
+    // Dog goes silent shortly after the question TTS finishes
+    { at: Math.min(qSegDur + 0.1, step3Dur - 0.1), fn: async (pg) => { await setAvatarMode(pg, 'both_silent'); } },
+  ];
+
+  const step3Ui = await recordUiWithEvents(page, step3Audio, step3Dur, workDir, 'sh_step3_ui', revealEvents);
 
   // Composite host then dog onto the UI recording (two FFmpeg passes)
   let step3Final = step3Ui;
@@ -1424,7 +1606,7 @@ ${AVATAR_CSS}`;
   }
   pushClip(step3Final, true);
 
-  // ══ STEP 4 — COUNTDOWN (6s), 50/50 FIRES AT t=3s ═══════════════════
+  // ══ STEP 4 — COUNTDOWN (5s), 50/50 FIRES AT t=2.5s ═════════════════
   // Dog stops talking (tail keeps wagging). Host stays on the silent clip.
   console.log(`[SHORT] -- Step 4: countdown ${SHORT_COUNTDOWN}s, 50/50 at ${SHORT_FIFTY_AT}s`);
 
