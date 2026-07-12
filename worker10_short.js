@@ -1112,14 +1112,36 @@ async function buildShortVideo(quiz, workDir) {
   box-sizing: border-box !important;
 }
 
-/* ── QUESTION TEXT: 65px ── */
-.short-fmt .qp-question {
-  font-size:   65px !important;
+/* ── QUESTION TEXT: 60px on ALL screens ─────────────────────────────────
+   The template CSS has TWO conflicting !important rules:
+     .question-appear-slide .qp-question { font-size: 62px !important }  (0,2,0)
+     .question-phase .qp-question        { font-size: 48px !important }  (0,2,0)
+   Both are !important at the same specificity, so whichever is loaded last
+   (design_engine.css, theme, etc.) wins — producing different sizes on the
+   first appearance vs the countdown. Fix: target every screen with a HIGHER
+   specificity selector (0,3,0) so our 60px wins everywhere, unconditionally.
+   Covers all screens that contain a .qp-question in the template.          ── */
+.short-fmt .question-appear-slide .qp-question,
+.short-fmt .question-static .qp-question,
+.short-fmt .options-waiting-slide .qp-question,
+.short-fmt .question-phase .qp-question,
+.short-fmt .pre-reveal-slide .qp-question,
+.short-fmt .answer-slide .qp-question,
+.short-fmt .explanation-slide .qp-question,
+.short-fmt .mission-intro-slide .qp-question,
+.short-fmt .mission-final-slide .qp-question {
+  font-size:   60px !important;
   font-weight: 800 !important;
   line-height: 1.25 !important;
   text-align:  center !important;
   padding:     0 24px !important;
   margin:      0 0 18px 0 !important;
+}
+/* Generic fallback for any other screen that might contain .qp-question */
+.short-fmt .qp-question {
+  font-size:   60px !important;
+  font-weight: 800 !important;
+  line-height: 1.25 !important;
 }
 
 /* ── "OPTIONS" LABEL — appears below the question, before option A ──────
@@ -1187,8 +1209,8 @@ async function buildShortVideo(quiz, workDir) {
   to   { opacity:1; transform: none; }
 }
 
-/* ── QUESTION entry animation ── */
-.short-fmt .qp-question {
+/* ── QUESTION entry animation (applies to question-phase screen) ── */
+.short-fmt .question-phase .qp-question {
   animation: shortQSlide 0.45s cubic-bezier(0.34,1.56,0.64,1) both !important;
 }
 @keyframes shortQSlide {
