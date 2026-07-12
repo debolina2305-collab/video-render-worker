@@ -321,17 +321,14 @@ async function concatAudio(parts, outPath, workDir) {
   console.log(`[CAT] concatenated ${normalised.length} parts -> ${finalDur.toFixed(2)}s`);
 }
 
-async function tts(text, voice, outPath, retries = 3, rate = '+8%') {
+async function tts(text, voice, outPath, retries = 3, rate = null) {
   if (!text?.trim()) { await silence(0.5, outPath); return; }
   const safe = text.replace(/"/g, "'").replace(/[^\x00-\x7F]/g, ' ').slice(0, 500);
-  // rate='+8%' → edge-tts speaks ~1.1× faster (previous +20% was too fast).
-  // Caller can override with rate=null for normal speed.
+  // Normal speed/volume by default (rate=null). Caller can pass rate='+10%' etc.
   const rateArg = rate ? ` --rate="${rate}"` : '';
-  // volume='+10%' → louder output so it cuts through background music clearly.
-  const volArg  = ' --volume="+10%"';
   for (let i = 0; i < retries; i++) {
     try {
-      await execPromise(`edge-tts --voice "${voice}"${rateArg}${volArg} --text "${safe}" --write-media "${outPath}"`);
+      await execPromise(`edge-tts --voice "${voice}"${rateArg} --text "${safe}" --write-media "${outPath}"`);
       if (await fileExists(outPath)) return;
     } catch (e) {
       console.warn(`[TTS] attempt ${i+1}: ${e.message.slice(0,80)}`);
@@ -393,13 +390,37 @@ async function videoToDataUri(localPath) {
 }
 
 // ─── THEME ────────────────────────────────────────────────────────────
+// Mirrors worker10 (long) resolveTheme so both formats look identical:
+//  - loads _base.css + the row's visual_theme_id css (fallback to default)
+//  - substitutes {{accent_primary/secondary/tertiary}} placeholders
+//  - applies quiz_background_css ONLY for the default particle_field theme
+//    (other themes define their own complete background)
 async function resolveTheme(quiz) {
-  const id   = (quiz.visual_theme_id || DEFAULT_THEME).toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  const themeId = (quiz.visual_theme_id || DEFAULT_THEME).toLowerCase().replace(/[^a-z0-9_]/g, '_');
   const base = await fs.readFile(path.join(THEMES_DIR, '_base.css'), 'utf8').catch(() => '');
-  const th   = await fs.readFile(path.join(THEMES_DIR, `${id}.css`), 'utf8')
-                 .catch(() => fs.readFile(path.join(THEMES_DIR, `${DEFAULT_THEME}.css`), 'utf8').catch(() => ''));
+  let th = await fs.readFile(path.join(THEMES_DIR, `${themeId}.css`), 'utf8').catch(() => null);
+  if (th == null) {
+    console.warn(`[THEME] '${themeId}' not found — using ${DEFAULT_THEME}`);
+    th = await fs.readFile(path.join(THEMES_DIR, `${DEFAULT_THEME}.css`), 'utf8').catch(() => '');
+  }
+  let css = `${base}\n${th}`;
+  // Accent substitution — themes use {{accent_primary}} etc. placeholders.
+  const a1 = quiz.theme_accent_primary   || '#00e0ff';
+  const a2 = quiz.theme_accent_secondary || '#7b2ff7';
+  const a3 = quiz.theme_accent_tertiary  || '#ff2ec4';
+  css = css.split('{{accent_primary}}').join(a1)
+           .split('{{accent_secondary}}').join(a2)
+           .split('{{accent_tertiary}}').join(a3);
+  // Per-quiz dynamic background — default theme only (matches long worker).
+  const usedThemeId = th ? themeId : DEFAULT_THEME;
+  if (quiz.quiz_background_css?.trim() && usedThemeId === DEFAULT_THEME) {
+    console.log('[SHORT-THEME] Applying quiz_background_css (particle_field only)');
+    css += '\n/* === QUIZ-SPECIFIC BACKGROUND === */\n' + quiz.quiz_background_css;
+  } else if (quiz.quiz_background_css?.trim()) {
+    console.log(`[SHORT-THEME] Skipping quiz_background_css — theme=${usedThemeId} owns its background`);
+  }
   const decoHtml = th.match(/\/\*\s*DECO_HTML\s*([\s\S]*?)\*\//)?.[1]?.trim() || '';
-  return { themeCss: `${base}\n${th}`, decoHtml };
+  return { themeCss: css, decoHtml };
 }
 
 // ─── AVATAR STRIP HTML + CSS ──────────────────────────────────────────
@@ -1046,24 +1067,20 @@ async function buildShortVideo(quiz, workDir) {
   font-weight: 900 !important;
 }
 
-/* ── LAYOUT: reserve header space on every question screen ──────────────
-   Without .niche-marquee the header spacer is gone. We pad every quiz
-   screen explicitly so content starts below logo (38px+100px) + challenge-no
-   (155px+30px) + breathing room. 260px covers all header elements at 1.5×.
-   Bottom padding = avatar strip height + gap. Content is vertically centred
-   in the remaining space (flex column, justify-content:center).            ── */
-.short-fmt .question-phase,
-.short-fmt .pre-reveal-slide,
-.short-fmt .question-appear-slide,
-.short-fmt .options-waiting-slide,
-.short-fmt .question-static {
-  padding-top:        260px !important;
-  padding-bottom:     ${AVATAR_SIZE + 80}px !important;
-  box-sizing:         border-box !important;
-  display:            flex !important;
-  flex-direction:     column !important;
-  justify-content:    center !important;
-  align-items:        stretch !important;
+/* ── LAYOUT: reserve header space + vertically centre the question block ──
+   The base .screen is already display:flex/column. We ONLY adjust padding and
+   the .content child's vertical centering. We do NOT re-declare display/flex on
+   .screen itself — doing so previously risked collapsing the background layers.
+   Header space: logo (38+100) + challenge-no (155+30) + breathing room.      ── */
+.short-fmt .question-phase .content,
+.short-fmt .pre-reveal-slide .content,
+.short-fmt .question-appear-slide .content,
+.short-fmt .options-waiting-slide .content,
+.short-fmt .question-static .content {
+  justify-content: center !important;
+  padding-top:     260px !important;
+  padding-bottom:  ${AVATAR_SIZE + 80}px !important;
+  box-sizing:      border-box !important;
 }
 
 /* ── QUESTION TEXT: 1.5× base × 0.8 = 1.2× net ─────────────────── */
@@ -1094,18 +1111,10 @@ async function buildShortVideo(quiz, workDir) {
   flex-direction: column !important;
   gap:            14px !important;
   padding:        0 16px !important;
+  opacity:        1 !important;   /* container always visible */
 }
 
-/* ── OPTION BASE STATE: hidden until .opt-show added by JS ─────────────
-   IMPORTANT: only ONE .short-fmt .qp-option rule — do not split into two
-   blocks or the later opacity:0 !important will override the opt-show rule
-   (both have !important; last declaration wins in cascade).
-   Solution: encode both states in a single rule using :not(.opt-show).   ── */
-.short-fmt .qp-option:not(.opt-show):not(.opt-eliminated) {
-  opacity:   0 !important;
-  transform: translateX(-24px) scale(0.97) !important;
-  transition: none !important;
-}
+/* ── OPTION SIZING (always applied) ── */
 .short-fmt .qp-option {
   font-size:     60px !important;   /* 50px × 1.2 */
   font-weight:   700 !important;
@@ -1121,8 +1130,20 @@ async function buildShortVideo(quiz, workDir) {
   flex-shrink: 0 !important;
   margin-right: 16px !important;
 }
-/* opt-show: slide in from left */
-.short-fmt .qp-option.opt-show {
+
+/* ── FAIL-SAFE STAGGERED REVEAL ────────────────────────────────────────
+   Options are VISIBLE by default (opacity:1). To stagger them in, the worker
+   adds .opt-hidden to each option at step-3 start, then removes it one-by-one
+   with a 0.5s gap + sfx. If the JS reveal events ever fail to fire, the
+   options simply remain visible — they can never get permanently stuck
+   hidden (the previous bug). .opt-hidden is the ONLY thing that hides them. ── */
+.short-fmt .qp-option.opt-hidden {
+  opacity:    0 !important;
+  transform:  translateX(-24px) scale(0.97) !important;
+  transition: none !important;
+}
+/* When .opt-hidden is removed, the option slides in */
+.short-fmt .qp-option.opt-reveal {
   animation: shortOptSlide 0.38s cubic-bezier(0.34,1.56,0.64,1) both !important;
 }
 @keyframes shortOptSlide {
@@ -1432,10 +1453,10 @@ ${AVATAR_CSS}`;
   //  t=0s   : question-phase screen shown; question text slides in (CSS anim)
   //           sfx plays + question TTS plays (dog mouth cycles)
   //  t=Q_DUR: 0.5s silence gap
-  //  t=Q_DUR+0.5s : Option A shown (.opt-show) + sfx (low volume)
-  //  t+0.5s : Option B shown + sfx
-  //  t+0.5s : Option C shown + sfx
-  //  t+0.5s : Option D shown + sfx
+  //  t=Q_DUR+0.5s : Option A revealed (remove .opt-hidden) + sfx (low volume)
+  //  t+0.5s : Option B revealed + sfx
+  //  t+0.5s : Option C revealed + sfx
+  //  t+0.5s : Option D revealed + sfx
   //  0.22s gap
   //  "You have only N seconds — time starts now!" TTS
   //
@@ -1454,10 +1475,15 @@ ${AVATAR_CSS}`;
     ).forEach(el => { el.style.animationPlayState = 'paused'; });
   });
 
-  // Keep all options hidden initially (CSS sets opacity:0 on .qp-option)
-  // The sfx for EACH option is played by mixing it into the audio stream at
-  // the right offset. We pre-compute timing from the TTS duration so the
-  // visual and audio events are in sync.
+  // Hide options initially by adding .opt-hidden. They will be revealed one by
+  // one during recording. FAIL-SAFE: if the reveal events don't fire, the
+  // options stay visible (only .opt-hidden hides them, and we remove it below).
+  const optsHiddenCount = await page.evaluate(() => {
+    const opts = document.querySelectorAll('.screen.active .qp-option');
+    opts.forEach(el => el.classList.add('opt-hidden'));
+    return opts.length;
+  });
+  console.log(`[SHORT] Step 3: ${optsHiddenCount} options hidden, will reveal one-by-one`);
 
   // -- Audio: sfx + question TTS --
   const s3QParts = [];
@@ -1542,20 +1568,35 @@ ${AVATAR_CSS}`;
   console.log(`[SHORT] Step 3 audio: ${step3Dur.toFixed(2)}s (Q=${qPartDur.toFixed(2)}s, opts@${(qPartDur+PRE_OPT).toFixed(2)}s+)`);
 
   // JS events fired MID-RECORDING to reveal each option (CSS slide-in animation
-  // captured by PuppeteerScreenRecorder as real motion frames)
+  // captured by PuppeteerScreenRecorder as real motion frames).
+  // Reveal = remove .opt-hidden + add .opt-reveal (triggers slide-in).
   const optShowEvents = [0, 1, 2, 3].map(i => ({
     at: qPartDur + PRE_OPT + OPT_GAP * i,
     fn: async (pg) => {
       await pg.evaluate((idx) => {
-        // Find the i-th .qp-option and add .opt-show to trigger CSS slide-in
         const opts = document.querySelectorAll('.screen.active .qp-option');
         if (opts[idx]) {
-          opts[idx].classList.add('opt-show');
+          opts[idx].classList.remove('opt-hidden');
+          opts[idx].classList.add('opt-reveal');
         }
       }, i);
-      console.log(`[SHORT] Option ${i} shown at t=${(qPartDur + PRE_OPT + OPT_GAP * i).toFixed(2)}s`);
+      console.log(`[SHORT] Option ${i} revealed at t=${(qPartDur + PRE_OPT + OPT_GAP * i).toFixed(2)}s`);
     }
   }));
+
+  // SAFETY NET: 0.3s before the clip ends, force-reveal ANY option still hidden
+  // (guards against a reveal event that didn't fire because the clip was short).
+  const optSafetyEvent = {
+    at: Math.max(0.1, step3Dur - 0.3),
+    fn: async (pg) => {
+      const n = await pg.evaluate(() => {
+        const hidden = document.querySelectorAll('.screen.active .qp-option.opt-hidden');
+        hidden.forEach(el => { el.classList.remove('opt-hidden'); el.classList.add('opt-reveal'); });
+        return hidden.length;
+      });
+      if (n > 0) console.log(`[SHORT] Safety net revealed ${n} still-hidden option(s)`);
+    }
+  };
 
   // Dog: speaking during Q TTS, silent during option reveal phase
   const dogSilentEvent = {
@@ -1565,7 +1606,7 @@ ${AVATAR_CSS}`;
 
   const step3Ui = await recordUiWithEvents(
     page, step3Audio, step3Dur, workDir, 'sh_step3_ui',
-    [dogSilentEvent, ...optShowEvents]
+    [dogSilentEvent, ...optShowEvents, optSafetyEvent]
   );
 
   // Composite host then dog onto the UI recording (two FFmpeg passes)
@@ -1753,50 +1794,75 @@ ${AVATAR_CSS}`;
     console.log(`[SHORT] Step 5+6: CTA selector = "${ctaSel}"`);
   }
 
-  // The CTA screen staggers LIKE / SHARE / SUBSCRIBE / CTA4 / arrow with
-  // animation-delay up to 2.8s. It only becomes visible at `splitAt`, so on a
-  // short clip the later pills would never appear (you'd see only "LIKE").
-  // On switch we compress every delay to fit the remaining time.
+  // The CTA screen staggers LIKE / SHARE / SUBSCRIBE / divider / CTA4 / arrow.
+  // Original template delays (0.1/0.8/1.5/2.1/2.3/2.8s) are too long for a short
+  // clip — CTA4 (2.3s) and the arrow (2.8s) would never appear. On switch we
+  // assign SHORT FIXED delays that always fit, and a safety net at the end
+  // forces every element fully visible no matter what.
   const ctaRemaining = Math.max(0.6, step56Dur - splitAt);
 
   const step56Ui = await recordUiWithEvents(
     page, step56Audio, step56Dur, workDir, 'sh_step56_ui',
-    ctaSel ? [{
-      at: splitAt,
-      fn: async (pg) => {
-        const info = await pg.evaluate((sel, remaining) => {
-          document.querySelectorAll('.screen').forEach(e => e.classList.remove('active'));
-          const screen = document.querySelector(sel);
-          if (!screen) return { switched: false, scaled: 0 };
-          screen.classList.add('active');
+    ctaSel ? [
+      {
+        at: splitAt,
+        fn: async (pg) => {
+          const info = await pg.evaluate((sel, remaining) => {
+            document.querySelectorAll('.screen').forEach(e => e.classList.remove('active'));
+            const screen = document.querySelector(sel);
+            if (!screen) return { switched: false, scaled: 0 };
+            screen.classList.add('active');
 
-          // Longest original delay in the template is 2.8s (the arrow).
-          const LAST_DELAY = 2.8;
-          // Leave ~35% of the window after the final element lands.
-          const target = remaining * 0.65;
-          const scale  = Math.min(1, Math.max(0.08, target / LAST_DELAY));
+            // Assign SHORT fixed delays scaled to the available window so all
+            // six elements (like/share/sub/divider/cta4/arrow) land in time.
+            // Spread them across ~70% of the remaining window.
+            const order = [
+              '.cta-pill-like', '.cta-pill-share', '.cta-pill-sub',
+              '.cta-divider', '.cta-combined-card', '.cta-combined-arrow'
+            ];
+            const span = Math.max(0.4, remaining * 0.7);
+            const step = span / order.length;   // gap between each element
+            let scaled = 0;
+            order.forEach((cls, idx) => {
+              const el = screen.querySelector(cls);
+              if (!el) return;
+              el.style.animation = 'none';
+              void el.offsetHeight;               // force reflow
+              el.style.animation = '';
+              el.style.animationDelay    = (idx * step).toFixed(3) + 's';
+              el.style.animationFillMode = 'both';
+              scaled++;
+            });
+            return { switched: true, scaled, step: +step.toFixed(3) };
+          }, ctaSel, ctaRemaining);
 
-          const els = screen.querySelectorAll(
-            '.cta-pill, .cta-divider, .cta-combined-card, .cta-combined-arrow'
-          );
-          els.forEach(el => {
-            const cur = parseFloat(el.style.animationDelay) || 0;
-            // Restart the animation before re-timing it. Mutating
-            // animation-delay on an already-running animation does not
-            // retroactively reschedule it.
-            el.style.animation = 'none';
-            void el.offsetHeight;            // force reflow
-            el.style.animation = '';
-            el.style.animationDelay    = (cur * scale).toFixed(3) + 's';
-            el.style.animationFillMode = 'both';
-          });
-          return { switched: true, scaled: els.length, scale: +scale.toFixed(3) };
-        }, ctaSel, ctaRemaining);
-
-        console.log(`[SHORT] CTA slide shown; ${info.scaled} elements re-timed ` +
-                    `(scale=${info.scale}, window=${ctaRemaining.toFixed(2)}s)`);
+          console.log(`[SHORT] CTA slide shown; ${info.scaled} elements re-timed ` +
+                      `(step=${info.step}s, window=${ctaRemaining.toFixed(2)}s)`);
+        }
+      },
+      {
+        // SAFETY NET: 0.25s before clip ends, force EVERY CTA element fully
+        // visible (opacity:1, no transform) so nothing can be stuck hidden.
+        at: Math.max(splitAt + 0.1, step56Dur - 0.25),
+        fn: async (pg) => {
+          const n = await pg.evaluate((sel) => {
+            const screen = document.querySelector(sel);
+            if (!screen) return 0;
+            const els = screen.querySelectorAll(
+              '.cta-pill, .cta-divider, .cta-combined-card, .cta-combined-arrow, ' +
+              '.cta-combined-icon, .cta-combined-text'
+            );
+            els.forEach(el => {
+              el.style.animation = 'none';
+              el.style.opacity   = '1';
+              el.style.transform = 'none';
+            });
+            return els.length;
+          }, ctaSel);
+          console.log(`[SHORT] CTA safety net: forced ${n} element(s) visible`);
+        }
       }
-    }] : []
+    ] : []
   );
 
   let step56Final = step56Ui;
