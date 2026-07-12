@@ -946,12 +946,12 @@ async function buildImageCard(quiz, mode, bgImageDataUri, logoDataUri, workDir, 
 async function processJobs() {
   console.log('[WORKER] Checking...');
 
-  // ── Reset stuck rows (processing for >30 min) ─────────────────────────
+  // ── Reset stuck LONG rows (rendering for >30 min) ─────────────────────
   const stuckCutoff = new Date(Date.now()-30*60*1000).toISOString();
-  const stuckRows = await fetchSupabase(`quiz?video_status=eq.processing&is_active=eq.true&updated_at=lt.${stuckCutoff}&select=id&limit=5`).catch(()=>null);
+  const stuckRows = await fetchSupabase(`quiz?long_status=eq.rendering_long&assigned_format=eq.long&is_active=eq.true&updated_at=lt.${stuckCutoff}&select=id&limit=5`).catch(()=>null);
   if (stuckRows?.length) {
-    console.log(`[WORKER] Resetting ${stuckRows.length} stuck rows`);
-    for (const r of stuckRows) await fetchSupabase(`quiz?id=eq.${r.id}`,{method:'PATCH',body:JSON.stringify({video_status:'pending',updated_at:new Date().toISOString()})}).catch(()=>{});
+    console.log(`[WORKER] Resetting ${stuckRows.length} stuck long rows`);
+    for (const r of stuckRows) await fetchSupabase(`quiz?id=eq.${r.id}`,{method:'PATCH',body:JSON.stringify({video_status:'pending',long_status:'pending_long',updated_at:new Date().toISOString()})}).catch(()=>{});
   }
 
   // ── TOPIC-FIRST SELECTION (3-rule logic) ──────────────────────────────
@@ -986,39 +986,33 @@ async function processJobs() {
   //             recoverable (video_status='skipped' → re-queued next run
   //             only if no fresh topics exist).
 
-  // Fetch pending rows — newest first so we naturally find the freshest topic.
-  // Dual query: rows assigned to long format use long_status=pending_long;
-  // legacy rows (pre-migration, assigned_format null) fall back to video_status=pending.
-  // OR filter covers both so worker10 handles whichever it finds.
-  // CRITICAL: exclude rows explicitly assigned to short or medium format —
-  // those belong to worker10_short / worker10_medium only. Without this exclusion
-  // a short-assigned row whose video_status='pending' would be picked up by both
-  // the short worker (via short_status=pending_short) AND by the long worker's
-  // legacy fallback (assigned_format is not null so the IS NULL check should
-  // exclude it — but a race where the short worker hasn't claimed it yet means
-  // the long worker can grab it first). Belt-and-suspenders: filter it out here.
+  // STRICT FORMAT GATING (per requirement):
+  //   worker10 (this = LONG) renders ONLY rows where assigned_format='long'.
+  //   Those rows have long_status='pending_long' (set by worker8). We do NOT
+  //   fall back to video_status=pending anymore — that legacy fallback is what
+  //   let the long worker grab short/medium rows and produce duplicate videos.
+  //   The short worker polls short_status; the (future) medium worker polls
+  //   medium_status; each format is fully isolated by its own status column.
   const pendingRows = await fetchSupabase(
-    'quiz?or=(long_status.eq.pending_long,and(assigned_format.is.null,video_status.eq.pending))' +
-    '&assigned_format.neq.short&assigned_format.neq.medium' +
+    'quiz?long_status=eq.pending_long' +
+    '&assigned_format=eq.long' +
     '&is_active=eq.true&quiz_enriched=eq.true' +
     '&select=id,topic,topic_slug,created_at,assigned_format,long_status&order=created_at.desc&limit=500'
   );
   if (!pendingRows?.length) {
-    // No fresh pending — check if any skipped rows can be revived
+    // No fresh long rows — check if any skipped LONG rows can be revived
     const skippedRows = await fetchSupabase(
-      'quiz?video_status=eq.skipped&is_active=eq.true&quiz_enriched=eq.true' +
+      'quiz?long_status=eq.skipped_long&assigned_format=eq.long&is_active=eq.true&quiz_enriched=eq.true' +
       '&select=id,topic,topic_slug,created_at&order=created_at.desc&limit=100'
     ).catch(()=>null);
     if (skippedRows?.length) {
-      // Revive the most recently skipped row — it's the next in line
       const revive = skippedRows[0];
-      console.log(`[WORKER] No fresh topics — reviving skipped row: "${revive.topic}" (${revive.id})`);
-      await fetchSupabase(`quiz?id=eq.${revive.id}`,{method:'PATCH',body:JSON.stringify({video_status:'pending',updated_at:new Date().toISOString()})});
-      // Re-query so normal flow continues below
+      console.log(`[WORKER] No fresh long topics — reviving skipped long row: "${revive.topic}" (${revive.id})`);
+      await fetchSupabase(`quiz?id=eq.${revive.id}`,{method:'PATCH',body:JSON.stringify({long_status:'pending_long',updated_at:new Date().toISOString()})});
       const revivedRows = await fetchSupabase(`quiz?id=eq.${revive.id}&select=id,topic,topic_slug,created_at`);
       if (revivedRows?.length) pendingRows.push(revivedRows[0]);
     }
-    if (!pendingRows?.length) { console.log('[WORKER] No pending quizzes.'); return; }
+    if (!pendingRows?.length) { console.log('[WORKER] No pending long quizzes.'); return; }
   }
 
   // Group by raw topic string (NOT topic_slug — slugs differ per question)
@@ -1031,12 +1025,12 @@ async function processJobs() {
   }
   console.log(`[WORKER] ${topicMap.size} distinct topics with pending rows (${pendingRows.length} total pending rows)`);
 
-  // For each topic, count how many rows already have a rendered video
+  // For each topic, count how many LONG rows already have a rendered video
   const renderCounts = {};
   for (const [topicKey, rows] of topicMap) {
     const sample = rows[0]; // use first row's topic string for the query
     const rendered = await fetchSupabase(
-      `quiz?topic=eq.${encodeURIComponent(sample.topic)}&video_status=eq.rendered&select=id&limit=50`
+      `quiz?topic=eq.${encodeURIComponent(sample.topic)}&assigned_format=eq.long&long_status=eq.done_long&select=id&limit=50`
     ).catch(()=>null);
     renderCounts[topicKey] = rendered?.length || 0;
   }
@@ -1059,16 +1053,16 @@ async function processJobs() {
   console.log(`[WORKER] Selected topic: "${chosenRow.topic}" (${renderedSoFar} already rendered, ${chosenRows.length} pending rows for this topic)`);
   console.log(`[WORKER] Rendering: ${chosenRow.id} (slug=${chosenRow.topic_slug})`);
 
-  // RULE 2 + 3: Mark all OTHER pending rows for this same topic as 'skipped'
+  // RULE 2 + 3: Mark all OTHER pending rows for this same topic as skipped_long
   // so they don't get picked up in this run or the next fresh-topics run.
-  // They'll be revived (status → pending) only when no fresh topics remain.
+  // They'll be revived (long_status → pending_long) only when no fresh topics remain.
   const otherRows = chosenRows.slice(1); // everything except the chosen row
   if (otherRows.length > 0) {
-    console.log(`[WORKER] Skipping ${otherRows.length} other pending row(s) for same topic (will revive when no fresh topics remain)`);
+    console.log(`[WORKER] Skipping ${otherRows.length} other pending long row(s) for same topic (will revive when no fresh topics remain)`);
     for (const r of otherRows) {
       await fetchSupabase(`quiz?id=eq.${r.id}`,{
         method:'PATCH',
-        body:JSON.stringify({video_status:'skipped', updated_at:new Date().toISOString()})
+        body:JSON.stringify({long_status:'skipped_long', updated_at:new Date().toISOString()})
       }).catch(()=>{});
     }
   }
@@ -1079,8 +1073,7 @@ async function processJobs() {
   const quiz = rows[0];
   console.log(`[WORKER] Processing: ${quiz.id} — ${quiz.topic}`);
   // Claim: set both video_status (legacy compat) and long_status (new system)
-  const claimPatch = { video_status: 'processing', updated_at: new Date().toISOString() };
-  if (quiz.long_status === 'pending_long') claimPatch.long_status = 'rendering_long';
+  const claimPatch = { video_status: 'processing', long_status: 'rendering_long', updated_at: new Date().toISOString() };
   await fetchSupabase(`quiz?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(claimPatch)});
 
   const workDir = `/tmp/video_${uuidv4()}`;
@@ -1121,8 +1114,7 @@ async function processJobs() {
 
     const patchBody = {
       video_status:'rendered',
-      // Also mark long_status done if this row was assigned via round-robin
-      ...(quiz.long_status === 'rendering_long' ? { long_status: 'done_long' } : {}),
+      long_status: 'done_long',   // this worker only ever renders long rows now
       render_duration_sec:Math.round(dur),
       file_size_mb:sizeMb,
       updated_at:new Date().toISOString()
@@ -1138,7 +1130,7 @@ async function processJobs() {
   } catch (err) {
     console.error('[WORKER] FAILED:', err.message);
     await fetchSupabase(`quiz?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify({
-      video_status:'error', generation_error:String(err.message||err).slice(0,800), updated_at:new Date().toISOString()
+      video_status:'error', long_status:'error_long', generation_error:String(err.message||err).slice(0,800), updated_at:new Date().toISOString()
     })});
     await fs.rm(workDir,{recursive:true,force:true}).catch(()=>{});
     throw err;
