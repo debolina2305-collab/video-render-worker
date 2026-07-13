@@ -1,0 +1,37 @@
+name: Puzzle Seeder — Queue new puzzle jobs
+
+on:
+  # Seed every 3 hours so puzzles generate at a steady pace independent of trends
+  schedule:
+    - cron: '17 */3 * * *'   # 17 past each 3rd hour UTC — offset from trending cron
+
+  # Manual trigger: ?type=matchstick or ?count=3
+  workflow_dispatch:
+    inputs:
+      puzzle_type:
+        description: 'Force a specific puzzle type (e.g. matchstick, detective). Leave blank for auto.'
+        required: false
+        default: ''
+      count:
+        description: 'Number of puzzles to seed (1-5)'
+        required: false
+        default: '2'
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Ping puzzle seeder
+        env:
+          PUZZLE_SEEDER_URL: ${{ secrets.PUZZLE_SEEDER_URL }}  # https://puzzle-seeder.your-account.workers.dev
+        run: |
+          COUNT="${{ github.event.inputs.count || '2' }}"
+          TYPE="${{ github.event.inputs.puzzle_type || '' }}"
+          QUERY="?count=${COUNT}"
+          if [ -n "$TYPE" ]; then QUERY="${QUERY}&type=${TYPE}"; fi
+          echo "Seeding with: POST ${PUZZLE_SEEDER_URL}/seed${QUERY}"
+          curl -sf -X POST "${PUZZLE_SEEDER_URL}/seed${QUERY}" \
+            -H "Content-Type: application/json" \
+            || echo "[SEED] Seeder ping failed — check PUZZLE_SEEDER_URL secret"
