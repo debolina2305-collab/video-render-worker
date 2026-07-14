@@ -417,36 +417,13 @@ async function resolveTheme(quiz) {
   css = css.split('{{accent_primary}}').join(a1)
            .split('{{accent_secondary}}').join(a2)
            .split('{{accent_tertiary}}').join(a3);
-  // PUZZLE OVERRIDE: always force pure black background + white text,
-  // regardless of theme. The puzzle SVG is the star — no coloured theme
-  // background should compete with it.
-  css += `
-/* ══ PUZZLE BLACK BACKGROUND OVERRIDE (highest priority) ══ */
-body, .screen, .bg-anim, .question-appear-slide, .options-waiting-slide,
-.question-static, .question-phase, .pre-reveal-slide, .answer-slide,
-.explanation-slide, .comment-cta-screen, .hook-slide, .waiting-slide,
-.cta1-slide, .cta2-slide, .mi-cta3, .mission-intro-slide, .mission-final-slide {
-  background: #000000 !important;
-  background-image: none !important;
-}
-.bg-anim { animation: none !important; }
-.bg-anim::before, .bg-anim::after, .bg-grid, .bg-orb { display: none !important; }
-.theme-deco { display: none !important; }
-.qp-question, .niche-marquee, .challenge-no, .qp-options-label,
-.short-options-label { color: #ffffff !important; }
-.qp-option {
-  background: rgba(255,255,255,0.09) !important;
-  border-color: rgba(255,255,255,0.22) !important;
-  color: #ffffff !important;
-}
-.qp-option-badge {
-  background: linear-gradient(135deg, var(--accent-1,#00cfff), var(--accent-3,#f4c430)) !important;
-}
-`;
-  console.log('[PZ-SHORT] Black background + white text forced for puzzle.');
-  // Also apply quiz_background_css if present (won't override our black above since we set it after)
+  // Apply quiz_background_css for ALL themes (reverted — varied theme backgrounds).
+  // This restores the colourful theme backgrounds from before.
   if (quiz.quiz_background_css?.trim()) {
-    css += '\n' + quiz.quiz_background_css;
+    console.log('[PZ-SHORT] Applying quiz_background_css (theme background).');
+    css += '\n/* === QUIZ-SPECIFIC BACKGROUND === */\n' + quiz.quiz_background_css;
+  } else {
+    console.log('[PZ-SHORT] No quiz_background_css — using theme default.');
   }
   // Design engine CSS (layout variants, countdown styles, transitions)
   let designEngineCss = '';
@@ -1187,8 +1164,8 @@ async function buildShortVideo(quiz, workDir) {
 
 /* ── PUZZLE VISUAL: large and readable — this is what the viewer stares at ── */
 .short-fmt .puzzle-visual-wrap {
-  width:      94vw !important;
-  max-width:  94vw !important;
+  width:      90vw !important;
+  max-width:  90vw !important;
   overflow:   visible !important;
   margin:     6px auto 4px !important;
   transform:  none !important;
@@ -1257,6 +1234,12 @@ async function buildShortVideo(quiz, workDir) {
   padding:        0 10px !important;
   opacity:        1 !important;
 }
+/* Question card: dark translucent bg so white text is always readable */
+.short-fmt .qp-card-question {
+  background: rgba(0,0,0,0.55) !important;
+  border: 2px solid rgba(255,255,255,0.18) !important;
+}
+.short-fmt .qp-question { color: #ffffff !important; }
 .short-fmt .qp-option {
   font-size:     30px !important;
   font-weight:   700 !important;
@@ -1264,6 +1247,14 @@ async function buildShortVideo(quiz, workDir) {
   border-radius: 14px !important;
   text-align:    left !important;
   line-height:   1.2 !important;
+  /* GUARANTEE readable option text on any theme */
+  color:         #ffffff !important;
+  background:    rgba(0,0,0,0.55) !important;
+  border:        2px solid rgba(255,255,255,0.25) !important;
+}
+.short-fmt .qp-option .qp-option-text,
+.short-fmt .qp-option span:not(.qp-option-badge) {
+  color: #ffffff !important;
 }
 .short-fmt .qp-option-badge {
   width:        28px !important;
