@@ -1164,12 +1164,17 @@ async function buildShortVideo(quiz, workDir) {
   box-sizing: border-box !important;
 }
 
-/* ── PUZZLE VISUAL: constrain height so all 4 options fit above avatars ── */
+/* ── PUZZLE VISUAL: scale down the entire card so it fits compactly ── */
 .short-fmt .puzzle-visual-wrap {
+  width:      86vw !important;
   max-width:  86vw !important;
-  max-height: 260px !important;
   overflow:   hidden !important;
-  margin:     4px auto 2px !important;
+  margin:     2px auto 2px !important;
+  /* Scale the whole card (background + SVG) down uniformly.
+     compensate layout box with negative bottom margin so no gap forms. */
+  transform:        scale(0.58) !important;
+  transform-origin: top center !important;
+  margin-bottom:    -32% !important;
 }
 
 /* ── QUESTION TEXT: 60px on ALL screens ─────────────────────────────────
