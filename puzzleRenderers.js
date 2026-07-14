@@ -38,11 +38,11 @@ const PUZZLE_TYPES = [
 
 // ── Base palette (overridden per-render by theme accents) ──────────────────
 const C = {
-  panel:   '#0e1626',   // card background
-  panel2:  '#152238',   // card gradient stop
-  stroke:  '#2b3d5c',   // card border
-  ink:     '#f4f8ff',   // primary text
-  inkDim:  '#9fb3d1',   // secondary text
+  panel:   '#000000',   // card background — pure black
+  panel2:  '#0d0d0d',   // card gradient stop
+  stroke:  '#333333',   // card border
+  ink:     '#ffffff',   // primary text — pure white
+  inkDim:  '#cccccc',   // secondary text
   wood:    '#E7B24C',   // matchstick body
   wood2:   '#c8912f',   // matchstick shade
   flame:   '#E8433F',   // matchstick head
@@ -82,7 +82,7 @@ function openSvg(W, H, o) {
   return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" width="100%" role="img" class="puzzle-svg">
   <defs>
     <linearGradient id="pzPanel" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="${C.panel}"/><stop offset="1" stop-color="${C.panel2}"/>
+      <stop offset="0" stop-color="#000000"/><stop offset="1" stop-color="#111111"/>
     </linearGradient>
     <linearGradient id="pzWood" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="${C.wood}"/><stop offset="1" stop-color="${C.wood2}"/>
@@ -107,9 +107,9 @@ function titleStrip(W, text, o) {
   const t = esc(String(text).toUpperCase());
   return `
   <g>
-    <rect x="${W/2 - 300}" y="42" width="600" height="66" rx="33" fill="${o.accent}" opacity="0.16"/>
+    <rect x="${W/2 - 300}" y="42" width="600" height="66" rx="33" fill="${o.accent}" opacity="0.30"/>
     <text x="${W/2}" y="88" text-anchor="middle" font-family="Poppins,Segoe UI,Arial,sans-serif"
-          font-size="40" font-weight="800" fill="${o.accent}" letter-spacing="1.5">${t}</text>
+          font-size="40" font-weight="800" fill="#ffffff" letter-spacing="1.5">${t}</text>
   </g>`;
 }
 
@@ -203,7 +203,7 @@ function renderMatchstick(spec, o) {
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'Matchstick Puzzle', o);
   svg += `<text x="${W/2}" y="${instrY}" text-anchor="middle" font-family="Poppins,Segoe UI,Arial"
-            font-size="${instrFS}" font-weight="700" fill="${C.inkDim}">${esc(instruction)}</text>`;
+            font-size="${instrFS}" font-weight="700" fill="#ffffff">${esc(instruction)}</text>`;
   svg += body.join('');
   svg += closeSvg();
   return { svg, ok: true, warnings };
@@ -213,7 +213,7 @@ function renderMatchstick(spec, o) {
 // GEOMETRY — TRIANGLE (find the missing angle)
 // ────────────────────────────────────────────────────────────────────────────
 function angleLabel(x, y, text, o, hi) {
-  const fill = hi ? o.accent : C.ink;
+  const fill = hi ? o.accent : "#ffffff";
   const box  = hi ? `<circle cx="${x}" cy="${y-14}" r="42" fill="${o.accent}" opacity="0.18"/>` : '';
   return `${box}<text x="${x}" y="${y}" text-anchor="middle" font-family="Poppins,Arial"
     font-size="52" font-weight="800" fill="${fill}">${esc(text)}</text>`;
@@ -324,7 +324,7 @@ function renderNumberSequence(spec, o) {
       fill="${bg}" fill-opacity="${op}" stroke="${isQ ? o.accent : C.stroke}" stroke-width="${isQ ? 5 : 2}"/>`;
     svg += `<text x="${x + cw/2}" y="${y + ch/2 + 26}" text-anchor="middle"
       font-family="Poppins,Arial" font-size="${isQ ? 78 : 64}" font-weight="800"
-      fill="${isQ ? o.accent : C.ink}">${esc(val)}</text>`;
+      fill="${isQ ? o.accent : "#ffffff"}">${esc(val)}</text>`;
     if (i < n - 1) {
       svg += `<text x="${x + cw + gap/2}" y="${y + ch/2 + 20}" text-anchor="middle"
         font-size="46" fill="${C.inkDim}">›</text>`;
@@ -358,7 +358,7 @@ function renderNumberGrid(spec, o) {
         stroke="${isQ ? o.accent : C.stroke}" stroke-width="${isQ ? 5 : 2}"/>`;
       svg += `<text x="${x + cw/2}" y="${y + ch/2 + 22}" text-anchor="middle"
         font-family="Poppins,Arial" font-size="${isQ ? 66 : 56}" font-weight="800"
-        fill="${isQ ? o.accent : C.ink}">${esc(val)}</text>`;
+        fill="${isQ ? o.accent : "#ffffff"}">${esc(val)}</text>`;
     });
   });
   svg += closeSvg();
@@ -426,7 +426,7 @@ function renderVisualMath(spec, o) {
     x += 80;
     const isQ = /^\?+$/.test(String(eq.result).trim());
     svg += `<text x="${x}" y="${y + 24}" font-size="72" font-weight="900"
-      fill="${isQ ? o.accent : C.ink}">${esc(eq.result)}</text>`;
+      fill="${isQ ? o.accent : "#ffffff"}">${esc(eq.result)}</text>`;
   });
   svg += closeSvg();
   return { svg, ok: true, warnings: [] };
@@ -457,7 +457,7 @@ function renderOddOneOut(spec, o) {
     const cx = startX + c * cell + cell / 2, cy = startY + r * cell + cell / 2;
     svg += `<circle cx="${cx}" cy="${cy}" r="${cell*0.44}" fill="#ffffff" fill-opacity="0.03" stroke="${C.stroke}" stroke-width="1.5"/>`;
     svg += drawIcon(it.shape || 'circle', cx, cy - 4, R, { accent: it.color || o.accent, accent2: o.accent2, accent3: o.accent3 });
-    svg += `<text x="${cx}" y="${cy + cell*0.34}" text-anchor="middle" font-size="22" fill="${C.inkDim}" font-family="Arial">${i + 1}</text>`;
+    svg += `<text x="${cx}" y="${cy + cell*0.34}" text-anchor="middle" font-size="22" fill="#ffffff" font-family="Arial" font-weight="700">${i + 1}</text>`;
   });
   svg += closeSvg();
   return { svg, ok: true, warnings: [] };
@@ -482,7 +482,7 @@ function renderRebus(spec, o) {
       svg += `<text x="${x + w/2}" y="${y + 24}" text-anchor="middle" font-size="${fs}" font-weight="800" fill="${C.inkDim}">${esc(t)}</text>`;
     } else {
       svg += `<rect x="${x}" y="${y - 58}" width="${w}" height="110" rx="24" fill="${o.accent}" fill-opacity="0.14" stroke="${o.accent}" stroke-width="3"/>`;
-      svg += `<text x="${x + w/2}" y="${y + 18}" text-anchor="middle" font-family="Poppins,Arial" font-size="${fs}" font-weight="800" fill="${C.ink}">${esc(t)}</text>`;
+      svg += `<text x="${x + w/2}" y="${y + 18}" text-anchor="middle" font-family="Poppins,Arial" font-size="${fs}" font-weight="800" fill="#ffffff">${esc(t)}</text>`;
     }
     x += w + gap;
   });
@@ -507,11 +507,11 @@ function renderDetective(spec, o) {
   // "CASE FILE" header ribbon
   svg += `<rect x="60" y="46" width="${W-120}" height="72" rx="16" fill="${o.accent}" opacity="0.16"/>`;
   svg += `<text x="90" y="94" font-family="Poppins,Arial" font-size="30" font-weight="800" fill="${o.accent}" letter-spacing="3">🔍 CASE FILE</text>`.replace('🔍 ', ''); // keep font-safe
-  svg += `<text x="${W-90}" y="94" text-anchor="end" font-family="Poppins,Arial" font-size="30" font-weight="800" fill="${C.ink}">${esc(title.toUpperCase())}</text>`;
+  svg += `<text x="${W-90}" y="94" text-anchor="end" font-family="Poppins,Arial" font-size="30" font-weight="800" fill="#ffffff">${esc(title.toUpperCase())}</text>`;
   y = 175;
   // scenario
   scenarioLines.forEach(ln => {
-    svg += `<text x="90" y="${y}" font-family="Georgia,serif" font-size="34" fill="${C.ink}">${esc(ln)}</text>`;
+    svg += `<text x="90" y="${y}" font-family="Georgia,serif" font-size="34" fill="#ffffff">${esc(ln)}</text>`;
     y += 42;
   });
   y += 24;
@@ -520,7 +520,7 @@ function renderDetective(spec, o) {
   y += 46;
   clues.forEach(cl => {
     svg += `<rect x="90" y="${y-30}" width="28" height="28" rx="6" fill="none" stroke="${C.inkDim}" stroke-width="2.5"/>`;
-    svg += `<text x="134" y="${y-6}" font-family="Georgia,serif" font-size="30" fill="${C.ink}">${esc(cl)}</text>`;
+    svg += `<text x="134" y="${y-6}" font-family="Georgia,serif" font-size="30" fill="#ffffff">${esc(cl)}</text>`;
     y += 54;
   });
   y += 30;
@@ -535,7 +535,7 @@ function renderDetective(spec, o) {
     svg += `<circle cx="${x + 34}" cy="${y + 45}" r="22" fill="${o.accent}" opacity="0.35"/>`;
     const nameLines = wrapText(s, 12);
     nameLines.slice(0, 2).forEach((nl, li) => {
-      svg += `<text x="${x + 66}" y="${y + 40 + li*26}" font-family="Poppins,Arial" font-size="22" font-weight="700" fill="${C.ink}">${esc(nl)}</text>`;
+      svg += `<text x="${x + 66}" y="${y + 40 + li*26}" font-family="Poppins,Arial" font-size="22" font-weight="700" fill="#ffffff">${esc(nl)}</text>`;
     });
   });
   svg += closeSvg();
