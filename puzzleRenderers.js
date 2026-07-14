@@ -118,7 +118,7 @@ function titleStrip(W, text, o) {
 // ────────────────────────────────────────────────────────────────────────────
 // A "matchstick" = a wood body (rounded rect) + a red head at one end.
 function matchstick(x, y, len, horizontal, o) {
-  const T = 24;                       // stick thickness
+  const T = o.thick ? 38 : 24;        // stick thickness (thick mode = more visible)
   const headR = T * 0.62;
   if (horizontal) {
     const body = `<rect x="${x}" y="${y}" width="${len}" height="${T}" rx="${T/2}" fill="url(#pzWood)" stroke="${C.wood2}" stroke-width="1.5"/>`;
@@ -136,7 +136,7 @@ const SEG = {
 };
 // Draw one seven-segment digit at cell origin (ox,oy). Cell = DW x DH.
 function matchDigit(ox, oy, ch, o) {
-  const DW = 120, DH = 230, T = 24, p = 6;
+  const DW = o.thick ? 160 : 120, DH = o.thick ? 310 : 230, T = o.thick ? 38 : 24, p = o.thick ? 8 : 6;
   const segs = SEG[ch] || '';
   const vLen = (DH / 2) - 1.6 * p;
   const hLen = DW - 2 * p;
@@ -153,7 +153,7 @@ function matchDigit(ox, oy, ch, o) {
 }
 // Operators rendered in matchsticks.
 function matchOp(ox, oy, ch, o) {
-  const DH = 230, T = 24;
+  const DH = o.thick ? 310 : 230, T = o.thick ? 38 : 24;
   const midY = oy + DH/2 - T/2;
   if (ch === '+') {
     const W = 100, hLen = 84;
@@ -180,15 +180,19 @@ function renderMatchstick(spec, o) {
   const warnings = [];
   const eq = String(spec.equation || spec.display || '6+4=4').replace(/\s+/g, '');
   const instruction = spec.instruction || 'Move 1 matchstick to make it correct';
-  const W = 960;
-  // measure
-  const GAP = 26;
-  const cells = eq.split('');
-  let totalW = 0;
-  const widths = cells.map(ch => (SEG[ch] ? 120 : 100));
-  totalW = widths.reduce((s, w) => s + w, 0) + GAP * (cells.length - 1);
+  // thick mode: bigger sticks, wider canvas, taller layout
+  const W      = o.thick ? 1080 : 960;
+  const H      = o.thick ? 820  : 600;
+  const rowY   = o.thick ? 350  : 250;
+  const GAP    = o.thick ? 36   : 26;
+  const DW_dig = o.thick ? 160  : 120;
+  const DW_op  = o.thick ? 120  : 100;
+  const instrY = o.thick ? 196  : 170;
+  const instrFS= o.thick ? 46   : 34;
+  const cells  = eq.split('');
+  const widths = cells.map(ch => (SEG[ch] ? DW_dig : DW_op));
+  const totalW = widths.reduce((s, w) => s + w, 0) + GAP * (cells.length - 1);
   const startX = (W - totalW) / 2;
-  const rowY = 250;
   let cx = startX;
   const body = [];
   cells.forEach((ch, i) => {
@@ -196,11 +200,10 @@ function renderMatchstick(spec, o) {
     body.push(r.svg);
     cx += widths[i] + GAP;
   });
-  const H = 600;
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'Matchstick Puzzle', o);
-  svg += `<text x="${W/2}" y="170" text-anchor="middle" font-family="Poppins,Segoe UI,Arial"
-            font-size="34" font-weight="700" fill="${C.inkDim}">${esc(instruction)}</text>`;
+  svg += `<text x="${W/2}" y="${instrY}" text-anchor="middle" font-family="Poppins,Segoe UI,Arial"
+            font-size="${instrFS}" font-weight="700" fill="${C.inkDim}">${esc(instruction)}</text>`;
   svg += body.join('');
   svg += closeSvg();
   return { svg, ok: true, warnings };
@@ -561,6 +564,7 @@ function renderPuzzle(type, spec, opts = {}) {
     accent2: opts.accent2 || '#22c55e',
     accent3: opts.accent3 || '#f4c430',
     width:   opts.width   || 960,
+    thick:   opts.thick   || false,  // makes matchstick sticks thicker and taller
   };
   const fn = RENDERERS[type];
   if (!fn) {
