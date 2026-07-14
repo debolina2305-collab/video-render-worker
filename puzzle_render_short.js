@@ -417,15 +417,36 @@ async function resolveTheme(quiz) {
   css = css.split('{{accent_primary}}').join(a1)
            .split('{{accent_secondary}}').join(a2)
            .split('{{accent_tertiary}}').join(a3);
-  // quiz_background_css: only for the default particle_field theme.
-  // All other themes own their complete background; overriding would break them.
-  if (quiz.quiz_background_css?.trim() && themeId === DEFAULT_THEME) {
-    console.log('[SHORT-THEME] Applying quiz_background_css (particle_field only)');
-    css += '\n/* === QUIZ-SPECIFIC BACKGROUND === */\n' + quiz.quiz_background_css;
-  } else if (quiz.quiz_background_css?.trim()) {
-    console.log(`[SHORT-THEME] Skipping quiz_background_css — theme=${themeId} controls its own bg`);
-  } else {
-    console.log('[SHORT-THEME] No quiz_background_css — using theme default');
+  // PUZZLE OVERRIDE: always force pure black background + white text,
+  // regardless of theme. The puzzle SVG is the star — no coloured theme
+  // background should compete with it.
+  css += `
+/* ══ PUZZLE BLACK BACKGROUND OVERRIDE (highest priority) ══ */
+body, .screen, .bg-anim, .question-appear-slide, .options-waiting-slide,
+.question-static, .question-phase, .pre-reveal-slide, .answer-slide,
+.explanation-slide, .comment-cta-screen, .hook-slide, .waiting-slide,
+.cta1-slide, .cta2-slide, .mi-cta3, .mission-intro-slide, .mission-final-slide {
+  background: #000000 !important;
+  background-image: none !important;
+}
+.bg-anim { animation: none !important; }
+.bg-anim::before, .bg-anim::after, .bg-grid, .bg-orb { display: none !important; }
+.theme-deco { display: none !important; }
+.qp-question, .niche-marquee, .challenge-no, .qp-options-label,
+.short-options-label { color: #ffffff !important; }
+.qp-option {
+  background: rgba(255,255,255,0.09) !important;
+  border-color: rgba(255,255,255,0.22) !important;
+  color: #ffffff !important;
+}
+.qp-option-badge {
+  background: linear-gradient(135deg, var(--accent-1,#00cfff), var(--accent-3,#f4c430)) !important;
+}
+`;
+  console.log('[PZ-SHORT] Black background + white text forced for puzzle.');
+  // Also apply quiz_background_css if present (won't override our black above since we set it after)
+  if (quiz.quiz_background_css?.trim()) {
+    css += '\n' + quiz.quiz_background_css;
   }
   // Design engine CSS (layout variants, countdown styles, transitions)
   let designEngineCss = '';
@@ -1159,22 +1180,18 @@ async function buildShortVideo(quiz, workDir) {
 .short-fmt .question-appear-slide,
 .short-fmt .options-waiting-slide,
 .short-fmt .question-static {
-  padding-top:    140px !important;
-  padding-bottom: ${AVATAR_SIZE + 60}px !important;
+  padding-top:    160px !important;
+  padding-bottom: ${AVATAR_SIZE + 50}px !important;
   box-sizing: border-box !important;
 }
 
-/* ── PUZZLE VISUAL: scale down the entire card so it fits compactly ── */
+/* ── PUZZLE VISUAL: large and readable — this is what the viewer stares at ── */
 .short-fmt .puzzle-visual-wrap {
-  width:      86vw !important;
-  max-width:  86vw !important;
-  overflow:   hidden !important;
-  margin:     2px auto 2px !important;
-  /* Scale the whole card (background + SVG) down uniformly.
-     compensate layout box with negative bottom margin so no gap forms. */
-  transform:        scale(0.58) !important;
-  transform-origin: top center !important;
-  margin-bottom:    -32% !important;
+  width:      94vw !important;
+  max-width:  94vw !important;
+  overflow:   visible !important;
+  margin:     6px auto 4px !important;
+  transform:  none !important;
 }
 
 /* ── QUESTION TEXT: 60px on ALL screens ─────────────────────────────────
@@ -1195,7 +1212,7 @@ async function buildShortVideo(quiz, workDir) {
 .short-fmt .explanation-slide .qp-question,
 .short-fmt .mission-intro-slide .qp-question,
 .short-fmt .mission-final-slide .qp-question {
-  font-size:   32px !important;
+  font-size:   38px !important;
   font-weight: 800 !important;
   line-height: 1.25 !important;
   text-align:  center !important;
@@ -1204,7 +1221,7 @@ async function buildShortVideo(quiz, workDir) {
 }
 /* Generic fallback for any other screen that might contain .qp-question */
 .short-fmt .qp-question {
-  font-size:   32px !important;
+  font-size:   38px !important;
   font-weight: 800 !important;
   line-height: 1.25 !important;
 }
@@ -1241,9 +1258,9 @@ async function buildShortVideo(quiz, workDir) {
   opacity:        1 !important;
 }
 .short-fmt .qp-option {
-  font-size:     26px !important;
+  font-size:     30px !important;
   font-weight:   700 !important;
-  padding:       10px 14px !important;
+  padding:       13px 18px !important;
   border-radius: 14px !important;
   text-align:    left !important;
   line-height:   1.2 !important;
