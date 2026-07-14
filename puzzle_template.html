@@ -709,6 +709,15 @@
 </style>
 {{thumb_bg_style_block}}
 {{VIDEO_PHOTO_STYLE_BLOCK}}
+<style id="puzzle-force-black">
+/* PUZZLE PIPELINE: pure black background always */
+html, body { background: #000 !important; }
+.screen, .bg-anim {
+  background: #000000 !important;
+  background-image: none !important;
+}
+.bg-grid, .bg-orb { display: none !important; }
+</style>
 </head>
 <body>
 
