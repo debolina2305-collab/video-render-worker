@@ -91,7 +91,7 @@ const SHORT_HINT_AT     = 1;    // hint appears t=1s INTO the countdown
 // Circle diameter = 40% of the 1080px video width (host and dog each).
 const VIDEO_W           = 1080;
 const VIDEO_H           = 1920;
-const AVATAR_SIZE       = Math.round(VIDEO_W * 0.32);   // 346px — 20% smaller than trending layout
+const AVATAR_SIZE       = Math.round(VIDEO_W * 0.22);   // 238px — much smaller for puzzle layout
 const AVATAR_PAD_X      = 32;   // px from left/right frame edge to circle edge
 const AVATAR_PAD_Y      = 36;   // px from bottom frame edge to circle edge
 
@@ -1159,9 +1159,17 @@ async function buildShortVideo(quiz, workDir) {
 .short-fmt .question-appear-slide,
 .short-fmt .options-waiting-slide,
 .short-fmt .question-static {
-  padding-top:    240px !important;
-  padding-bottom: ${AVATAR_SIZE + 80}px !important;
+  padding-top:    140px !important;
+  padding-bottom: ${AVATAR_SIZE + 60}px !important;
   box-sizing: border-box !important;
+}
+
+/* ── PUZZLE VISUAL: constrain height so all 4 options fit above avatars ── */
+.short-fmt .puzzle-visual-wrap {
+  max-width:  86vw !important;
+  max-height: 260px !important;
+  overflow:   hidden !important;
+  margin:     4px auto 2px !important;
 }
 
 /* ── QUESTION TEXT: 60px on ALL screens ─────────────────────────────────
@@ -1182,16 +1190,16 @@ async function buildShortVideo(quiz, workDir) {
 .short-fmt .explanation-slide .qp-question,
 .short-fmt .mission-intro-slide .qp-question,
 .short-fmt .mission-final-slide .qp-question {
-  font-size:   60px !important;
+  font-size:   32px !important;
   font-weight: 800 !important;
   line-height: 1.25 !important;
   text-align:  center !important;
-  padding:     0 24px !important;
-  margin:      0 0 18px 0 !important;
+  padding:     0 14px !important;
+  margin:      0 0 6px 0 !important;
 }
 /* Generic fallback for any other screen that might contain .qp-question */
 .short-fmt .qp-question {
-  font-size:   60px !important;
+  font-size:   32px !important;
   font-weight: 800 !important;
   line-height: 1.25 !important;
 }
@@ -1200,14 +1208,14 @@ async function buildShortVideo(quiz, workDir) {
    The worker injects this element and reveals it 0.5s after the question.  ── */
 .short-fmt .qp-options-label,
 .short-fmt .short-options-label {
-  font-size:      40px !important;   /* ~30px × 1.35 */
+  font-size:      24px !important;
   font-weight:    900 !important;
-  letter-spacing: 4px !important;
+  letter-spacing: 3px !important;
   text-transform: uppercase !important;
   text-align:     center !important;
   color:          #ffd24a !important;
   text-shadow:    0 0 18px rgba(255,210,74,0.7), 0 2px 8px rgba(0,0,0,0.8) !important;
-  margin:         4px 0 14px 0 !important;
+  margin:         2px 0 6px 0 !important;
 }
 /* label hidden until the worker reveals it */
 .short-fmt .short-options-label.lbl-hidden { opacity: 0 !important; }
@@ -1223,24 +1231,24 @@ async function buildShortVideo(quiz, workDir) {
 .short-fmt .qp-options {
   display:        flex !important;
   flex-direction: column !important;
-  gap:            12px !important;
-  padding:        0 16px !important;
+  gap:            7px !important;
+  padding:        0 10px !important;
   opacity:        1 !important;
 }
 .short-fmt .qp-option {
-  font-size:     45px !important;
+  font-size:     26px !important;
   font-weight:   700 !important;
-  padding:       24px 28px !important;
-  border-radius: 18px !important;
+  padding:       10px 14px !important;
+  border-radius: 14px !important;
   text-align:    left !important;
   line-height:   1.2 !important;
 }
 .short-fmt .qp-option-badge {
-  width:        40px !important;
-  height:       40px !important;
-  font-size:    20px !important;
+  width:        28px !important;
+  height:       28px !important;
+  font-size:    14px !important;
   flex-shrink:  0 !important;
-  margin-right: 14px !important;
+  margin-right: 8px !important;
 }
 
 /* ── FAIL-SAFE STAGGERED OPTION REVEAL ─────────────────────────────────
