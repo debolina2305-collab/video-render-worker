@@ -91,7 +91,7 @@ const SHORT_HINT_AT     = 1;    // hint appears t=1s INTO the countdown
 // Circle diameter = 40% of the 1080px video width (host and dog each).
 const VIDEO_W           = 1080;
 const VIDEO_H           = 1920;
-const AVATAR_SIZE       = Math.round(VIDEO_W * 0.40);   // 432px
+const AVATAR_SIZE       = Math.round(VIDEO_W * 0.32);   // 346px — 20% smaller than trending layout
 const AVATAR_PAD_X      = 32;   // px from left/right frame edge to circle edge
 const AVATAR_PAD_Y      = 36;   // px from bottom frame edge to circle edge
 
@@ -1116,6 +1116,7 @@ async function buildShortVideo(quiz, workDir) {
       accent:  quiz.theme_accent_primary   || '#00cfff',
       accent2: quiz.theme_accent_secondary || '#22c55e',
       accent3: quiz.theme_accent_tertiary  || '#f4c430',
+      thick:   true,    // makes matchstick sticks visibly thicker (T=38px vs 24px)
     };
     const result = renderPuzzle(pzType, spec, pzOpts);
     if (result.ok) {
