@@ -219,13 +219,13 @@ function angleLabel(x, y, text, o, hi) {
     font-size="52" font-weight="800" fill="${fill}">${esc(text)}</text>`;
 }
 function renderGeometryTriangle(spec, o) {
-  const W = 960, H = 720;
+  const W = 960, H = 480;
   // Vertices: A top, B bottom-left, C bottom-right
-  const A = { x: 480, y: 210 }, B = { x: 230, y: 560 }, Cc = { x: 730, y: 560 };
+  const A = { x: 480, y: 140 }, B = { x: 230, y: 380 }, Cc = { x: 730, y: 380 };
   const labels = Array.isArray(spec.labels) ? spec.labels : [
     { at: 'A', text: '?', highlight: true }, { at: 'B', text: '60°' }, { at: 'C', text: '70°' },
   ];
-  const pos = { A: { x: A.x, y: A.y - 46 }, B: { x: B.x - 8, y: B.y + 66 }, C: { x: Cc.x + 8, y: Cc.y + 66 } };
+  const pos = { A: { x: A.x, y: A.y - 36 }, B: { x: B.x - 8, y: B.y + 50 }, C: { x: Cc.x + 8, y: Cc.y + 50 } };
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'Find the Angle', o);
   // triangle fill + edges
@@ -255,9 +255,9 @@ function renderGeometryTriangle(spec, o) {
 
 // ── GEOMETRY — RIGHT TRIANGLE (find hypotenuse / a side) ──────────────────
 function renderGeometryRightTriangle(spec, o) {
-  const W = 960, H = 720;
+  const W = 960, H = 480;
   // right angle at B (bottom-left). A top-left, C bottom-right.
-  const B = { x: 250, y: 560 }, A = { x: 250, y: 210 }, Cc = { x: 740, y: 560 };
+  const B = { x: 250, y: 380 }, A = { x: 250, y: 140 }, Cc = { x: 740, y: 380 };
   const legA = spec.leg_a != null ? String(spec.leg_a) : '3';   // vertical AB
   const legB = spec.leg_b != null ? String(spec.leg_b) : '4';   // horizontal BC
   const hyp  = spec.hypotenuse != null ? String(spec.hypotenuse) : '?';
@@ -279,10 +279,10 @@ function renderGeometryRightTriangle(spec, o) {
 
 // ── GEOMETRY — STRAIGHT LINE (angles on a line sum to 180) ────────────────
 function renderGeometryStraightLine(spec, o) {
-  const W = 960, H = 560;
+  const W = 960, H = 380;
   const known = spec.known_angle != null ? String(spec.known_angle) : '120°';
   const unk   = spec.unknown_glyph || 'x';
-  const O = { x: 480, y: 380 }, L = { x: 120, y: 380 }, R = { x: 840, y: 380 };
+  const O = { x: 480, y: 250 }, L = { x: 120, y: 250 }, R = { x: 840, y: 250 };
   // a ray going up-left splitting the straight angle
   const rayAng = -140 * Math.PI / 180;
   const ray = { x: O.x + 300 * Math.cos(rayAng), y: O.y + 300 * Math.sin(rayAng) };
@@ -307,7 +307,7 @@ function renderNumberSequence(spec, o) {
   const W = 960;
   const n = cells.length;
   const gap = 26;
-  const cw = Math.min(150, (W - 120 - gap * (n - 1)) / n);
+  const cw = Math.min(130, (W - 120 - gap * (n - 1)) / n);
   const ch = cw;
   const totalW = cw * n + gap * (n - 1);
   const startX = (W - totalW) / 2;
