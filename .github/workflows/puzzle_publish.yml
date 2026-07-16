@@ -1,0 +1,50 @@
+name: Puzzle Publisher — YouTube
+
+on:
+  repository_dispatch:
+    types: [trigger-puzzle-publish]
+  workflow_dispatch:
+
+jobs:
+  publish-puzzle-youtube:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Gate — check for rendered + approved puzzle rows
+        id: gate
+        env:
+          SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          ROWS=$(curl -sf \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            "$SUPABASE_URL/rest/v1/puzzle?short_status=eq.done_short&is_human_approved=eq.true&youtube_video_id=is.null&select=id&limit=1" \
+          | jq 'length' 2>/dev/null || echo "0")
+          echo "pending=$ROWS" >> $GITHUB_OUTPUT
+          echo "[GATE] Puzzle rows ready for YouTube: $ROWS"
+
+      - name: Setup Node.js
+        if: steps.gate.outputs.pending != '0'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        if: steps.gate.outputs.pending != '0'
+        run: npm install
+
+      - name: Publish puzzle to YouTube
+        if: steps.gate.outputs.pending != '0'
+        env:
+          SUPABASE_URL:           ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:   ${{ secrets.SUPABASE_SERVICE_KEY }}
+          YOUTUBE_CLIENT_ID:      ${{ secrets.PUZZLE_YT_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET:  ${{ secrets.PUZZLE_YT_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN:  ${{ secrets.PUZZLE_YT_REFRESH_TOKEN }}
+          CHANNEL_NAME:           "QuestIQ Shorts"
+        run: node puzzle_publisher_youtube.js
