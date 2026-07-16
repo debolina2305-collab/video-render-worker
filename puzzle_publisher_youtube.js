@@ -474,7 +474,8 @@ async function processPublish() {
   // order=created_at.desc → newest/most-trending quiz publishes first.
   // Trending topics have a short shelf life — always publish the latest one.
   const rows = await fetchSupabase(
-    'puzzle?video_status=eq.rendered&is_human_approved=eq.true&is_active=eq.true' +
+    'puzzle?short_status=eq.done_short&is_human_approved=eq.true&is_active=eq.true' +
+    '&youtube_video_id=is.null&short_video_url=not.is.null' +
     '&select=*&order=created_at.desc&limit=1'
   );
 
@@ -485,6 +486,8 @@ async function processPublish() {
 
   const quiz = rows[0];
   console.log(`[PZ-YT] Publishing: ${quiz.id} — ${quiz.topic}`);
+  // puzzle shorts use short_video_url
+  if (!quiz.video_url) quiz.video_url = quiz.short_video_url;
   console.log(`[PZ-YT] video_url=${quiz.video_url}`);
 
   if (!quiz.video_url) {
