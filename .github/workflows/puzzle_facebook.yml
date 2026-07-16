@@ -1,0 +1,48 @@
+name: Puzzle Publisher — Facebook Reels
+
+on:
+  repository_dispatch:
+    types: [trigger-puzzle-facebook]
+  workflow_dispatch:
+
+jobs:
+  publish-puzzle-facebook:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Gate — check for rendered puzzle rows without FB publish
+        id: gate
+        env:
+          SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          ROWS=$(curl -sf \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            "$SUPABASE_URL/rest/v1/puzzle?short_status=eq.done_short&fb_video_id=is.null&select=id&limit=1" \
+          | jq 'length' 2>/dev/null || echo "0")
+          echo "pending=$ROWS" >> $GITHUB_OUTPUT
+          echo "[GATE] Puzzle rows ready for Facebook: $ROWS"
+
+      - name: Setup Node.js
+        if: steps.gate.outputs.pending != '0'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        if: steps.gate.outputs.pending != '0'
+        run: npm install
+
+      - name: Publish puzzle to Facebook Reels
+        if: steps.gate.outputs.pending != '0'
+        env:
+          SUPABASE_URL:              ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:      ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FACEBOOK_ACCESS_TOKEN:     ${{ secrets.PUZZLE_FB_ACCESS_TOKEN }}
+          FACEBOOK_PAGE_ID:          ${{ secrets.PUZZLE_FB_PAGE_ID }}
+        run: node puzzle_publisher_facebook.js
