@@ -91,9 +91,11 @@ const SHORT_HINT_AT     = 1;    // hint appears t=1s INTO the countdown
 // Circle diameter = 40% of the 1080px video width (host and dog each).
 const VIDEO_W           = 1080;
 const VIDEO_H           = 1920;
-const AVATAR_SIZE       = Math.round(VIDEO_W * 0.22);   // 238px — much smaller for puzzle layout
-const AVATAR_PAD_X      = 32;   // px from left/right frame edge to circle edge
-const AVATAR_PAD_Y      = 36;   // px from bottom frame edge to circle edge
+const AVATAR_SIZE       = Math.round(VIDEO_W * 0.20);   // 216px — top-strip circles
+const AVATAR_PAD_X      = 28;   // px from left/right frame edge to circle edge
+const AVATAR_PAD_Y      = 28;   // px from TOP frame edge to circle centre (top-strip layout)
+// TOP STRIP height = circle diameter + top pad + bottom pad
+const TOP_STRIP_H       = AVATAR_SIZE + AVATAR_PAD_Y * 2 + 20;  // ~320px
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────
 async function fetchSupabase(pathStr, opts = {}) {
@@ -459,14 +461,20 @@ function _buildDecoHtml(id) {
 // ──────────────────────────────────────────────────────────────────────
 const AVATAR_STRIP_HTML = `
 <div id="avatar-strip">
+  <!-- LEFT: human host circle -->
   <!-- HOST: placeholder — FFmpeg composites real host clip here -->
   <div id="av-human" class="av-circle av-human av-placeholder">
     <span class="av-placeholder-icon">&#128100;</span>
   </div>
 
-  <!-- DOG: placeholder — FFmpeg composites real dog clip here.
-       No GIF/CSS animation needed; the MP4 clips contain the real movement.
-       The CSS rig below is a last-resort fallback if no dog clips exist. -->
+  <!-- CENTRE: Channel identity — logo | channel name | challenge ID -->
+  <div id="av-identity">
+    <div id="av-logo-wrap"><img id="av-logo-img" src="" alt="logo"/></div>
+    <div id="av-channel-name">QuestIQ Shorts</div>
+    <div id="av-chal-id">Challenge ID —</div>
+  </div>
+
+  <!-- DOG: placeholder — FFmpeg composites real dog clip here. -->
   <div id="av-dog" class="av-circle av-dog av-placeholder">
     <span class="av-placeholder-icon" style="font-size:56px;opacity:0.15">&#128054;</span>
     <!-- CSS fallback rig (hidden when dog MP4 clips are available) -->
@@ -493,18 +501,57 @@ const AVATAR_STRIP_HTML = `
 const AVATAR_CSS = `
 <style id="avatar-strip-style">
 #avatar-strip {
-  /* fixed => coordinates map 1:1 onto the 1080x1920 video frame.
-     Safe here because the strip is a direct child of <body>, not nested
-     inside any will-change:transform ancestor. */
+  /* TOP STRIP: host left | identity centre | mascot right
+     Fixed to top of frame. Content area starts below this strip.
+     Safe because it is a direct child of <body> (no will-change:transform ancestor). */
   position: fixed;
-  bottom: ${AVATAR_PAD_Y}px;
-  left: 0; right: 0;
+  top: 0; left: 0; right: 0;
+  height: ${TOP_STRIP_H}px;
   z-index: 9999;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  padding: 0 ${AVATAR_PAD_X}px;
+  padding: ${AVATAR_PAD_Y}px ${AVATAR_PAD_X}px;
+  /* Dark translucent bar so avatars always read against any background */
+  background: linear-gradient(180deg, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.55) 75%, transparent 100%);
   pointer-events: none;
+  gap: 0;
+}
+
+/* ── CENTRE IDENTITY COLUMN ── */
+#av-identity {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+}
+#av-logo-wrap {
+  width: 80px; height: 80px; border-radius: 50%;
+  background: #fff;
+  border: 3px solid rgba(255,255,255,0.7);
+  overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+#av-logo-wrap img { width: 90%; height: 90%; object-fit: contain; }
+#av-channel-name {
+  font-family: Poppins, Arial, sans-serif;
+  font-size: 28px; font-weight: 900;
+  color: #ffffff;
+  letter-spacing: 1px;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+  text-align: center;
+  white-space: nowrap;
+}
+#av-challenge-id {
+  font-family: Poppins, Arial, sans-serif;
+  font-size: 22px; font-weight: 700;
+  color: #ffd24a;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+  text-align: center;
+  letter-spacing: 2px;
 }
 
 .av-circle {
@@ -518,6 +565,7 @@ const AVATAR_CSS = `
   background: #111;
   position: relative;
   flex-shrink: 0;
+  align-self: center;
 }
 
 /* ── HOST placeholder (real video composited by FFmpeg) ── */
@@ -627,7 +675,7 @@ async function compositeDogCircle(baseClipPath, dogClipPath, dur, outPath, geom,
   const size = geom?.size ?? AVATAR_SIZE;
   const r    = size / 2;
   const gx   = geom?.x ?? (VIDEO_W - AVATAR_PAD_X - size);
-  const gy   = geom?.y ?? (VIDEO_H - AVATAR_PAD_Y - size);
+  const gy   = geom?.y ?? AVATAR_PAD_Y;   // TOP-left: circle top edge = AVATAR_PAD_Y
 
   const filter = [
     `[1:v]scale=${size}:${size}:force_original_aspect_ratio=increase,` +
@@ -666,7 +714,7 @@ async function compositeHumanCircle(uiClipPath, humanClipPath, dur, outPath, geo
   const size = geom?.size ?? AVATAR_SIZE;
   const r    = size / 2;
   const ox   = geom?.x ?? AVATAR_PAD_X;
-  const oy   = geom?.y ?? (VIDEO_H - AVATAR_PAD_Y - size);
+  const oy   = geom?.y ?? AVATAR_PAD_Y;   // TOP-right: circle top edge = AVATAR_PAD_Y
 
   // scale → crop-to-fill square → circular alpha mask → overlay
   const filter = [
@@ -1137,6 +1185,9 @@ async function buildShortVideo(quiz, workDir) {
   }
 
   R['{{PUZZLE_VISUAL}}'] = puzzleSvgHtml;
+
+  // Inject logo and challenge ID into the top-strip identity column
+  // done via page.evaluate() after page load (see below)
   for (const [k, v] of Object.entries(R)) html = html.split(k).join(String(v ?? ''));
 
   // ── Short-format CSS overrides ─────────────────────────────────────
@@ -1157,8 +1208,8 @@ async function buildShortVideo(quiz, workDir) {
 .short-fmt .question-appear-slide,
 .short-fmt .options-waiting-slide,
 .short-fmt .question-static {
-  padding-top:    160px !important;
-  padding-bottom: ${AVATAR_SIZE + 50}px !important;
+  padding-top:    ${TOP_STRIP_H + 24}px !important;
+  padding-bottom: 60px !important;
   box-sizing: border-box !important;
 }
 
@@ -1403,14 +1454,14 @@ async function buildShortVideo(quiz, workDir) {
 .short-fmt .comment-cta-screen .challenge-no     { display: none !important; }
 
 .short-fmt .comment-cta-screen {
-  padding-bottom: ${AVATAR_SIZE + 80}px !important;
+  padding-top:    ${TOP_STRIP_H + 30}px !important;
+  padding-bottom: 60px !important;
   box-sizing: border-box !important;
 }
-/* Push content down: +150px extra top padding per request */
 .short-fmt .comment-cta-screen .content {
   justify-content: center !important;
-  padding-top: 310px !important;     /* 60 base + 150 + 100 extra = 310px */
-  padding-bottom: ${AVATAR_SIZE + 80}px !important;
+  padding-top:    ${TOP_STRIP_H + 30}px !important;
+  padding-bottom: 60px !important;
   gap: 26px !important;
 }
 
@@ -1509,6 +1560,18 @@ ${AVATAR_CSS}`;
   // Give CSS + fonts + layout a moment to settle
   await new Promise(r => setTimeout(r, 1200));
   await page.evaluate(() => { document.body.classList.add('short-fmt'); });
+
+  // ── TOP STRIP: inject logo + challenge ID into identity column ────────
+  try {
+    const logoSrc = typeof getLogoDataUri === 'function' ? getLogoDataUri() : '';
+    const chalLabel = `Challenge ID ${quiz.quiz_no || ''}`;
+    await page.evaluate(({ logo, chal }) => {
+      const img = document.getElementById('av-logo-img');
+      if (img && logo) img.src = logo;
+      const cid = document.getElementById('av-chal-id');
+      if (cid) cid.textContent = chal;
+    }, { logo: logoSrc, chal: chalLabel });
+  } catch (_ie) { console.warn('[PZ-SHORT] identity inject:', _ie.message); }
 
   // If the HD dog photo loaded, hide the CSS-only fallback rig so they
   // don't stack. The inline <style> already sets .dog-photo { display:block }.
