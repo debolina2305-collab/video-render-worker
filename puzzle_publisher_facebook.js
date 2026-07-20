@@ -7,13 +7,13 @@ const path = require('path');
 // ─────────────────────────────────────────────
 const supabaseUrl   = process.env.SUPABASE_URL;
 const supabaseKey   = process.env.SUPABASE_SERVICE_KEY;
-const FB_PAGE_ID    = process.env.FB_PUZZLE_PAGE_ID;          // numeric Page ID
-const FB_PAGE_TOKEN = process.env.FB_PUZZLE_PAGE_ACCESS_TOKEN; // permanent page token
+const FB_PAGE_ID    = process.env.FACEBOOK_PAGE_ID;          // numeric Page ID
+const FB_PAGE_TOKEN = process.env.FACEBOOK_ACCESS_TOKEN; // permanent page token
 
 console.log('SUPABASE_URL:',         supabaseUrl ? supabaseUrl.slice(0,40)+'...' : 'NOT SET');
 console.log('SUPABASE_SERVICE_KEY:', supabaseKey  ? '*** (set)' : 'NOT SET');
-console.log('FB_PUZZLE_PAGE_ID:',           FB_PAGE_ID   ? FB_PAGE_ID  : 'NOT SET');
-console.log('FB_PUZZLE_PAGE_ACCESS_TOKEN:', FB_PAGE_TOKEN ? '*** (set)' : 'NOT SET');
+console.log('FACEBOOK_PAGE_ID:',           FB_PAGE_ID   ? FB_PAGE_ID  : 'NOT SET');
+console.log('FACEBOOK_ACCESS_TOKEN:', FB_PAGE_TOKEN ? '*** (set)' : 'NOT SET');
 
 const cleanUrl = supabaseUrl ? supabaseUrl.replace(/\/$/, '') : null;
 if (!cleanUrl || !supabaseKey)   { console.error('[FATAL] Missing Supabase credentials'); process.exit(1); }
