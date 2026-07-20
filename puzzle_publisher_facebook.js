@@ -7,8 +7,8 @@ const path = require('path');
 // ─────────────────────────────────────────────
 const supabaseUrl   = process.env.SUPABASE_URL;
 const supabaseKey   = process.env.SUPABASE_SERVICE_KEY;
-const FB_PAGE_ID    = process.env.FACEBOOK_PAGE_ID;          // numeric Page ID
-const FB_PAGE_TOKEN = process.env.FACEBOOK_ACCESS_TOKEN; // permanent page token
+const FB_PAGE_ID    = process.env.FACEBOOK_PAGE_ID;          // <- changed from FB_PAGE_ID to FACEBOOK_PAGE_ID
+const FB_PAGE_TOKEN = process.env.FACEBOOK_ACCESS_TOKEN;     // <- changed from FB_PAGE_ACCESS_TOKEN to FACEBOOK_ACCESS_TOKEN
 
 console.log('SUPABASE_URL:',         supabaseUrl ? supabaseUrl.slice(0,40)+'...' : 'NOT SET');
 console.log('SUPABASE_SERVICE_KEY:', supabaseKey  ? '*** (set)' : 'NOT SET');
@@ -285,20 +285,13 @@ async function processPublish() {
 
   console.log('[FB-PUBLISHER] Checking for approved videos to publish to Facebook...');
 
-  // Poll for quiz rows that are:
-  //  - rendered (video exists in R2)
-  //  - human approved
-  //  - not yet posted to Facebook  (fb_video_id IS NULL)
-  //  - is_active = true
-  // order=created_at.desc → newest/most-trending quiz publishes first.
-  // Trending topics go stale fast — always publish the latest one.
-  // Note: FB and YT pipelines are independent — a video can go to FB
-  // before or after YouTube, whichever runs first.
+  // ── CRITICAL CHANGE: Poll puzzle short rows (short_status=done_short) ──
   const rows = await fetchSupabase(
-    'puzzle?video_status=eq.rendered' +
+    'puzzle?short_status=eq.done_short' +        // <- changed from video_status=eq.rendered
     '&is_human_approved=eq.true' +
     '&is_active=eq.true' +
     '&fb_video_id=is.null' +
+    '&short_video_url=not.is.null' +             // <- ensure short_video_url exists
     '&select=*&order=created_at.desc&limit=1'
   );
 
@@ -309,14 +302,15 @@ async function processPublish() {
 
   const quiz = rows[0];
   console.log(`[FB-PUBLISHER] Publishing: ${quiz.id} — "${quiz.topic}"`);
-  console.log(`[FB-PUBLISHER] video_url=${quiz.video_url}`);
+  // ── CRITICAL CHANGE: use short_video_url ──
+  console.log(`[FB-PUBLISHER] short_video_url=${quiz.short_video_url}`);
 
-  if (!quiz.video_url) {
-    console.error('[FB-PUBLISHER] video_url is NULL — cannot publish without video file in R2');
+  if (!quiz.short_video_url) {
+    console.error('[FB-PUBLISHER] short_video_url is NULL — cannot publish without video file in R2');
     await fetchSupabase(`puzzle?id=eq.${quiz.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
-        generation_error: 'fb_publish: video_url is null',
+        generation_error: 'fb_publish: short_video_url is null',
         updated_at: new Date().toISOString()
       })
     }).catch(() => {});
@@ -336,7 +330,8 @@ async function processPublish() {
 
   try {
     // 1. Download video from R2
-    await downloadVideo(quiz.video_url, videoPath);
+    // ── CRITICAL CHANGE: use short_video_url ──
+    await downloadVideo(quiz.short_video_url, videoPath);
 
     // 2. Build description
     const description = buildDescription(quiz);
