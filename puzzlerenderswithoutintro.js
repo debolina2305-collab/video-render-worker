@@ -549,13 +549,35 @@ const AVATAR_CSS = `
   min-width: 0;
 }
 #av-logo-wrap {
-  width: 80px; height: 80px; border-radius: 50%;
-  background: #fff;
-  border: 3px solid rgba(255,255,255,0.7);
-  overflow: hidden;
+  width: 104px; height: 104px; border-radius: 50%;   /* was 80px — +30% */
+  background: radial-gradient(circle, #ffffff 0%, #eceae4 60%, #dcd8cd 100%);
+  border: 4px solid rgba(255,255,255,0.85);
+  overflow: visible;
   display: flex; align-items: center; justify-content: center;
+  position: relative;
+  box-shadow: 0 0 20px rgba(0,207,255,0.55), 0 0 40px rgba(160,240,255,0.35),
+              0 6px 20px rgba(0,0,0,0.55);
 }
-#av-logo-wrap img { width: 90%; height: 90%; object-fit: contain; }
+#av-logo-wrap::before {
+  content:''; position:absolute; inset:-7px; border-radius:50%;
+  border:5px solid #00cfff; border-top-color:#a0f0ff; border-right-color:#a0f0ff;
+  animation: avLogoRingSpin 1.6s linear infinite;
+}
+#av-logo-wrap::after {
+  content:''; position:absolute; top:-6px; left:50%; width:14px; height:14px;
+  margin-left:-7px; border-radius:50%;
+  background: radial-gradient(circle, #ffffff 0%, #a0f0ff 70%);
+  box-shadow: 0 0 8px #a0f0ff, 0 0 18px #a0f0ff;
+  transform-origin: 7px 59px;
+  animation: avLogoOrbitDot 2.4s linear infinite;
+}
+@keyframes avLogoRingSpin {
+  0%   { transform:rotate(0deg);   border-width:5px; }
+  50%  { transform:rotate(180deg); border-width:8px; }
+  100% { transform:rotate(360deg); border-width:5px; }
+}
+@keyframes avLogoOrbitDot { from{ transform:rotate(0deg); } to{ transform:rotate(360deg); } }
+#av-logo-wrap img { width: 82%; height: 82%; object-fit: contain; position: relative; z-index: 2; border-radius: 50%; }
 #av-channel-name {
   font-family: Poppins, Arial, sans-serif;
   font-size: 28px; font-weight: 900;
@@ -565,13 +587,19 @@ const AVATAR_CSS = `
   text-align: center;
   white-space: nowrap;
 }
-#av-challenge-id {
+#av-chal-id {
   font-family: Poppins, Arial, sans-serif;
-  font-size: 22px; font-weight: 700;
+  font-size: 22px; font-weight: 900;
   color: #ffd24a;
-  text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+  letter-spacing: 1.5px;
   text-align: center;
-  letter-spacing: 2px;
+  white-space: nowrap;
+  background: rgba(0,0,0,0.55);
+  border: 2px solid rgba(255,210,74,0.6);
+  border-radius: 20px;
+  padding: 4px 16px;
+  text-shadow: 0 0 12px rgba(255,210,74,0.7), 0 2px 8px rgba(0,0,0,0.9);
+  box-shadow: 0 0 16px rgba(255,210,74,0.3);
 }
 
 .av-circle {
@@ -1240,11 +1268,15 @@ async function buildShortVideo(quiz, workDir) {
 
 /* ── PUZZLE VISUAL: large and readable — this is what the viewer stares at ── */
 .short-fmt .puzzle-visual-wrap {
-  width:      90vw !important;
-  max-width:  90vw !important;
+  width:      94vw !important;
+  max-width:  94vw !important;
   overflow:   visible !important;
   margin:     6px auto 4px !important;
   transform:  none !important;
+  border-radius: 30px !important;
+  border: 2.5px solid color-mix(in srgb, var(--accent-1) 45%, rgba(255,255,255,0.1)) !important;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5),
+              0 0 50px color-mix(in srgb, var(--accent-1) 30%, transparent) !important;
 }
 
 /* ── NO-INTRO VARIANT: remove the generic "{{question}}" text card from the
@@ -1329,9 +1361,9 @@ async function buildShortVideo(quiz, workDir) {
 }
 .short-fmt .qp-question { color: #ffffff !important; }
 .short-fmt .qp-option {
-  font-size:     26px !important;
+  font-size:     39px !important;   /* was 26px — 150%, matches the template-level change */
   font-weight:   700 !important;
-  padding:       12px 14px !important;
+  padding:       16px 18px !important;
   border-radius: 14px !important;
   text-align:    left !important;
   line-height:   1.2 !important;
@@ -1346,9 +1378,9 @@ async function buildShortVideo(quiz, workDir) {
   color: #ffffff !important;
 }
 .short-fmt .qp-option-badge {
-  width:        26px !important;
-  height:       26px !important;
-  font-size:    13px !important;
+  width:        38px !important;   /* was 26px — scaled up with the option text */
+  height:       38px !important;
+  font-size:    19px !important;
   flex-shrink:  0 !important;
   margin-right: 6px !important;
 }
@@ -1411,6 +1443,19 @@ async function buildShortVideo(quiz, workDir) {
 
 /* ── Black marquee bar removed in short format ── */
 .short-fmt .niche-marquee { display: none !important; }
+
+/* ── The avatar-strip (#avatar-strip, fixed, z-index 9999) is the ONLY
+   header this pipeline should show. The template's own .persistent-logo /
+   .challenge-no are a leftover from the long-form/quiz template and were
+   only being hidden on the comment-cta-screen — everywhere else they sat
+   underneath the avatar-strip's semi-transparent gradient bar and bled
+   through, producing overlapping "QuestIQ Shorts" / "Challenge ID ..."
+   text. Hide them everywhere for short-fmt; the avatar-strip below carries
+   the logo + challenge ID instead. ── */
+.short-fmt .persistent-logo,
+.short-fmt .challenge-no {
+  display: none !important;
+}
 
 /* ── CHALLENGE ID: base ~20px × 1.35 ≈ 27px ── */
 .short-fmt .challenge-no {
