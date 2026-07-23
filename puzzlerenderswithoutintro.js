@@ -1658,7 +1658,7 @@ ${AVATAR_CSS}`;
 
   // ── TOP STRIP: inject logo + challenge ID into identity column ────────
   try {
-    const logoSrc = typeof getLogoDataUri === 'function' ? getLogoDataUri() : '';
+    const logoSrc = typeof getLogoDataUri === 'function' ? await getLogoDataUri() : '';
     const chalLabel = `Challenge ID ${quiz.quiz_no || ''}`;
     await page.evaluate(({ logo, chal }) => {
       const img = document.getElementById('av-logo-img');
