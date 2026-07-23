@@ -1,0 +1,149 @@
+name: Puzzle Render — Short Format (No Intro)
+
+# ─────────────────────────────────────────────────────────────────────────
+# Runs puzzlerenderswithoutintro.js — the no-intro variant of the short
+# puzzle renderer (skips the full-screen host hook clip, starts straight
+# on the Q+Options screen, 2x2 options grid, hint pinned to the bottom,
+# "Follow and Subscribe" on the last slide, boosted TTS volume).
+#
+# IMPORTANT: this reads/writes the SAME `puzzle` table rows (short_status =
+# 'pending_short', assigned_format = 'short') as render_puzzle_short.yml,
+# which runs puzzle_render_short.js (the original, untouched, intro version).
+# Do NOT enable both workflows on the SAME `trigger-puzzle-render` event at
+# the same time, or they will race to claim the same pending rows.
+#
+#   • Use this workflow_dispatch (manual "Run workflow" button) to test the
+#     no-intro variant on demand, whenever you like, OR
+#   • Wire it into puzzle_generator.js's dispatch by firing the DISTINCT
+#     event type `trigger-puzzle-render-nointro` instead of the shared
+#     `trigger-puzzle-render` event used by the original pipeline, OR
+#   • Disable/remove render_puzzle_short.yml's trigger if you want this
+#     no-intro variant to fully replace the original.
+# ─────────────────────────────────────────────────────────────────────────
+
+on:
+  # Manual trigger — click "Run workflow" in the Actions tab
+  workflow_dispatch:
+    inputs:
+      trigger_publish:
+        description: 'Trigger downstream publishers (YouTube/Blog/Facebook) after render?'
+        type: boolean
+        default: false
+
+  # Optional: fire this from puzzle_generator.js (or manually via the API)
+  # using a DISTINCT event type so it never collides with the original
+  # pipeline's `trigger-puzzle-render` event.
+  repository_dispatch:
+    types: [trigger-puzzle-render-nointro]
+
+# Queue — never cancel in progress, so no puzzle rows are missed
+concurrency:
+  group: render-puzzle-short-nointro
+  cancel-in-progress: false
+
+jobs:
+  render-puzzle-short-nointro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── GATE ────────────────────────────────────────────────────────────────
+      # Query the PUZZLE table (NOT quiz). Exits in ~2s if nothing pending.
+      - name: Gate — check for pending short puzzle rows
+        id: gate
+        env:
+          SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          ROWS=$(curl -sf \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            "$SUPABASE_URL/rest/v1/puzzle?short_status=eq.pending_short&assigned_format=eq.short&is_active=eq.true&puzzle_enriched=eq.true&select=id&limit=1" \
+          | jq 'length' 2>/dev/null || echo "0")
+          echo "pending=$ROWS" >> $GITHUB_OUTPUT
+          if [ "$ROWS" = "0" ]; then
+            echo "[GATE] No pending short puzzle rows — skipping render."
+          else
+            echo "[GATE] Found $ROWS pending short puzzle row(s) — proceeding."
+          fi
+
+      - name: Install FFmpeg, Python and Chromium runtime deps
+        if: steps.gate.outputs.pending != '0'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg python3 python3-pip \
+            libasound2t64 libatk-bridge2.0-0 libatk1.0-0 libcups2 \
+            libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 libnspr4 libnss3 \
+            libx11-xcb1 libxcomposite1 libxdamage1 libxfixes3 \
+            libxkbcommon0 libxrandr2 xdg-utils
+          pip3 install --break-system-packages edge-tts
+
+      - name: Test edge-tts
+        if: steps.gate.outputs.pending != '0'
+        run: |
+          edge-tts --voice en-US-JennyNeural --text "Puzzle challenge ready." --write-media /tmp/test.mp3
+          ls -la /tmp/test.mp3
+
+      - name: Setup Node.js
+        if: steps.gate.outputs.pending != '0'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        if: steps.gate.outputs.pending != '0'
+        run: npm install
+
+      - name: Render short puzzle video (no-intro variant)
+        if: steps.gate.outputs.pending != '0'
+        env:
+          SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          R2_ACCESS_KEY:        ${{ secrets.R2_ACCESS_KEY }}
+          R2_SECRET_KEY:        ${{ secrets.R2_SECRET_KEY }}
+          R2_ENDPOINT:          ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+          R2_PUBLIC_URL:        ${{ secrets.R2_PUBLIC_URL }}
+        run: node puzzlerenderswithoutintro.js
+
+      - name: Upload short puzzle video artifact
+        if: steps.gate.outputs.pending != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: puzzle-short-nointro-${{ github.run_id }}
+          path: /tmp/*_puzzle_short_nointro_video.mp4
+          retention-days: 3
+
+      # ── Trigger downstream puzzle publishers (opt-in) ────────────────────
+      # Only fires on manual runs where you explicitly set trigger_publish
+      # to true. repository_dispatch runs never auto-publish, so you can
+      # safely test renders without them going live.
+      - name: Trigger puzzle publishers (YouTube + Blog + Facebook)
+        if: steps.gate.outputs.pending != '0' && success() && github.event.inputs.trigger_publish == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PIPELINE_TOKEN }}
+          script: |
+            const payload = {
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              client_payload: {
+                source: 'puzzle-short-nointro-render',
+                triggered_at: new Date().toISOString()
+              }
+            };
+            await github.rest.repos.createDispatchEvent({
+              ...payload, event_type: 'trigger-puzzle-publish'
+            });
+            console.log('Puzzle YouTube publish triggered');
+            await github.rest.repos.createDispatchEvent({
+              ...payload, event_type: 'trigger-puzzle-blog'
+            });
+            console.log('Puzzle blog triggered');
+            await github.rest.repos.createDispatchEvent({
+              ...payload, event_type: 'trigger-puzzle-facebook'
+            });
+            console.log('Puzzle Facebook triggered');
