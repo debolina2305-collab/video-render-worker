@@ -91,7 +91,9 @@ function openSvg(W, H, o) {
     </filter>
   </defs>
   <rect x="14" y="14" width="${W - 28}" height="${H - 28}" rx="34"
-        fill="url(#pzPanel)" stroke="${a}" stroke-width="4" filter="url(#pzShadow)"/>
+        fill="url(#pzPanel)" stroke="${a}" stroke-width="4" filter="url(#pzShadow)">
+    <animate attributeName="stroke-width" values="4;6.5;4" dur="2.2s" repeatCount="indefinite"/>
+  </rect>
   <rect x="14" y="14" width="${W - 28}" height="${H - 28}" rx="34"
         fill="none" stroke="${C.stroke}" stroke-width="1" opacity="0.6"/>`;
 }
@@ -193,7 +195,20 @@ function renderMatchstick(spec, o) {
   const body = [];
   cells.forEach((ch, i) => {
     const r = SEG[ch] ? matchDigit(cx, rowY, ch, o) : matchOp(cx, rowY, ch, o);
-    body.push(r.svg);
+    const delay = (i * 0.03).toFixed(2);
+    // Staggered fade+rise entrance: each digit/operator "lands" in sequence
+    // instead of the whole equation appearing as one static frame. Chromium
+    // plays this out live, so puppeteer-screen-recorder captures real motion.
+    // Timing is deliberately tight (finishes well under 0.4s even for a
+    // 7-char equation) so it fully completes before the existing long-format
+    // thumbnail screenshot (400ms settle wait) fires — avoids a partially
+    // faded-in thumbnail.
+    body.push(`<g opacity="0" transform="translate(0,14)">
+      <animate attributeName="opacity" from="0" to="1" begin="${delay}s" dur="0.18s" fill="freeze"/>
+      <animateTransform attributeName="transform" type="translate" from="0,14" to="0,0"
+        begin="${delay}s" dur="0.18s" fill="freeze"/>
+      ${r.svg}
+    </g>`);
     cx += widths[i] + GAP;
   });
   let svg = openSvg(W, H, o);
@@ -316,14 +331,27 @@ function renderNumberSequence(spec, o) {
     const isQ = /^\?+$/.test(val.trim());
     const bg = isQ ? o.accent : C.slotBg;
     const op = isQ ? '0.18' : '1';
-    svg += `<rect x="${x}" y="${y}" width="${cw}" height="${ch}" rx="22"
-      fill="${bg}" fill-opacity="${op}" stroke="${isQ ? o.accent : C.stroke}" stroke-width="${isQ ? 5 : 2}"/>`;
-    svg += `<text x="${x + cw/2}" y="${y + ch/2 + 26}" text-anchor="middle"
-      font-family="Poppins,Arial" font-size="${isQ ? 78 : 64}" font-weight="800"
-      fill="${isQ ? o.accent : "#ffffff"}">${esc(val)}</text>`;
+    const delay = (i * 0.03).toFixed(2);
+    const cellCx = x + cw/2, cellCy = y + ch/2;
+    // Same sub-400ms completion budget as the matchstick entrance (see note
+    // there) — keeps the long-format thumbnail screenshot safe.
+    svg += `<g opacity="0" transform="translate(${cellCx} ${cellCy}) scale(0.6) translate(${-cellCx} ${-cellCy})">
+      <animate attributeName="opacity" from="0" to="1" begin="${delay}s" dur="0.18s" fill="freeze"/>
+      <animateTransform attributeName="transform" type="scale" additive="sum"
+        from="0.6" to="1" begin="${delay}s" dur="0.18s" fill="freeze"/>
+      <rect x="${x}" y="${y}" width="${cw}" height="${ch}" rx="22"
+        fill="${bg}" fill-opacity="${op}" stroke="${isQ ? o.accent : C.stroke}" stroke-width="${isQ ? 5 : 2}">
+        ${isQ ? `<animate attributeName="stroke-width" values="5;8;5" dur="1.1s" begin="${(n*0.03+0.25).toFixed(2)}s" repeatCount="indefinite"/>` : ''}
+      </rect>
+      <text x="${x + cw/2}" y="${y + ch/2 + 26}" text-anchor="middle"
+        font-family="Poppins,Arial" font-size="${isQ ? 78 : 64}" font-weight="800"
+        fill="${isQ ? o.accent : "#ffffff"}">${esc(val)}</text>
+    </g>`;
     if (i < n - 1) {
       svg += `<text x="${x + cw + gap/2}" y="${y + ch/2 + 20}" text-anchor="middle"
-        font-size="46" fill="${C.inkDim}">›</text>`;
+        font-size="46" fill="${C.inkDim}" opacity="0">
+        <animate attributeName="opacity" from="0" to="1" begin="${(Number(delay)+0.1).toFixed(2)}s" dur="0.15s" fill="freeze"/>
+        ›</text>`;
     }
   });
   svg += closeSvg();
