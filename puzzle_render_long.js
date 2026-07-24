@@ -1125,15 +1125,31 @@ async function processJobs() {
     const patchBody = {
       video_status:'rendered',
       long_status: 'done_long',   // this worker only ever renders long rows now
-      render_duration_sec:Math.round(dur),
-      file_size_mb:sizeMb,
       updated_at:new Date().toISOString()
     };
     if (thumbnailUrl)        patchBody.thumbnail_url         = thumbnailUrl;
     if (heroImageUrl)        patchBody.hero_image_url        = heroImageUrl;
     if (videoUrl)            patchBody.video_url             = videoUrl;
     if (quiz._inlineImageUrl) patchBody.inline_image_url     = quiz._inlineImageUrl;
-    await fetchSupabase(`puzzle?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(patchBody)});
+
+    // The render itself already succeeded and the file is already in R2 at
+    // this point — never let a bad/renamed column on this PATCH throw the
+    // whole job into the catch-block below and mark a good render as
+    // error_long (which would just cause a wasteful full re-render next
+    // run). If the full patch 400s for any reason, retry with only the
+    // columns we are certain exist on `puzzle`.
+    try {
+      await fetchSupabase(`puzzle?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(patchBody)});
+    } catch (patchErr) {
+      console.warn(`[WORKER] Full completion PATCH failed (${patchErr.message}) — retrying with minimal fields`);
+      const minimalBody = {
+        video_status:'rendered',
+        long_status: 'done_long',
+        updated_at:new Date().toISOString(),
+      };
+      if (videoUrl) minimalBody.video_url = videoUrl;
+      await fetchSupabase(`puzzle?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(minimalBody)});
+    }
 
     await fs.rm(workDir,{recursive:true,force:true});
     console.log(`[WORKER] Artifact: ${artifactPath}`);
