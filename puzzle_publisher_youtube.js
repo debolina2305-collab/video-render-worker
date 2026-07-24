@@ -473,9 +473,15 @@ async function processPublish() {
 
   // order=created_at.desc → newest/most-trending quiz publishes first.
   // Trending topics have a short shelf life — always publish the latest one.
+  // NOTE: checks all three formats' own status column — short_status,
+  // medium_status, long_status — so medium/long rows are no longer invisible
+  // to the publisher. (Previously this only ever checked short_status, which
+  // meant medium/long videos could sit "done" + approved forever without
+  // ever being picked up.)
   const rows = await fetchSupabase(
-    'puzzle?short_status=eq.done_short&is_human_approved=eq.true&is_active=eq.true' +
-    '&youtube_video_id=is.null&short_video_url=not.is.null' +
+    'puzzle?or=(short_status.eq.done_short,medium_status.eq.done_medium,long_status.eq.done_long)' +
+    '&is_human_approved=eq.true&is_active=eq.true' +
+    '&youtube_video_id=is.null' +
     '&select=*&order=created_at.desc&limit=1'
   );
 
@@ -486,8 +492,11 @@ async function processPublish() {
 
   const quiz = rows[0];
   console.log(`[PZ-YT] Publishing: ${quiz.id} — ${quiz.topic}`);
-  // puzzle shorts use short_video_url
-  if (!quiz.video_url) quiz.video_url = quiz.short_video_url;
+  // Resolve the video URL for whichever format this row actually is:
+  //   long   → video_url (already the native column for long)
+  //   medium → medium_video_url
+  //   short  → short_video_url
+  if (!quiz.video_url) quiz.video_url = quiz.medium_video_url || quiz.short_video_url;
   console.log(`[PZ-YT] video_url=${quiz.video_url}`);
 
   if (!quiz.video_url) {
