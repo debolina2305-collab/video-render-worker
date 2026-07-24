@@ -515,53 +515,137 @@ function renderRebus(spec, o) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// DETECTIVE (styled "case file" — title, scenario, clue list, suspects)
+// DETECTIVE — topic icon picker + drawer
+// Picks a simple, self-contained SVG motif based on keywords in the case
+// title/scenario/clues so the case-file card doesn't look identical for
+// every mystery. No external image fetching (works offline, deterministic,
+// renders identically in the video / thumbnail / blog).
+// ────────────────────────────────────────────────────────────────────────────
+function pickDetectiveIcon(text) {
+  const t = String(text || '').toLowerCase();
+  if (/\b(manuscript|book|library|novel|page|author|diary|journal)\b/.test(t)) return 'book';
+  if (/\b(ring|diamond|jewel|necklace|gem|tiara|crown|treasure)\b/.test(t))     return 'gem';
+  if (/\b(cash|money|bank|vault|safe)\b/.test(t))                              return 'vault';
+  if (/\b(door|window|lock|locked|key)\b/.test(t))                             return 'key';
+  if (/\b(paint|painting|portrait|museum|artwork|statue|sculpture)\b/.test(t)) return 'art';
+  return 'magnifier';
+}
+
+function drawDetectiveIcon(kind, cx, cy, s, accent) {
+  const ink = '#0a0f1c';
+  switch (kind) {
+    case 'book':
+      return `<g>
+        <path d="M ${cx-1.05*s} ${cy-0.8*s} Q ${cx-1.15*s} ${cy-0.95*s} ${cx-0.9*s} ${cy-0.9*s} L ${cx-0.04*s} ${cy-0.72*s} L ${cx-0.04*s} ${cy+0.78*s} L ${cx-0.9*s} ${cy+0.95*s} Q ${cx-1.15*s} ${cy+0.98*s} ${cx-1.05*s} ${cy+0.82*s} Z" fill="${ink}"/>
+        <path d="M ${cx+1.05*s} ${cy-0.8*s} Q ${cx+1.15*s} ${cy-0.95*s} ${cx+0.9*s} ${cy-0.9*s} L ${cx+0.04*s} ${cy-0.72*s} L ${cx+0.04*s} ${cy+0.78*s} L ${cx+0.9*s} ${cy+0.95*s} Q ${cx+1.15*s} ${cy+0.98*s} ${cx+1.05*s} ${cy+0.82*s} Z" fill="${ink}" opacity="0.75"/>
+      </g>`;
+    case 'gem':
+      return `<g fill="${ink}">
+        <polygon points="${cx-0.95*s},${cy-0.15*s} ${cx-0.45*s},${cy-0.95*s} ${cx+0.45*s},${cy-0.95*s} ${cx+0.95*s},${cy-0.15*s} ${cx},${cy+0.95*s}"/>
+        <polygon points="${cx-0.95*s},${cy-0.15*s} ${cx},${cy-0.15*s} ${cx},${cy+0.95*s}" opacity="0.55"/>
+        <polygon points="${cx+0.95*s},${cy-0.15*s} ${cx},${cy-0.15*s} ${cx},${cy+0.95*s}" opacity="0.3"/>
+      </g>`;
+    case 'vault':
+      return `<g>
+        <rect x="${cx-s}" y="${cy-s}" width="${2*s}" height="${2*s}" rx="${0.22*s}" fill="${ink}"/>
+        <circle cx="${cx}" cy="${cy}" r="${0.5*s}" fill="none" stroke="${accent}" stroke-width="${0.14*s}"/>
+        <line x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy-0.4*s}" stroke="${accent}" stroke-width="${0.12*s}" stroke-linecap="round"/>
+        <line x1="${cx}" y1="${cy}" x2="${cx+0.3*s}" y2="${cy}" stroke="${accent}" stroke-width="${0.12*s}" stroke-linecap="round"/>
+      </g>`;
+    case 'key':
+      return `<g fill="${ink}">
+        <circle cx="${cx-0.55*s}" cy="${cy}" r="${0.5*s}" fill="none" stroke="${ink}" stroke-width="${0.22*s}"/>
+        <rect x="${cx-0.05*s}" y="${cy-0.14*s}" width="${1.15*s}" height="${0.28*s}"/>
+        <rect x="${cx+0.55*s}" y="${cy+0.14*s}" width="${0.2*s}" height="${0.3*s}"/>
+        <rect x="${cx+0.85*s}" y="${cy+0.14*s}" width="${0.2*s}" height="${0.42*s}"/>
+      </g>`;
+    case 'art':
+      return `<g>
+        <rect x="${cx-s}" y="${cy-0.9*s}" width="${2*s}" height="${1.8*s}" rx="${0.08*s}" fill="none" stroke="${ink}" stroke-width="${0.16*s}"/>
+        <circle cx="${cx-0.5*s}" cy="${cy-0.4*s}" r="${0.24*s}" fill="${ink}"/>
+        <polyline points="${cx-0.85*s},${cy+0.6*s} ${cx-0.25*s},${cy-0.05*s} ${cx+0.2*s},${cy+0.3*s} ${cx+0.85*s},${cy-0.35*s}" fill="none" stroke="${ink}" stroke-width="${0.16*s}" stroke-linejoin="round" stroke-linecap="round"/>
+      </g>`;
+    default: // magnifier — the universal detective motif
+      return `<g fill="none" stroke="${ink}" stroke-linecap="round">
+        <circle cx="${cx-0.18*s}" cy="${cy-0.18*s}" r="${0.62*s}" stroke-width="${0.22*s}"/>
+        <line x1="${cx+0.28*s}" y1="${cy+0.28*s}" x2="${cx+0.95*s}" y2="${cy+0.95*s}" stroke-width="${0.26*s}"/>
+      </g>`;
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// DETECTIVE (styled "case file" — big bold title, an icon badge matched to
+// the case's theme, and a large, easy-to-read clue list). The suspects list
+// is deliberately NOT drawn here: it is identical to the on-screen options
+// (validated 1:1 upstream in puzzle_generator.js), so repeating it as its
+// own row just ate vertical space and pushed everything else's font size
+// down without adding any new information for the viewer.
 // ────────────────────────────────────────────────────────────────────────────
 function renderDetective(spec, o) {
   const title    = spec.case_title || 'The Locked Room';
   const scenario = spec.scenario || 'A valuable ring vanished from a room locked from the inside.';
   const clues    = (Array.isArray(spec.clues) && spec.clues.length ? spec.clues : ['The window was sealed shut', 'Only one person had a key']).slice(0, 4);
-  const suspects = (Array.isArray(spec.suspects) && spec.suspects.length ? spec.suspects : ['The Butler', 'The Maid', 'The Guest', 'The Cook']).slice(0, 4);
-  const W = 960;
-  const scenarioLines = wrapText(scenario, 46);
-  let y = 150;
-  // dynamic height
-  const H = 190 + scenarioLines.length * 42 + 70 + clues.length * 58 + 90 + 120;
+  const W = 1000;
+  const titleLines    = wrapText(title.toUpperCase(), 20);
+  const scenarioLines = wrapText(scenario, 34);
+  const clueLineData  = clues.map(cl => wrapText(cl, 26));
+
+  const iconKind = pickDetectiveIcon(`${title} ${scenario} ${clues.join(' ')}`);
+
+  // ── dynamic height ──────────────────────────────────────────────────────
+  const HEADER_H   = 120 + titleLines.length * 56;
+  const SCENARIO_H = scenarioLines.length * 46 + 20;
+  const CLUES_HEAD_H = 60;
+  const clueRowH = clueLineData.map(lines => Math.max(1, lines.length) * 40 + 34);
+  const CLUES_H  = clueRowH.reduce((s, h) => s + h + 18, 0);
+  const H = HEADER_H + SCENARIO_H + CLUES_HEAD_H + CLUES_H + 70;
+
   let svg = openSvg(W, H, o);
-  // "CASE FILE" header ribbon
-  svg += `<rect x="60" y="46" width="${W-120}" height="72" rx="16" fill="${o.accent}" opacity="0.16"/>`;
-  svg += `<text x="90" y="94" font-family="Poppins,Arial" font-size="30" font-weight="800" fill="${o.accent}" letter-spacing="3">🔍 CASE FILE</text>`.replace('🔍 ', ''); // keep font-safe
-  svg += `<text x="${W-90}" y="94" text-anchor="end" font-family="Poppins,Arial" font-size="30" font-weight="800" fill="#ffffff">${esc(title.toUpperCase())}</text>`;
-  y = 175;
-  // scenario
-  scenarioLines.forEach(ln => {
-    svg += `<text x="90" y="${y}" font-family="Georgia,serif" font-size="34" fill="#ffffff">${esc(ln)}</text>`;
-    y += 42;
+
+  // ── Header: "CASE FILE" ribbon + icon badge + big case title ───────────
+  svg += `<rect x="60" y="46" width="${W - 180}" height="52" rx="14" fill="${o.accent}" opacity="0.18"/>`;
+  svg += `<text x="86" y="82" font-family="Poppins,Arial" font-size="26" font-weight="800" fill="${o.accent}" letter-spacing="3">CASE FILE</text>`;
+
+  // Icon badge — top-right corner, colour-matched to the theme accent
+  const badgeR = 52, badgeCx = W - 96, badgeCy = 98;
+  svg += `<circle cx="${badgeCx}" cy="${badgeCy}" r="${badgeR}" fill="${o.accent}" filter="url(#pzGlow)"/>`;
+  svg += `<circle cx="${badgeCx}" cy="${badgeCy}" r="${badgeR}" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="3"/>`;
+  svg += drawDetectiveIcon(iconKind, badgeCx, badgeCy, badgeR * 0.55, o.accent);
+
+  let y = 138;
+  titleLines.forEach(ln => {
+    y += 56;
+    svg += `<text x="60" y="${y}" font-family="Poppins,Arial" font-size="46" font-weight="900" fill="#ffffff">${esc(ln)}</text>`;
   });
-  y += 24;
-  // clues
-  svg += `<text x="90" y="${y}" font-family="Poppins,Arial" font-size="28" font-weight="800" fill="${o.accent}" letter-spacing="2">CLUES</text>`;
+
+  // ── Scenario — bigger, serif for a "case file" feel ─────────────────────
   y += 46;
-  clues.forEach(cl => {
-    svg += `<rect x="90" y="${y-30}" width="28" height="28" rx="6" fill="none" stroke="${C.inkDim}" stroke-width="2.5"/>`;
-    svg += `<text x="134" y="${y-6}" font-family="Georgia,serif" font-size="30" fill="#ffffff">${esc(cl)}</text>`;
-    y += 54;
+  scenarioLines.forEach(ln => {
+    svg += `<text x="60" y="${y}" font-family="Georgia,serif" font-size="38" fill="#e8e8e8">${esc(ln)}</text>`;
+    y += 46;
   });
-  y += 30;
-  // suspects row
-  svg += `<text x="90" y="${y}" font-family="Poppins,Arial" font-size="28" font-weight="800" fill="${o.accent}" letter-spacing="2">SUSPECTS</text>`;
-  y += 40;
-  const sw = (W - 180 - 3 * 20) / 4;
-  suspects.forEach((s, i) => {
-    const x = 90 + i * (sw + 20);
-    svg += `<rect x="${x}" y="${y}" width="${sw}" height="90" rx="16" fill="${C.slotBg}" stroke="${C.stroke}" stroke-width="2"/>`;
-    // avatar circle
-    svg += `<circle cx="${x + 34}" cy="${y + 45}" r="22" fill="${o.accent}" opacity="0.35"/>`;
-    const nameLines = wrapText(s, 12);
-    nameLines.slice(0, 2).forEach((nl, li) => {
-      svg += `<text x="${x + 66}" y="${y + 40 + li*26}" font-family="Poppins,Arial" font-size="22" font-weight="700" fill="#ffffff">${esc(nl)}</text>`;
+
+  // ── CLUES header ─────────────────────────────────────────────────────────
+  y += 26;
+  svg += `<text x="60" y="${y}" font-family="Poppins,Arial" font-size="32" font-weight="800" fill="${o.accent}" letter-spacing="2">CLUES</text>`;
+  y += 22;
+
+  // ── Numbered clue cards — big text, generous spacing, easy to read ──────
+  clueLineData.forEach((lines, i) => {
+    const rowH = clueRowH[i];
+    const cardY = y;
+    svg += `<rect x="56" y="${cardY}" width="${W - 112}" height="${rowH}" rx="18" fill="${C.slotBg}" stroke="${C.stroke}" stroke-width="2"/>`;
+    // number badge
+    svg += `<circle cx="${56 + 42}" cy="${cardY + rowH / 2}" r="26" fill="${o.accent}" opacity="0.9"/>`;
+    svg += `<text x="${56 + 42}" y="${cardY + rowH / 2 + 12}" text-anchor="middle" font-family="Poppins,Arial" font-size="30" font-weight="800" fill="#ffffff">${i + 1}</text>`;
+    // clue text (vertically centred within the card)
+    const textStartY = cardY + rowH / 2 - ((lines.length - 1) * 21) + 12;
+    lines.forEach((ln, li) => {
+      svg += `<text x="112" y="${textStartY + li * 42}" font-family="Georgia,serif" font-size="34" fill="#ffffff">${esc(ln)}</text>`;
     });
+    y += rowH + 18;
   });
+
   svg += closeSvg();
   return { svg, ok: true, warnings: [] };
 }
