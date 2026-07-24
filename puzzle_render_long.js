@@ -319,6 +319,24 @@ async function downloadAudio(url, cacheKey, preferKey) {
   return null;
 }
 
+// Picks one random row's cloudflare_url from the `pause_audios` table.
+// Used to drop a random "pause" voice line into the long-form countdown.
+async function fetchRandomPauseAudioUrl() {
+  try {
+    let rows = await fetchSupabase(`pause_audios?is_active=eq.true&select=cloudflare_url&limit=50`).catch(() => null);
+    if (!rows?.length) rows = await fetchSupabase(`pause_audios?select=cloudflare_url&limit=50`).catch(() => null);
+    if (!rows?.length) { console.log('[PAUSE-AUDIO] no rows found in pause_audios'); return null; }
+    const candidates = rows.map(r => r.cloudflare_url).filter(Boolean);
+    if (!candidates.length) return null;
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    console.log(`[PAUSE-AUDIO] picked ${pick}`);
+    return pick;
+  } catch (e) {
+    console.warn(`[PAUSE-AUDIO] query failed: ${e.message}`);
+    return null;
+  }
+}
+
 async function audioDur(p) {
   try {
     const { stdout } = await withTimeout(
@@ -1206,7 +1224,8 @@ async function buildVideo(quiz, workDir) {
     hookFile, questionIntroFile, optionsIntroFile,
     timeupFile, cta1AudioFile, cta2AudioFile,
     missionIntroFile, cta3AudioFile, cta4AudioFile,
-    sfxFile, countdownFile, bgFile, correctSfxFile, sfxMissionFile
+    sfxFile, countdownFile, bgFile, correctSfxFile, sfxMissionFile,
+    pauseAudioFile
   ] = await Promise.all([
     downloadAudio(quiz.hook_audio_url,               `hook_${quiz.id}`),
     downloadAudio(quiz.question_intro_audio_url,     `qintro_${quiz.id}`),
@@ -1221,8 +1240,10 @@ async function buildVideo(quiz, workDir) {
     downloadAudio(quiz.countdown_music,              `countdown_${quiz.id}`),
     downloadAudio(quiz.background_music||DEFAULT_BG_MUSIC,`bgmusic_${quiz.id}`),
     downloadAudio(quiz.correct_answer_sfx_audio_url, `correctsfx_${quiz.id}`),
-    downloadAudio(quiz.sfx_mission_impossible,       `sfxmission_${quiz.id}`)
+    downloadAudio(quiz.sfx_mission_impossible,       `sfxmission_${quiz.id}`),
+    fetchRandomPauseAudioUrl().then(u => downloadAudio(u, `pauseaudio_${quiz.id}`))
   ]);
+  console.log(`[PAUSE-AUDIO] pauseAudioFile=${pauseAudioFile ? 'OK' : 'NULL (will be skipped)'}`);
   console.log(`[CTA] cta2AudioFile=${cta2AudioFile ? 'OK' : 'NULL (will use TTS fallback)'} cta1AudioFile=${cta1AudioFile ? 'OK' : 'NULL'}`);
   // If bg music download failed, retry with default track
   let resolvedBgFile = bgFile;
@@ -1652,11 +1673,31 @@ async function buildVideo(quiz, workDir) {
   const cdBase=path.join(workDir,'cd_base.mp3');
   if(countdownFile){ await ffmpeg(`-y -stream_loop -1 -i "${countdownFile}" -t ${QTIME} -af "volume=0.75" -ar 44100 -acodec libmp3lame "${cdBase}"`, 'cdLoop'); }
   else { await silence(QTIME,cdBase); }
-  let cdFinal=cdBase;
+
+  // Delayed overlay tracks mixed on top of the countdown bed: the hint/50-50
+  // stings (existing) plus a random pause_audios voice line fired 3s after
+  // the countdown starts (PAUSE_AUDIO_AT). Built dynamically so it still
+  // works if sfxFile and/or pauseAudioFile are unavailable.
+  const PAUSE_AUDIO_AT = 3; // seconds after countdown start
+  const delayedTracks = [];
   if(sfxFile){
+    delayedTracks.push({ file: sfxFile, ms: Math.round(HINT_AT*1000) });
+    delayedTracks.push({ file: sfxFile, ms: Math.round(FIFTY_AT*1000) });
+  }
+  if(pauseAudioFile){
+    delayedTracks.push({ file: pauseAudioFile, ms: Math.round(PAUSE_AUDIO_AT*1000) });
+  }
+
+  let cdFinal=cdBase;
+  if(delayedTracks.length){
     const stingMixed=path.join(workDir,'cd_mixed.mp3');
-    const hMs=Math.round(HINT_AT*1000), fMs=Math.round(FIFTY_AT*1000);
-    await ffmpeg(`-y -i "${cdBase}" -i "${sfxFile}" -i "${sfxFile}" -filter_complex "[1:a]adelay=${hMs}|${hMs}[s0];[2:a]adelay=${fMs}|${fMs}[s1];[0:a][s0][s1]amix=inputs=3:duration=first[a]" -map "[a]" -t ${QTIME} -ar 44100 -acodec libmp3lame "${stingMixed}"`, 'cdStings');
+    const inputs = delayedTracks.map(t=>`-i "${t.file}"`).join(' ');
+    const delayLabels = delayedTracks.map((t,i)=>`[${i+1}:a]adelay=${t.ms}|${t.ms}[s${i}]`).join(';');
+    const mixLabels = ['[0:a]', ...delayedTracks.map((_,i)=>`[s${i}]`)].join('');
+    await ffmpeg(
+      `-y -i "${cdBase}" ${inputs} -filter_complex "${delayLabels};${mixLabels}amix=inputs=${delayedTracks.length+1}:duration=first[a]" -map "[a]" -t ${QTIME} -ar 44100 -acodec libmp3lame "${stingMixed}"`,
+      'cdStings'
+    );
     cdFinal=stingMixed;
   }
   pushClip(await recordedClip(page, cdFinal, QTIME, workDir, 'clip_countdown', '.question-phase'));
