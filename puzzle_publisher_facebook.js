@@ -285,13 +285,15 @@ async function processPublish() {
 
   console.log('[FB-PUBLISHER] Checking for approved videos to publish to Facebook...');
 
-  // ── CRITICAL CHANGE: Poll puzzle short rows (short_status=done_short) ──
+  // Poll across ALL THREE formats' own status column — short_status,
+  // medium_status, long_status — instead of only short_status. Previously
+  // medium/long rows were completely invisible to the Facebook publisher
+  // even when done + approved.
   const rows = await fetchSupabase(
-    'puzzle?short_status=eq.done_short' +        // <- changed from video_status=eq.rendered
+    'puzzle?or=(short_status.eq.done_short,medium_status.eq.done_medium,long_status.eq.done_long)' +
     '&is_human_approved=eq.true' +
     '&is_active=eq.true' +
     '&fb_video_id=is.null' +
-    '&short_video_url=not.is.null' +             // <- ensure short_video_url exists
     '&select=*&order=created_at.desc&limit=1'
   );
 
@@ -302,15 +304,17 @@ async function processPublish() {
 
   const quiz = rows[0];
   console.log(`[FB-PUBLISHER] Publishing: ${quiz.id} — "${quiz.topic}"`);
-  // ── CRITICAL CHANGE: use short_video_url ──
-  console.log(`[FB-PUBLISHER] short_video_url=${quiz.short_video_url}`);
+  // Resolve the video URL for whichever format this row actually is:
+  //   short  → short_video_url   medium → medium_video_url   long → video_url
+  const videoUrlToUse = quiz.short_video_url || quiz.medium_video_url || quiz.video_url;
+  console.log(`[FB-PUBLISHER] video_url=${videoUrlToUse}`);
 
-  if (!quiz.short_video_url) {
-    console.error('[FB-PUBLISHER] short_video_url is NULL — cannot publish without video file in R2');
+  if (!videoUrlToUse) {
+    console.error('[FB-PUBLISHER] video url is NULL — cannot publish without video file in R2');
     await fetchSupabase(`puzzle?id=eq.${quiz.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
-        generation_error: 'fb_publish: short_video_url is null',
+        generation_error: 'fb_publish: video url is null',
         updated_at: new Date().toISOString()
       })
     }).catch(() => {});
@@ -329,9 +333,8 @@ async function processPublish() {
   const videoPath = `/tmp/${quiz.id}_fb.mp4`;
 
   try {
-    // 1. Download video from R2
-    // ── CRITICAL CHANGE: use short_video_url ──
-    await downloadVideo(quiz.short_video_url, videoPath);
+    // 1. Download video from R2 (whichever format's URL this row resolved to)
+    await downloadVideo(videoUrlToUse, videoPath);
 
     // 2. Build description
     const description = buildDescription(quiz);
