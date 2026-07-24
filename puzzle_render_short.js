@@ -84,9 +84,9 @@ const TIMEOUT_JOB       = 25 * 60 * 1000;
 const TIMEOUT_RECORDER  = 90 * 1000;
 const BG_VOL_BASE       = 0.10;
 const BG_VOL_DUCK       = 0.035;
-const SHORT_COUNTDOWN   = 5;    // countdown length (5 sec per spec)
-const SHORT_FIFTY_AT    = 2.5;  // 50/50 fires at t=2.5s INTO the countdown (halfway)
-const SHORT_HINT_AT     = 1;    // hint appears t=1s INTO the countdown
+let SHORT_COUNTDOWN     = 5;    // countdown length — overridden per puzzle_type below
+let SHORT_FIFTY_AT      = 2.5;  // 50/50 fires halfway through the countdown
+let SHORT_HINT_AT       = 1;    // hint appears near the start of the countdown
 // Avatar circle size (px) — matches CSS below
 // Circle diameter = 40% of the 1080px video width (host and dog each).
 const VIDEO_W           = 1080;
@@ -930,6 +930,15 @@ async function buildHookStep(humanHookPath, workDir) {
 // MAIN SHORT VIDEO BUILDER
 // ═══════════════════════════════════════════════════════════════════════
 async function buildShortVideo(quiz, workDir) {
+  // Detective puzzles pack a case file + clue list + options on screen —
+  // give viewers more time to read before the countdown starts eliminating
+  // options. Reset to the standard 5s for every other puzzle type.
+  if (quiz.puzzle_type === 'detective') {
+    SHORT_COUNTDOWN = 8; SHORT_FIFTY_AT = 4;   SHORT_HINT_AT = 1.6;
+  } else {
+    SHORT_COUNTDOWN = 5; SHORT_FIFTY_AT = 2.5; SHORT_HINT_AT = 1;
+  }
+
   const lang     = quiz.lang_code || 'en';
   const voice    = VOICE_MAP[lang] || VOICE_MAP.en;
   const niche    = quiz.niche || 'general';
