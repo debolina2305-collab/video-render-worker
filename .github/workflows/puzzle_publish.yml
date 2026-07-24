@@ -23,7 +23,7 @@ jobs:
           ROWS=$(curl -sf \
             -H "apikey: $SUPABASE_SERVICE_KEY" \
             -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
-            "$SUPABASE_URL/rest/v1/puzzle?short_status=eq.done_short&is_human_approved=eq.true&youtube_video_id=is.null&select=id&limit=1" \
+            "$SUPABASE_URL/rest/v1/puzzle?or=(short_status.eq.done_short,medium_status.eq.done_medium,long_status.eq.done_long)&is_human_approved=eq.true&youtube_video_id=is.null&select=id&limit=1" \
           | jq 'length' 2>/dev/null || echo "0")
           echo "pending=$ROWS" >> $GITHUB_OUTPUT
           echo "[GATE] Puzzle rows ready for YouTube: $ROWS"
