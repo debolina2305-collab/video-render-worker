@@ -239,6 +239,29 @@ function buildMetadata(quiz) {
   const quizNo     = quiz.quiz_no || '';
   const nicheFixed = NICHE_DESC[niche] || NICHE_DESC.general;
 
+  // `explanation_1` is meant to be one short, satisfying sentence — but it's
+  // LLM-generated per-puzzle content, so it isn't guaranteed to come back
+  // clean. When the generator's own validation lets a bad one through (e.g.
+  // a raw chain-of-thought scratchpad instead of a final answer — "Let's
+  // try... not working... I'm stuck... wait,..." running thousands of words)
+  // it used to go into the description VERBATIM. At that length it ate the
+  // entire ~4900-char budget by itself, which crowded out everything meant
+  // to come after it (the niche block, subscribe CTA, hashtags) and left the
+  // description truncated mid-sentence — a wall of incoherent, cut-off text
+  // that's very plausibly what YouTube's `invalidDescription` check was
+  // rejecting. Cap it here, on a clean word boundary, so no single field can
+  // ever dominate or break the description, regardless of what the DB row
+  // contains.
+  const EXPLANATION_MAX_CHARS = 500;
+  function capExplanation(text) {
+    const t = (text || '').trim();
+    if (t.length <= EXPLANATION_MAX_CHARS) return t;
+    const cut = t.slice(0, EXPLANATION_MAX_CHARS);
+    const lastSpace = cut.lastIndexOf(' ');
+    return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trim() + '…';
+  }
+  const explanationSafe = capExplanation(quiz.explanation_1);
+
   // ── Parse trending keywords ────────────────────────────────────────────────
   const kwRaw = (quiz.trend_keywords || '').split(',').map(t => t.trim()).filter(Boolean);
 
@@ -329,7 +352,7 @@ function buildMetadata(quiz) {
     `⚡ Can YOU answer this? Drop your answer in the comments below!`,
     ``,
     // ── BELOW SHOW MORE ──
-    quiz.explanation_1 ? `📚 EXPLANATION:\n${quiz.explanation_1}` : '',
+    explanationSafe ? `📚 EXPLANATION:\n${explanationSafe}` : '',
     ``,
     `━━━━━━━━━━━━━━━━━━━━━━━━━`,
     nicheFixed,
