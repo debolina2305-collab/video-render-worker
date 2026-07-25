@@ -17,7 +17,6 @@ const path        = require('path');
 const puppeteer   = require('puppeteer');
 const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
 const { v4: uuidv4 } = require('uuid');
-const sceneAnimator = require('./puzzle_scene_animator');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
 // ─────────────────────────────────────────────
@@ -1723,25 +1722,6 @@ async function buildVideo(quiz, workDir) {
   await concatAudio(s10p,step10Combined,workDir);
   const answerDur = Math.max(await audioDur(step10Combined), 1.5);
   pushClip(await recordedClip(page, step10Combined, answerDur, workDir, 'clip_answer', '.answer-slide'));
-
-  // ══ STEP 10.5: ANIMATED EXPLANATION SCENE (new) ═══════════════════════
-  // Dynamic CSS-animated walkthrough — crime scene → suspects → clue-by-
-  // clue deduction → culprit reveal — recorded as a real video clip via
-  // Puppeteer's screencast recorder, narrated by real TTS timed to each
-  // clue. Currently scoped to puzzle_type === 'detective'; skipped
-  // (no-op) for every other puzzle type so this is purely additive.
-  if (sceneAnimator.isSceneEligible(quiz)) {
-    try {
-      const sceneClip = await sceneAnimator.recordScene(page, quiz, {
-        workDir, voice, tts, silence, concatAudio, audioDur,
-        ffmpeg, fileExists, withTimeout, TIMEOUT_RECORDER,
-      });
-      pushClip(sceneClip); // isVoice defaults to true — bg music ducks under the scene's narration
-      console.log(`[SCENE] explanation scene added: +${sceneClip.dur.toFixed(2)}s`);
-    } catch (e) {
-      console.warn(`[SCENE] explanation scene failed, continuing without it: ${e.message}`);
-    }
-  }
 
   // ══ FINAL CTA — now comes BEFORE Mission Impossible. ONE cta only: CTA1 if affiliate/
   // cta1_description_text exists, else CTA2. Moved here so MI is the last dramatic beat. ══
