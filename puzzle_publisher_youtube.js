@@ -169,6 +169,26 @@ One question. Ten seconds. Could save your life — or at least win an argument.
 //             channel/niche/geo tags. Tags now primarily drive "suggested
 //             videos" sidebar placement rather than search ranking.
 // ─────────────────────────────────────────────
+// Truncates a string to at most maxLen JS string units WITHOUT ever cutting
+// a surrogate pair in half. The description is emoji-heavy (🧠 🇺🇸 🔍 🔥 📚
+// 📌 🔔 etc.) — every one of those is a supplementary-plane character stored
+// as a 2-unit surrogate pair in a JS string. A plain `.slice(0, 5000)` has no
+// idea where those pairs are, so if the cut lands exactly between the high
+// and low surrogate of one, the result ends in a lone/unpaired surrogate.
+// That's invalid UTF-16 — when it gets JSON-encoded and sent to the YouTube
+// API, YouTube rejects the whole snippet.description with
+// `invalidDescription` (this is exactly what was happening: description
+// length was landing at precisely 5000, the truncation boundary).
+// Truncating by Unicode code point (via Array.from, which iterates by
+// codepoint, not by UTF-16 unit) instead of by raw index guarantees we never
+// split a pair. We also stay a bit under YouTube's hard 5000-char cap for
+// safety margin.
+function truncateSafe(str, maxLen) {
+  const chars = Array.from(str || '');
+  if (chars.length <= maxLen) return chars.join('');
+  return chars.slice(0, maxLen).join('');
+}
+
 function buildMetadata(quiz) {
   const niche = (quiz.niche || 'general').toLowerCase();
 
@@ -258,7 +278,7 @@ function buildMetadata(quiz) {
   //    Full trending keywords line (context signal)
   //    Hashtags
   //
-  const description = [
+  const descriptionRaw = [
     // ── ABOVE THE FOLD ──
     `🧠 Solve more puzzles: jaasblog.online/quiz/brain and earn real ONS tokens!`,
     trendingSentence,                                          // ← top 3 keywords, line 2
@@ -287,8 +307,8 @@ function buildMetadata(quiz) {
     baseHashtags,
     descHashtags,
   ].filter(line => line !== null && line !== undefined && line !== false)
-   .join('\n')
-   .slice(0, 5000); // YouTube max 5000 chars
+   .join('\n');
+  const description = truncateSafe(descriptionRaw, 4900); // stay under YouTube's 5000-char cap, surrogate-safe
 
   // ── TAGS ───────────────────────────────────────────────────────────────────
   // YouTube tag rules: plain ASCII only, max 30 chars per tag, max 500 chars total.
