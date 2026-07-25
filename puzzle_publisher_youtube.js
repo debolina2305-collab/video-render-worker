@@ -169,20 +169,56 @@ One question. Ten seconds. Could save your life — or at least win an argument.
 //             channel/niche/geo tags. Tags now primarily drive "suggested
 //             videos" sidebar placement rather than search ranking.
 // ─────────────────────────────────────────────
+// Strips characters that are structurally invalid in a JSON/UTF-8 request
+// body: C0/C1 control characters (anything the YouTube API's JSON parser
+// won't accept inside a string value) and — the more likely culprit here —
+// UNPAIRED UTF-16 SURROGATES. A JS string can legally contain a lone
+// surrogate (e.g. if upstream content — LLM output, a DB round-trip, a
+// copy-paste — dropped or mangled one half of an emoji's surrogate pair).
+// That string looks fine in JS and even logs fine, but a lone surrogate has
+// NO valid UTF-8 representation, so when it's serialized into the JSON
+// request body, the result is malformed UTF-8 and the YouTube API rejects
+// snippet.description outright with `invalidDescription` — independent of
+// length (this is why shortening the string via truncateSafe() alone did
+// NOT fix it: the bad character was already inside the text, not at the
+// point we cut it). This walks the string by UTF-16 unit, keeps any
+// complete high+low surrogate pair intact, and drops anything that isn't
+// part of a valid pair.
+function stripInvalidUnicode(str) {
+  if (!str) return '';
+  let out = '';
+  let stripped = 0;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    // C0/C1 control chars, except \n (0x0A) and \t (0x09)
+    if ((code <= 0x08) || code === 0x0B || code === 0x0C ||
+        (code >= 0x0E && code <= 0x1F) || (code >= 0x7F && code <= 0x9F)) {
+      stripped++; continue;
+    }
+    // High surrogate — keep only if immediately followed by its low surrogate
+    if (code >= 0xD800 && code <= 0xDBFF) {
+      const next = str.charCodeAt(i + 1);
+      if (next >= 0xDC00 && next <= 0xDFFF) { out += str[i] + str[i + 1]; i++; }
+      else { stripped++; }
+      continue;
+    }
+    // Lone low surrogate with no preceding high surrogate
+    if (code >= 0xDC00 && code <= 0xDFFF) { stripped++; continue; }
+    out += str[i];
+  }
+  if (stripped > 0) console.warn(`[META] stripInvalidUnicode: removed ${stripped} invalid unit(s) from description/title`);
+  return out;
+}
+
 // Truncates a string to at most maxLen JS string units WITHOUT ever cutting
 // a surrogate pair in half. The description is emoji-heavy (🧠 🇺🇸 🔍 🔥 📚
 // 📌 🔔 etc.) — every one of those is a supplementary-plane character stored
 // as a 2-unit surrogate pair in a JS string. A plain `.slice(0, 5000)` has no
 // idea where those pairs are, so if the cut lands exactly between the high
-// and low surrogate of one, the result ends in a lone/unpaired surrogate.
-// That's invalid UTF-16 — when it gets JSON-encoded and sent to the YouTube
-// API, YouTube rejects the whole snippet.description with
-// `invalidDescription` (this is exactly what was happening: description
-// length was landing at precisely 5000, the truncation boundary).
-// Truncating by Unicode code point (via Array.from, which iterates by
-// codepoint, not by UTF-16 unit) instead of by raw index guarantees we never
-// split a pair. We also stay a bit under YouTube's hard 5000-char cap for
-// safety margin.
+// and low surrogate of one, the result ends in a lone/unpaired surrogate at
+// the tail — which is exactly what stripInvalidUnicode() above now guards
+// against structurally, but truncating on a codepoint boundary means we
+// never introduce a NEW one at the cut point either.
 function truncateSafe(str, maxLen) {
   const chars = Array.from(str || '');
   if (chars.length <= maxLen) return chars.join('');
@@ -226,7 +262,7 @@ function buildMetadata(quiz) {
       console.log(`[META] Title already contains top keyword: "${topKw}"`);
     }
   }
-  title = title.slice(0, 100);
+  title = stripInvalidUnicode(title).slice(0, 100);
 
   // ── Trending keyword lines for description ─────────────────────────────────
   // ALL keywords as a natural bullet line — appears on line 2 of description
@@ -308,7 +344,7 @@ function buildMetadata(quiz) {
     descHashtags,
   ].filter(line => line !== null && line !== undefined && line !== false)
    .join('\n');
-  const description = truncateSafe(descriptionRaw, 4900); // stay under YouTube's 5000-char cap, surrogate-safe
+  const description = truncateSafe(stripInvalidUnicode(descriptionRaw), 4900); // stay under YouTube's 5000-char cap, surrogate-safe
 
   // ── TAGS ───────────────────────────────────────────────────────────────────
   // YouTube tag rules: plain ASCII only, max 30 chars per tag, max 500 chars total.
