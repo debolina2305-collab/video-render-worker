@@ -398,6 +398,9 @@ function buildMetadata(quiz) {
 
   console.log(`[META] title="${title}"`);
   console.log(`[META] description length=${description.length}`);
+  console.log(`[META] === FULL DESCRIPTION START ===`);
+  console.log(description);
+  console.log(`[META] === FULL DESCRIPTION END ===`);
   console.log(`[META] tags (${finalTags.length}): ${JSON.stringify(finalTags)}`);
   console.log(`[META] trending keywords in desc: ${kwRaw.slice(0,5).join(' | ')}${kwRaw.length > 5 ? ` ... +${kwRaw.length-5} more` : ''}`);
 
