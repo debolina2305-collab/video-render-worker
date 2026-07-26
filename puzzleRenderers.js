@@ -487,26 +487,190 @@ function renderOddOneOut(spec, o) {
   return { svg, ok: true, warnings: [] };
 }
 
-// ── REBUS (token pills → guess the phrase) ────────────────────────────────
+// ── Small curated vector icon set for common rebus words. Deliberately NOT
+// emoji (see file header: this engine never uses emoji/foreignObject — has to
+// render pixel-identically with no font dependency). Word → icon key; falls
+// back to a plain (but still upsized) pill when a token isn't in the map.
+const REBUS_ICON_WORDS = {
+  SUN: 'sun', SUNNY: 'sun',
+  RAIN: 'rain', RAINY: 'rain', RAINBOW: 'rain',
+  SEA: 'wave', WAVE: 'wave', WAVES: 'wave', OCEAN: 'wave',
+  HOT: 'fire', FIRE: 'fire', FLAME: 'fire', HEAT: 'fire',
+  HAND: 'hand', PALM: 'hand', HANDS: 'hand',
+  EYE: 'eye', EYES: 'eye',
+  BEE: 'bee', BEES: 'bee',
+  STAR: 'star', STARS: 'star',
+  MOON: 'moon', NIGHT: 'moon',
+  TREE: 'tree', TREES: 'tree', WOOD: 'tree',
+  SNOW: 'snow', ICE: 'snow', COLD: 'snow', WINTER: 'snow',
+  HEART: 'heart', LOVE: 'heart',
+  KEY: 'key', KEYS: 'key',
+  CLOCK: 'clock', TIME: 'clock', HOUR: 'clock',
+  HOUSE: 'house', HOME: 'house',
+  CLOUD: 'cloud', CLOUDY: 'cloud', CLOUDS: 'cloud',
+  EAR: 'ear', EARS: 'ear',
+  CROWN: 'crown', KING: 'crown', QUEEN: 'crown',
+  BOOK: 'book', READ: 'book', PAGE: 'book',
+  WIND: 'wind', WINDY: 'wind',
+};
+function drawRebusIcon(word, cx, cy, r, o) {
+  const key = REBUS_ICON_WORDS[String(word || '').toUpperCase().trim()];
+  if (!key) return null;
+  const a  = o.accent, a2 = o.accent2 || '#22c55e', a3 = o.accent3 || '#f4c430';
+  switch (key) {
+    case 'sun': {
+      let rays = '';
+      for (let i = 0; i < 8; i++) {
+        const ang = i * Math.PI / 4;
+        const x1 = cx + Math.cos(ang) * r * 1.15, y1 = cy + Math.sin(ang) * r * 1.15;
+        const x2 = cx + Math.cos(ang) * r * 1.65, y2 = cy + Math.sin(ang) * r * 1.65;
+        rays += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${a3}" stroke-width="7" stroke-linecap="round"/>`;
+      }
+      return `${rays}<circle cx="${cx}" cy="${cy}" r="${r * 0.72}" fill="${a3}"/>`;
+    }
+    case 'rain': {
+      const cRy = r * 0.55;
+      let drops = '';
+      [-0.55, 0, 0.55].forEach((dx, i) => {
+        const x = cx + dx * r, y1 = cy + r * 0.35, y2 = y1 + r * 0.75 + (i === 1 ? 10 : 0);
+        drops += `<line x1="${x.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${(x-8).toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${a}" stroke-width="7" stroke-linecap="round"/>`;
+      });
+      return `<ellipse cx="${cx}" cy="${cy - r*0.25}" rx="${r*1.05}" ry="${cRy}" fill="#e6edf5"/>${drops}`;
+    }
+    case 'wave': {
+      let waves = '';
+      [-0.35, 0.05, 0.45].forEach((dy) => {
+        const y = cy + dy * r;
+        waves += `<path d="M ${cx - r*1.15} ${y} Q ${cx - r*0.55} ${y - r*0.35} ${cx} ${y} Q ${cx + r*0.55} ${y + r*0.35} ${cx + r*1.15} ${y}" fill="none" stroke="${a}" stroke-width="7" stroke-linecap="round"/>`;
+      });
+      return waves;
+    }
+    case 'fire': {
+      return `<path d="M ${cx} ${cy+r*1.1} C ${cx-r*0.95} ${cy+r*0.7} ${cx-r*0.6} ${cy-r*0.1} ${cx-r*0.15} ${cy-r*1.15}
+        C ${cx+r*0.1} ${cy-r*0.35} ${cx+r*0.65} ${cy-r*0.55} ${cx+r*0.35} ${cy-r*1.0}
+        C ${cx+r*0.95} ${cy-r*0.45} ${cx+r*0.95} ${cy+r*0.55} ${cx} ${cy+r*1.1} Z" fill="#ff6a2b"/>
+        <path d="M ${cx} ${cy+r*0.75} C ${cx-r*0.42} ${cy+r*0.5} ${cx-r*0.28} ${cy} ${cx} ${cy-r*0.55}
+        C ${cx+r*0.28} ${cy} ${cx+r*0.42} ${cy+r*0.5} ${cx} ${cy+r*0.75} Z" fill="${a3}"/>`;
+    }
+    case 'hand': {
+      const fw = r * 0.34, gap = r * 0.12;
+      let fingers = '';
+      [-1.5, -0.5, 0.5, 1.5].forEach((slot, i) => {
+        const fx = cx + slot * (fw + gap) - fw / 2;
+        const flen = r * (i === 0 || i === 3 ? 0.85 : 1.05);
+        fingers += `<rect x="${fx.toFixed(1)}" y="${(cy - r*0.2 - flen).toFixed(1)}" width="${fw.toFixed(1)}" height="${flen.toFixed(1)}" rx="${fw*0.45}" fill="${a}"/>`;
+      });
+      return `${fingers}<rect x="${(cx - r*0.95).toFixed(1)}" y="${(cy - r*0.2).toFixed(1)}" width="${(r*1.9).toFixed(1)}" height="${(r*1.05).toFixed(1)}" rx="${r*0.35}" fill="${a}"/>
+        <rect x="${(cx - r*1.25).toFixed(1)}" y="${(cy + r*0.05).toFixed(1)}" width="${(r*0.55).toFixed(1)}" height="${(r*0.65).toFixed(1)}" rx="${r*0.25}" fill="${a}" transform="rotate(-35 ${(cx - r*1.0).toFixed(1)} ${(cy + r*0.35).toFixed(1)})"/>`;
+    }
+    case 'eye': {
+      return `<path d="M ${cx-r*1.2} ${cy} Q ${cx} ${cy-r*0.85} ${cx+r*1.2} ${cy} Q ${cx} ${cy+r*0.85} ${cx-r*1.2} ${cy} Z" fill="#ffffff"/>
+        <circle cx="${cx}" cy="${cy}" r="${r*0.42}" fill="${a}"/>
+        <circle cx="${cx}" cy="${cy}" r="${r*0.16}" fill="#0a0f1c"/>`;
+    }
+    case 'bee': {
+      return `<ellipse cx="${cx - r*0.55}" cy="${cy - r*0.35}" rx="${r*0.55}" ry="${r*0.35}" fill="#eaf6ff" opacity="0.85" transform="rotate(-20 ${cx-r*0.55} ${cy-r*0.35})"/>
+        <ellipse cx="${cx + r*0.55}" cy="${cy - r*0.35}" rx="${r*0.55}" ry="${r*0.35}" fill="#eaf6ff" opacity="0.85" transform="rotate(20 ${cx+r*0.55} ${cy-r*0.35})"/>
+        <ellipse cx="${cx}" cy="${cy}" rx="${r*0.85}" ry="${r*0.6}" fill="#1a1a1a"/>
+        <rect x="${(cx - r*0.85).toFixed(1)}" y="${(cy - r*0.15).toFixed(1)}" width="${(r*1.7).toFixed(1)}" height="${(r*0.22).toFixed(1)}" fill="${a3}"/>
+        <rect x="${(cx - r*0.85).toFixed(1)}" y="${(cy + r*0.25).toFixed(1)}" width="${(r*1.7).toFixed(1)}" height="${(r*0.22).toFixed(1)}" fill="${a3}"/>`;
+    }
+    case 'star':
+      return drawIcon('star', cx, cy, r, o);
+    case 'moon':
+      return `<path d="M ${cx+r*0.55} ${cy-r*1.05} A ${r} ${r} 0 1 0 ${cx+r*0.55} ${cy+r*1.05}
+        A ${r*0.72} ${r*0.72} 0 1 1 ${cx+r*0.55} ${cy-r*1.05} Z" fill="#f4e6a8"/>`;
+    case 'tree':
+      return `<circle cx="${cx}" cy="${cy - r*0.25}" r="${r*0.95}" fill="${a2}"/>
+        <rect x="${(cx-r*0.16).toFixed(1)}" y="${(cy+r*0.45).toFixed(1)}" width="${(r*0.32).toFixed(1)}" height="${(r*0.85).toFixed(1)}" rx="4" fill="#8a5a34"/>`;
+    case 'snow':
+      return [0, 60, 120].map(deg => {
+        const rad = deg * Math.PI / 180;
+        const x1 = cx - Math.cos(rad) * r, y1 = cy - Math.sin(rad) * r;
+        const x2 = cx + Math.cos(rad) * r, y2 = cy + Math.sin(rad) * r;
+        return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#e6edf5" stroke-width="6" stroke-linecap="round"/>`;
+      }).join('') + `<circle cx="${cx}" cy="${cy}" r="4" fill="#e6edf5"/>`;
+    case 'heart':
+      return drawIcon('heart', cx, cy, r, o);
+    case 'key':
+      return `<circle cx="${(cx - r*0.55).toFixed(1)}" cy="${cy}" r="${r*0.5}" fill="none" stroke="${a3}" stroke-width="8"/>
+        <rect x="${(cx - r*0.05).toFixed(1)}" y="${(cy-r*0.12).toFixed(1)}" width="${(r*1.25).toFixed(1)}" height="${(r*0.24).toFixed(1)}" fill="${a3}"/>
+        <rect x="${(cx + r*0.55).toFixed(1)}" y="${(cy+r*0.1).toFixed(1)}" width="${(r*0.2).toFixed(1)}" height="${(r*0.3).toFixed(1)}" fill="${a3}"/>
+        <rect x="${(cx + r*0.9).toFixed(1)}" y="${(cy+r*0.1).toFixed(1)}" width="${(r*0.2).toFixed(1)}" height="${(r*0.42).toFixed(1)}" fill="${a3}"/>`;
+    case 'clock':
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#ffffff" stroke-width="7"/>
+        <line x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy-r*0.55}" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+        <line x1="${cx}" y1="${cy}" x2="${(cx+r*0.4).toFixed(1)}" y2="${cy}" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+        <circle cx="${cx}" cy="${cy}" r="4" fill="${a}"/>`;
+    case 'house':
+      return `<polygon points="${cx-r},${cy-r*0.05} ${cx},${cy-r*1.05} ${cx+r},${cy-r*0.05}" fill="${a3}"/>
+        <rect x="${(cx-r*0.75).toFixed(1)}" y="${(cy-r*0.05).toFixed(1)}" width="${(r*1.5).toFixed(1)}" height="${(r*1.05).toFixed(1)}" fill="${a}"/>
+        <rect x="${(cx-r*0.2).toFixed(1)}" y="${(cy+r*0.3).toFixed(1)}" width="${(r*0.4).toFixed(1)}" height="${(r*0.75).toFixed(1)}" fill="#0a0f1c"/>`;
+    case 'cloud':
+      return `<ellipse cx="${cx-r*0.5}" cy="${cy+r*0.15}" rx="${r*0.55}" ry="${r*0.42}" fill="#e6edf5"/>
+        <ellipse cx="${cx+r*0.35}" cy="${cy}" rx="${r*0.68}" ry="${r*0.5}" fill="#e6edf5"/>
+        <ellipse cx="${cx-r*0.05}" cy="${cy-r*0.2}" rx="${r*0.5}" ry="${r*0.4}" fill="#e6edf5"/>`;
+    case 'ear':
+      return `<path d="M ${cx-r*0.3} ${cy+r*1.05} C ${cx-r*1.15} ${cy+r*0.55} ${cx-r*1.05} ${cy-r*0.95} ${cx-r*0.1} ${cy-r*1.05}
+        C ${cx+r*0.75} ${cy-r*1.1} ${cx+r*0.85} ${cy-r*0.05} ${cx+r*0.35} ${cy+r*0.35}
+        C ${cx} ${cy+r*0.6} ${cx+r*0.1} ${cy+r*0.95} ${cx-r*0.3} ${cy+r*1.05} Z" fill="none" stroke="${a}" stroke-width="8" stroke-linecap="round"/>`;
+    case 'crown':
+      return `<polygon points="${cx-r},${cy+r*0.55} ${cx-r*0.6},${cy-r*0.5} ${cx-r*0.15},${cy+r*0.1} ${cx},${cy-r*0.95} ${cx+r*0.15},${cy+r*0.1} ${cx+r*0.6},${cy-r*0.5} ${cx+r},${cy+r*0.55}" fill="${a3}"/>
+        <rect x="${(cx-r).toFixed(1)}" y="${(cy+r*0.55).toFixed(1)}" width="${(r*2).toFixed(1)}" height="${(r*0.3).toFixed(1)}" fill="${a3}"/>`;
+    case 'book':
+      return `<path d="M ${cx-r*1.05} ${cy-r*0.8} Q ${cx-r*1.15} ${cy-r*0.95} ${cx-r*0.9} ${cy-r*0.9} L ${cx-r*0.04} ${cy-r*0.72} L ${cx-r*0.04} ${cy+r*0.78} L ${cx-r*0.9} ${cy+r*0.95} Q ${cx-r*1.15} ${cy+r*0.98} ${cx-r*1.05} ${cy+r*0.82} Z" fill="${a}"/>
+        <path d="M ${cx+r*1.05} ${cy-r*0.8} Q ${cx+r*1.15} ${cy-r*0.95} ${cx+r*0.9} ${cy-r*0.9} L ${cx+r*0.04} ${cy-r*0.72} L ${cx+r*0.04} ${cy+r*0.78} L ${cx+r*0.9} ${cy+r*0.95} Q ${cx+r*1.15} ${cy+r*0.98} ${cx+r*1.05} ${cy+r*0.82} Z" fill="${a}" opacity="0.75"/>`;
+    case 'wind':
+      return [-0.4, 0, 0.4].map((dy, i) => {
+        const y = cy + dy * r, len = r * (1.1 - i * 0.1);
+        return `<path d="M ${cx-len} ${y} H ${cx+len*0.5} Q ${cx+len*0.9} ${y} ${cx+len*0.9} ${y-r*0.22} Q ${cx+len*0.9} ${y-r*0.4} ${cx+len*0.6} ${y-r*0.35}" fill="none" stroke="${a}" stroke-width="6" stroke-linecap="round"/>`;
+      }).join('');
+    default:
+      return null;
+  }
+}
+
+// ── REBUS (icon-topped token pills → guess the phrase) ─────────────────────
+// Larger, more attractive pills than the original plain-text version, with a
+// small vector icon above any token whose word is in REBUS_ICON_WORDS (never
+// emoji — see file header). Tokens with no icon match still get the bigger,
+// more decorative pill treatment, just without the icon.
 function renderRebus(spec, o) {
   const tokens = Array.isArray(spec.tokens) && spec.tokens.length ? spec.tokens : ['RAIN', '+', 'BOW'];
-  const W = 960, H = 520;
+  const pad = 40, fs = 68, iconR = 46;
+  const hasIcon = tokens.map(t => (String(t) === '+' || String(t) === '=') ? false : !!REBUS_ICON_WORDS[String(t).toUpperCase().trim()]);
+  const widths = tokens.map((t, i) => {
+    if (String(t) === '+' || String(t) === '=') return 70;
+    const textW = String(t).length * fs * 0.62;
+    return Math.max(hasIcon[i] ? 190 : 150, textW + pad * 2);
+  });
+  const gap = 26;
+  const totalW = widths.reduce((s, w) => s + w, 0) + gap * (tokens.length - 1);
+  const W = Math.max(960, totalW + 120);
+  const pillH = 220; // tall enough for icon + text stacked
+  const H = 120 + pillH + 140;
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'Guess the Phrase', o);
-  // measure pill widths (approx)
-  const pad = 34, fs = 62;
-  const widths = tokens.map(t => (String(t) === '+' || String(t) === '=' ? 60 : Math.max(120, String(t).length * fs * 0.62 + pad * 2)));
-  const gap = 24;
-  const totalW = widths.reduce((s, w) => s + w, 0) + gap * (tokens.length - 1);
+
   let x = (W - totalW) / 2;
-  const y = 260;
+  const pillTop = 150, pillCy = pillTop + pillH / 2;
   tokens.forEach((t, i) => {
     const w = widths[i];
     if (String(t) === '+' || String(t) === '=') {
-      svg += `<text x="${x + w/2}" y="${y + 24}" text-anchor="middle" font-size="${fs}" font-weight="800" fill="${C.inkDim}">${esc(t)}</text>`;
+      svg += `<text x="${x + w/2}" y="${pillCy + 22}" text-anchor="middle" font-size="${fs}" font-weight="800" fill="${C.inkDim}">${esc(t)}</text>`;
     } else {
-      svg += `<rect x="${x}" y="${y - 58}" width="${w}" height="110" rx="24" fill="${o.accent}" fill-opacity="0.14" stroke="${o.accent}" stroke-width="3"/>`;
-      svg += `<text x="${x + w/2}" y="${y + 18}" text-anchor="middle" font-family="Poppins,Arial" font-size="${fs}" font-weight="800" fill="#ffffff">${esc(t)}</text>`;
+      // Card background: gradient fill + glow border, bigger + more attractive
+      svg += `<rect x="${x}" y="${pillTop}" width="${w}" height="${pillH}" rx="28"
+        fill="url(#pzPanel)" stroke="${o.accent}" stroke-width="4" filter="url(#pzGlow)"/>
+        <rect x="${x+4}" y="${pillTop+4}" width="${w-8}" height="${pillH-8}" rx="24"
+        fill="${o.accent}" fill-opacity="0.16"/>`;
+      const icon = hasIcon[i] ? drawRebusIcon(t, x + w / 2, pillTop + 68, iconR, o) : null;
+      if (icon) {
+        svg += icon;
+        svg += `<text x="${x + w/2}" y="${pillTop + pillH - 34}" text-anchor="middle" font-family="Poppins,Arial" font-size="${fs*0.72}" font-weight="800" fill="#ffffff">${esc(t)}</text>`;
+      } else {
+        svg += `<text x="${x + w/2}" y="${pillCy + 24}" text-anchor="middle" font-family="Poppins,Arial" font-size="${fs}" font-weight="800" fill="#ffffff">${esc(t)}</text>`;
+      }
     }
     x += w + gap;
   });

@@ -10,17 +10,21 @@
 // puzzle_spec into the visual and re-implementing it would just re-introduce
 // the same rendering bugs it already fixed.
 //
-// SCREEN / SCRIPT (exactly what was asked for — nothing else):
+// SCREEN / SCRIPT (updated):
 //   Screen 1 (whole video): the puzzle SVG, EXTREMELY large, with the 4
-//   options below it. NOTHING ELSE on screen — no logo, no host/avatar clip,
-//   no marquee, no CTA card, no hint. A small countdown badge appears in the
-//   corner once the countdown starts, and a "pause" caption appears partway
-//   through the countdown, then the correct option is highlighted at the end.
+//   options below it, PLUS a hint line shown from the very start. No logo,
+//   no host/avatar clip, no marquee, no CTA card. A small countdown badge
+//   appears in the corner once the countdown starts, a "pause" caption
+//   appears partway through the countdown, a 50/50 eliminates two wrong
+//   options 2 seconds into the countdown, then the correct option is
+//   highlighted at the end. The puzzle card animates in and gently pulses
+//   throughout instead of sitting static.
 //
-//   t=0.00                puzzle + options appear, silent
-//   t=0.00                TTS: "Can you solve it?"
+//   t=0.00                puzzle + options + hint appear (fade/scale-in), silent
+//   t=0.00                TTS: "Can you solve it within 5 seconds?"
 //   (tts ends) +0.25s     5-second countdown starts (corner badge, 5→1)
 //   +1.50s into countdown TTS: "Pause the video if you need more time!"
+//   +2.00s into countdown 50/50 — two wrong options fade + get crossed out
 //   +5.00s into countdown countdown ends → correct option highlighted
 //   +0.15s after reveal   TTS: "Did you find the answer within 5 seconds?
 //                                Write it in the comments!"
@@ -102,12 +106,13 @@ const VIDEO_W            = 1080;
 const VIDEO_H            = 1920;
 
 const COUNTDOWN_SECONDS  = 5;     // fixed — "can you solve it within 5 sec"
-const GAP_AFTER_ASK_TTS  = 0.25;  // silence between "Can you solve it?" and countdown start
+const GAP_AFTER_ASK_TTS  = 0.25;  // silence between "Can you solve it...?" and countdown start
 const PAUSE_CAPTION_AT   = 1.5;   // seconds INTO the countdown when the pause line fires
+const FIFTY_FIFTY_AT     = 2.0;   // seconds INTO the countdown when two wrong options fade out
 const GAP_BEFORE_REVEAL_TTS = 0.15;
 const TAIL_BUFFER        = 0.40;  // silence after the final line before the clip ends
 
-const LINE_ASK    = 'Can you solve it?';
+const LINE_ASK    = 'Can you solve it within 5 seconds?';
 const LINE_PAUSE  = 'Pause the video if you need more time!';
 const LINE_REVEAL = 'Did you find the answer within 5 seconds? Write it in the comments!';
 
@@ -232,10 +237,22 @@ async function claimMicroRow() {
   } catch {}
 
   // Fresh/pending rows first (NULL == never touched by the micro pipeline)
-  let candidates = await fetchSupabase(
-    `puzzle?or=(micro_status.is.null,micro_status.eq.pending_micro)` +
-    `&is_active=eq.true&puzzle_enriched=eq.true&order=created_at.desc&limit=1&select=*`
-  ).catch(() => null);
+  let candidates;
+  try {
+    candidates = await fetchSupabase(
+      `puzzle?or=(micro_status.is.null,micro_status.eq.pending_micro)` +
+      `&is_active=eq.true&puzzle_enriched=eq.true&order=created_at.desc&limit=1&select=*`
+    );
+  } catch (e) {
+    // Previously this was `.catch(() => null)`, which made a genuine query
+    // failure (e.g. the micro_status column not existing yet — see the
+    // REQUIRED ONE-TIME SUPABASE MIGRATION comment at the top of this file)
+    // print the exact same "No pending puzzle rows." as a real empty result.
+    // That's a silent failure mode — log it loudly so it's diagnosable.
+    console.error(`[MICRO] Query for pending rows FAILED (not just empty): ${e.message}`);
+    console.error('[MICRO] If this mentions micro_status/micro_video_url, the one-time migration in the file header has not been run yet.');
+    return null;
+  }
 
   if (!candidates?.length) { console.log('[MICRO] No pending puzzle rows.'); return null; }
 
@@ -267,6 +284,7 @@ function buildHtml(quiz, svgHtml) {
   const accent  = quiz.theme_accent_primary   || '#00e0ff';
   const accent2 = quiz.theme_accent_secondary || '#22c55e';
   const question = quiz.question_1 || '';
+  const hint     = quiz.hint_1 || '';
   const options  = (quiz.options_1 || []).slice(0, 4);
   const labels   = ['A', 'B', 'C', 'D'];
 
@@ -387,7 +405,51 @@ function buildHtml(quiz, svgHtml) {
     text-shadow: 0 2px 10px rgba(0,0,0,0.9);
   }
 
-  /* ── Pause caption — bottom banner, appears mid-countdown only ── */
+  /* ── Entrance + continuous "alive" motion (recorded frame-by-frame, so
+         this shows up in the final video, not just in a live browser) ── */
+  @keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(26px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes puzzlePulse {
+    0%, 100% { box-shadow: 0 10px 46px rgba(0,0,0,0.55), 0 0 60px color-mix(in srgb, ${accent} 34%, transparent); transform: scale(1); }
+    50%      { box-shadow: 0 10px 54px rgba(0,0,0,0.6), 0 0 88px color-mix(in srgb, ${accent} 50%, transparent); transform: scale(1.012); }
+  }
+  .question-line     { animation: fadeSlideIn 0.5s ease both; }
+  .hint-line          { animation: fadeSlideIn 0.5s ease 0.08s both; }
+  .puzzle-visual-wrap { animation: fadeSlideIn 0.55s ease 0.16s both, puzzlePulse 2.6s ease-in-out 0.75s infinite; }
+  .options-grid .opt  { animation: fadeSlideIn 0.45s ease both; }
+  .options-grid .opt:nth-child(1) { animation-delay: 0.28s; }
+  .options-grid .opt:nth-child(2) { animation-delay: 0.34s; }
+  .options-grid .opt:nth-child(3) { animation-delay: 0.40s; }
+  .options-grid .opt:nth-child(4) { animation-delay: 0.46s; }
+
+  /* ── Hint line — shown from t=0, sits between question and puzzle ── */
+  .hint-line {
+    max-width: 90vw;
+    text-align:center;
+    color:#ffd24a;
+    font-size:26px;
+    font-weight:800;
+    line-height:1.25;
+    padding: 8px 20px;
+    margin-bottom: 12px;
+    background: rgba(0,0,0,0.45);
+    border: 2px dashed rgba(255,210,74,0.55);
+    border-radius: 16px;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.8);
+  }
+
+  /* ── 50/50 — two wrong options fade + get crossed out, 2s into countdown ── */
+  .opt.opt-eliminated {
+    opacity: 0.28;
+    filter: grayscale(0.6);
+    transform: scale(0.97);
+  }
+  .opt.opt-eliminated .opt-text { text-decoration: line-through; }
+  .opt.opt-eliminated .opt-mark::after { content: '✖'; font-size: 30px; color: #ff5c5c; }
+
+
   .pause-caption {
     position: fixed;
     left: 5vw; right: 5vw; bottom: 54px;
@@ -411,6 +473,7 @@ function buildHtml(quiz, svgHtml) {
 </head>
 <body>
   <div class="question-line">${esc(question)}</div>
+  ${hint ? `<div class="hint-line">💡 HINT: ${esc(hint)}</div>` : ''}
   <div class="puzzle-visual-wrap">${svgHtml}</div>
   <div class="options-grid">${optionsHtml}</div>
 
@@ -508,10 +571,11 @@ async function buildMicroVideo(quiz, workDir) {
   // ── 2. Timeline (all absolute offsets, seconds from t=0) ───────────────
   const countdownStart = askDur + GAP_AFTER_ASK_TTS;
   const pauseAt         = countdownStart + PAUSE_CAPTION_AT;
+  const fiftyFiftyAt      = countdownStart + FIFTY_FIFTY_AT;
   const revealAt         = countdownStart + COUNTDOWN_SECONDS;
   const revealTtsAt       = revealAt + GAP_BEFORE_REVEAL_TTS;
   const totalDur           = revealTtsAt + revealDur + TAIL_BUFFER;
-  console.log(`[MICRO] Timeline — countdownStart=${countdownStart.toFixed(2)} pauseAt=${pauseAt.toFixed(2)} revealAt=${revealAt.toFixed(2)} total=${totalDur.toFixed(2)}s`);
+  console.log(`[MICRO] Timeline — countdownStart=${countdownStart.toFixed(2)} pauseAt=${pauseAt.toFixed(2)} fiftyFiftyAt=${fiftyFiftyAt.toFixed(2)} revealAt=${revealAt.toFixed(2)} total=${totalDur.toFixed(2)}s`);
 
   // ── 3. Optional reused sfx from the puzzle row (best-effort, never blocks) ──
   const [tickFile, stingFile] = await Promise.all([
@@ -564,6 +628,21 @@ async function buildMicroVideo(quiz, workDir) {
   const options = quiz.options_1 || [];
   const correctIdx = options.findIndex(o => (o || '').trim().toLowerCase() === (quiz.correct_answer_1 || '').trim().toLowerCase());
 
+  // 50/50 — indices to KEEP come from keep_5050_1 (set by the generator; always
+  // includes the correct index + one plausible wrong one). Whatever's left of
+  // the 4 options gets eliminated at fiftyFiftyAt. Falls back to keeping one
+  // random wrong option if keep_5050_1 is missing/malformed, so exactly one
+  // wrong option always survives alongside the correct one.
+  let keepIdx = (Array.isArray(quiz.keep_5050_1) ? quiz.keep_5050_1 : [])
+    .map(v => parseInt(v, 10)).filter(n => !isNaN(n) && n >= 0 && n <= 3);
+  if (correctIdx >= 0 && !keepIdx.includes(correctIdx)) keepIdx = [correctIdx];
+  keepIdx = [...new Set(keepIdx)];
+  if (keepIdx.length < 2) {
+    const wrongPool = [0, 1, 2, 3].filter(i => i !== correctIdx && !keepIdx.includes(i));
+    if (wrongPool.length) keepIdx.push(wrongPool[Math.floor(Math.random() * wrongPool.length)]);
+  }
+  const eliminatedIdx = [0, 1, 2, 3].filter(i => !keepIdx.includes(i));
+
   const events = [
     {
       at: countdownStart,
@@ -581,6 +660,9 @@ async function buildMicroVideo(quiz, workDir) {
       const n = document.getElementById('cdNum'); if (n) n.textContent = '4';
     }) },
     { at: pauseAt, fn: (p) => p.evaluate(() => { document.getElementById('pauseCaption')?.classList.add('show'); }) },
+    { at: fiftyFiftyAt, fn: (p) => p.evaluate((idxs) => {
+      idxs.forEach(i => document.getElementById(`opt-${i}`)?.classList.add('opt-eliminated'));
+    }, eliminatedIdx) },
     { at: countdownStart + 2, fn: (p) => p.evaluate(() => {
       document.getElementById('cdRing')?.style.setProperty('--pct', '60');
       const n = document.getElementById('cdNum'); if (n) n.textContent = '3';
