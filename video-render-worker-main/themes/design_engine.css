@@ -1,0 +1,338 @@
+/* ═══════════════════════════════════════════════════════════════
+   DESIGN ENGINE CSS
+   Injected as {{design_engine_css}} in quiz_template.html
+   Defines: 8 layout variants, 6 countdown styles, 6 transitions
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─────────────────────────────────────────────
+   LAYOUT VARIANT 1: standard (default — no overrides needed)
+   Current layout as-is
+   ───────────────────────────────────────────── */
+
+/* ─────────────────────────────────────────────
+   LAYOUT VARIANT 2: bold
+   Larger question, bigger impact, compressed options
+   ───────────────────────────────────────────── */
+.layout-bold .qp-card-question {
+  padding: 52px 56px !important;
+  border-width: 4px !important;
+}
+.layout-bold .qp-question {
+  font-size: 68px !important;
+  line-height: 1.25 !important;
+  font-weight: 900 !important;
+  letter-spacing: 1px !important;
+}
+.layout-bold .question-appear-slide .qp-question { font-size: 74px !important; }
+.layout-bold .question-phase .qp-question { font-size: 48px !important; }
+.layout-bold .qp-option {
+  padding: 22px 28px !important;
+  font-size: 42px !important;
+  font-weight: 900 !important;
+}
+.layout-bold .qp-options { gap: 16px !important; }
+.layout-bold .hook-text { font-size: 88px !important; letter-spacing: 2px !important; }
+
+/* ─────────────────────────────────────────────
+   LAYOUT VARIANT 3: compact
+   Smaller question text, larger options, better readability
+   ───────────────────────────────────────────── */
+.layout-compact .qp-card-question { padding: 32px 40px !important; margin-bottom: 16px !important; }
+.layout-compact .qp-question { font-size: 44px !important; line-height: 1.5 !important; }
+.layout-compact .question-appear-slide .qp-question { font-size: 50px !important; }
+.layout-compact .question-phase .qp-question { font-size: 38px !important; }
+.layout-compact .qp-option { padding: 32px 36px !important; font-size: 52px !important; font-weight: 800 !important; }
+.layout-compact .qp-option-badge { width: 72px !important; height: 72px !important; font-size: 36px !important; }
+.layout-compact .qp-options { gap: 20px !important; }
+
+/* ─────────────────────────────────────────────
+   LAYOUT VARIANT 4: cinematic
+   Full-width dramatic card, options with side accent line
+   ───────────────────────────────────────────── */
+.layout-cinematic .qp-card-question {
+  border-radius: 0 !important;
+  border-left: 8px solid var(--accent-1) !important;
+  border-top: none !important; border-right: none !important; border-bottom: 1px solid rgba(255,255,255,0.1) !important;
+  background: rgba(0,0,0,0.7) !important;
+  padding: 48px 60px !important;
+  backdrop-filter: blur(30px) !important;
+}
+.layout-cinematic .qp-question {
+  font-size: 56px !important; text-align: left !important;
+  letter-spacing: 1px !important; text-transform: uppercase !important;
+}
+.layout-cinematic .question-appear-slide .qp-question { font-size: 64px !important; }
+.layout-cinematic .question-phase .qp-question { font-size: 44px !important; }
+.layout-cinematic .qp-option {
+  border-radius: 0 !important;
+  border-left: 6px solid var(--accent-2) !important;
+  border-top: none !important; border-right: none !important; border-bottom: 1px solid rgba(255,255,255,0.08) !important;
+  background: rgba(0,0,0,0.6) !important;
+  font-size: 44px !important; text-align: left !important;
+  backdrop-filter: blur(10px) !important;
+}
+.layout-cinematic .qp-option-badge {
+  border-radius: 4px !important;
+  background: var(--accent-1) !important;
+  color: #000 !important;
+  font-weight: 900 !important;
+}
+
+/* ─────────────────────────────────────────────
+   LAYOUT VARIANT 5: split
+   Question in top half, options fill bottom half evenly
+   ───────────────────────────────────────────── */
+.layout-split .content { justify-content: space-between !important; padding-top: 20px !important; }
+.layout-split .qp-card-question {
+  flex-shrink: 0 !important;
+  border-radius: 24px !important;
+  padding: 36px 44px !important;
+  margin-bottom: 0 !important;
+}
+.layout-split .qp-question { font-size: 48px !important; }
+.layout-split .question-appear-slide .qp-question { font-size: 56px !important; }
+.layout-split .question-phase .qp-question { font-size: 40px !important; }
+.layout-split .qp-options {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  grid-template-rows: 1fr 1fr !important;
+  gap: 14px !important;
+  width: 100% !important;
+  flex: 1 !important;
+}
+.layout-split .qp-option {
+  font-size: 38px !important;
+  padding: 20px 24px !important;
+  height: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+}
+.layout-split .qp-option-badge {
+  width: 52px !important; height: 52px !important;
+  font-size: 28px !important;
+}
+
+/* ─────────────────────────────────────────────
+   LAYOUT VARIANT 6: card
+   Each option is a big card — no badge, just letter + text
+   centered, more visual breathing room
+   ───────────────────────────────────────────── */
+.layout-card .qp-card-question {
+  padding: 44px 52px !important;
+  border-radius: 32px !important;
+  margin-bottom: 20px !important;
+}
+.layout-card .qp-question { font-size: 52px !important; font-weight: 700 !important; }
+.layout-card .question-appear-slide .qp-question { font-size: 60px !important; }
+.layout-card .question-phase .qp-question { font-size: 42px !important; }
+.layout-card .qp-options { gap: 18px !important; }
+.layout-card .qp-option {
+  padding: 36px 40px !important;
+  font-size: 44px !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  border-radius: 24px !important;
+  border-width: 3px !important;
+  min-height: 120px !important;
+}
+.layout-card .qp-option-badge {
+  width: 56px !important; height: 56px !important; font-size: 30px !important;
+  border-radius: 12px !important;
+  margin-bottom: 8px !important;
+  background: linear-gradient(135deg,var(--accent-1),var(--accent-2)) !important;
+}
+
+/* ─────────────────────────────────────────────
+   LAYOUT VARIANT 7: overlay
+   Question floats over a large background area,
+   options are semi-transparent overlays at bottom
+   ───────────────────────────────────────────── */
+.layout-overlay .qp-card-question {
+  background: rgba(0,0,0,0.75) !important;
+  border: none !important;
+  border-bottom: 4px solid var(--accent-1) !important;
+  border-radius: 0 !important;
+  padding: 40px 60px !important;
+  backdrop-filter: blur(20px) !important;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.8) !important;
+  width: calc(100% + 120px) !important;
+  margin-left: -60px !important;
+  margin-right: -60px !important;
+}
+.layout-overlay .qp-question { font-size: 52px !important; text-align: center !important; }
+.layout-overlay .question-appear-slide .qp-question { font-size: 60px !important; }
+.layout-overlay .question-phase .qp-question { font-size: 42px !important; }
+.layout-overlay .qp-options { gap: 12px !important; }
+.layout-overlay .qp-option {
+  background: rgba(0,0,0,0.6) !important;
+  border-color: rgba(255,255,255,0.15) !important;
+  border-radius: 16px !important;
+  font-size: 42px !important;
+  backdrop-filter: blur(16px) !important;
+  padding: 24px 30px !important;
+}
+
+/* ─────────────────────────────────────────────
+   LAYOUT VARIANT 8: spotlight
+   Huge spotlight question text, minimal options
+   Designed for short punchy questions
+   ───────────────────────────────────────────── */
+.layout-spotlight .content { justify-content: center !important; gap: 40px !important; }
+.layout-spotlight .qp-card-question {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  padding: 0 20px !important;
+}
+.layout-spotlight .qp-question {
+  font-size: 80px !important;
+  font-weight: 900 !important;
+  text-align: center !important;
+  text-shadow: 0 0 60px rgba(255,255,255,0.3), 0 4px 20px rgba(0,0,0,0.9) !important;
+  line-height: 1.2 !important;
+}
+.layout-spotlight .question-appear-slide .qp-question { font-size: 88px !important; }
+.layout-spotlight .question-phase .qp-question { font-size: 56px !important; }
+.layout-spotlight .qp-options { gap: 12px !important; }
+.layout-spotlight .qp-option {
+  border-radius: 12px !important;
+  font-size: 40px !important;
+  padding: 20px 28px !important;
+  background: rgba(255,255,255,0.06) !important;
+  border-color: rgba(255,255,255,0.12) !important;
+}
+.layout-spotlight .qp-option-badge { width: 52px !important; height: 52px !important; font-size: 26px !important; }
+
+/* ═══════════════════════════════════════════════════════════════
+   COUNTDOWN STYLE VARIANTS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* STYLE 2: bar — horizontal progress bar */
+.cd-bar-wrap {
+  width: 100%; height: 20px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 10px; overflow: hidden;
+  margin-bottom: 12px;
+}
+.cd-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-1), var(--accent-3));
+  border-radius: 10px;
+  width: 100%;
+  animation: barDrain var(--qtime) linear forwards;
+  box-shadow: 0 0 20px color-mix(in srgb,var(--accent-1) 80%,transparent);
+}
+@keyframes barDrain { from{width:100%} to{width:0%} }
+.countdown-bar .qp-timer-wrap {
+  width: 100% !important; height: auto !important;
+  flex-direction: column !important;
+}
+
+/* STYLE 3: digital — large monospace clock */
+.cd-digital {
+  font-size: 140px !important;
+  font-weight: 900 !important;
+  font-family: 'Courier New', monospace !important;
+  color: var(--accent-1) !important;
+  text-shadow: 0 0 40px color-mix(in srgb,var(--accent-1) 90%,transparent) !important;
+  animation: timerDrain var(--qtime) steps(var(--qtime-steps,10),end) forwards !important;
+  letter-spacing: -4px !important;
+}
+.countdown-digital .qp-timer-wrap { width: auto !important; height: auto !important; }
+
+/* STYLE 4: bomb */
+.cd-bomb { font-size: 100px; animation: bombShake 0.5s ease-in-out infinite alternate; }
+@keyframes bombShake { from{transform:rotate(-8deg) scale(1)} to{transform:rotate(8deg) scale(1.1)} }
+.cd-bomb-num {
+  font-size: 80px; font-weight: 900;
+  color: #ff3c00;
+  text-shadow: 0 0 30px rgba(255,60,0,0.9);
+  animation: bombPulse 1s ease-in-out infinite;
+}
+@keyframes bombPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.2)} }
+.countdown-bomb .qp-timer-wrap { width: auto !important; height: auto !important; flex-direction: row !important; align-items: center !important; gap: 16px !important; }
+
+/* STYLE 5: hourglass */
+.cd-hourglass { font-size: 100px; animation: hourglassFlip 3s ease-in-out infinite; }
+@keyframes hourglassFlip {
+  0%,45%  { transform:rotate(0deg); }
+  50%,95% { transform:rotate(180deg); }
+  100%    { transform:rotate(360deg); }
+}
+.cd-hourglass-num { font-size: 80px; font-weight: 900; color: var(--accent-2); }
+.countdown-hourglass .qp-timer-wrap { width: auto !important; height: auto !important; flex-direction: row !important; align-items: center !important; gap: 16px !important; }
+
+/* STYLE 6: pulse number */
+.cd-pulse-num {
+  font-size: 160px !important;
+  font-weight: 900 !important;
+  color: var(--accent-1) !important;
+  text-shadow: 0 0 60px color-mix(in srgb,var(--accent-1) 90%,transparent) !important;
+  animation: pulseBeat 1s cubic-bezier(.25,.46,.45,.94) infinite !important;
+}
+@keyframes pulseBeat {
+  0%  { transform: scale(1);    opacity: 1; }
+  40% { transform: scale(1.25); opacity: 0.85; }
+  60% { transform: scale(0.92); opacity: 1; }
+  100%{ transform: scale(1);    opacity: 1; }
+}
+.countdown-pulse .qp-timer-wrap { width: auto !important; height: auto !important; }
+
+/* ═══════════════════════════════════════════════════════════════
+   SCREEN TRANSITION STYLES
+   Applied via body class 'transition-X' and .screen class swaps
+   All transitions use .screen-exit and .screen-enter helper classes
+   ═══════════════════════════════════════════════════════════════ */
+
+/* TRANSITION 1: fade (default) — already handled by display:none/flex */
+
+/* TRANSITION 2: slide_up */
+.transition-slide_up .screen.active {
+  animation: slideUpIn 0.45s cubic-bezier(.25,.46,.45,.94) forwards !important;
+}
+@keyframes slideUpIn {
+  from { opacity:0; transform:translateY(80px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+
+/* TRANSITION 3: zoom_in */
+.transition-zoom_in .screen.active {
+  animation: zoomIn 0.4s cubic-bezier(.34,1.4,.64,1) forwards !important;
+}
+@keyframes zoomIn {
+  from { opacity:0; transform:scale(0.88); }
+  to   { opacity:1; transform:scale(1); }
+}
+
+/* TRANSITION 4: flip */
+.transition-flip .screen.active {
+  animation: flipIn 0.5s cubic-bezier(.25,.46,.45,.94) forwards !important;
+  perspective: 1200px;
+}
+@keyframes flipIn {
+  from { opacity:0; transform:perspective(1200px) rotateY(25deg) scale(0.9); }
+  to   { opacity:1; transform:perspective(1200px) rotateY(0deg) scale(1); }
+}
+
+/* TRANSITION 5: blur_in */
+.transition-blur_in .screen.active {
+  animation: blurIn 0.5s ease-out forwards !important;
+}
+@keyframes blurIn {
+  from { opacity:0; filter:blur(20px); transform:scale(1.04); }
+  to   { opacity:1; filter:blur(0);    transform:scale(1); }
+}
+
+/* TRANSITION 6: bounce */
+.transition-bounce .screen.active {
+  animation: bounceIn 0.55s cubic-bezier(.34,1.8,.64,1) forwards !important;
+}
+@keyframes bounceIn {
+  from { opacity:0; transform:scale(0.75) translateY(40px); }
+  60%  { transform:scale(1.06) translateY(-10px); }
+  to   { opacity:1; transform:scale(1) translateY(0); }
+}

@@ -1,0 +1,401 @@
+/* ============================================================
+   BASE STYLES — shared by every theme.
+   Themes override: --accent-1/2/3 and .bg-anim background.
+   ============================================================ */
+
+:root {
+  --accent-1: {{accent_primary}};
+  --accent-2: {{accent_secondary}};
+  --accent-3: {{accent_tertiary}};
+}
+
+*{ margin:0; padding:0; box-sizing:border-box; font-family:'Segoe UI',Arial,sans-serif; }
+html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
+
+/* ── GLOBAL TEXT VISIBILITY SYSTEM ────────────────────────────────────────
+   Every text element gets a subtle text-shadow that works on BOTH light and
+   dark backgrounds. On dark bg: the light shadow lifts the text.
+   On light bg: the dark stroke keeps text readable.
+   Theme CSS can override these per-element as needed. */
+* {
+  text-shadow: 0 1px 3px rgba(0,0,0,0.6), 0 0 1px rgba(0,0,0,0.3);
+}
+/* For light themes (minimal), the base text colour must be dark */
+.layout-bold *, .layout-compact *, .layout-cinematic *,
+.layout-split *, .layout-card *, .layout-overlay *, .layout-spotlight * {
+  /* inherit from theme — don't force a colour here */
+}
+
+.screen{
+  width:1080px; height:1920px; display:none; flex-direction:column;
+  align-items:center; justify-content:flex-start; position:relative;
+  color:#fff; text-align:center; padding:0 60px 60px; overflow:hidden;
+  /* Vibrant base gradient behind ALL layers (incl. bg-anim at z-index:0)
+     so no screen ever reads as flat black — even when a niche background
+     animation uses a near-black base, this colourful gradient shows through
+     transparent areas and at the edges. Blue → indigo → violet. */
+  background:linear-gradient(160deg, #0a2a6b 0%, #1a1b6e 38%, #3a1a6e 70%, #2a0a55 100%);
+}
+.screen.active{ display:flex; }
+.content{
+  position:relative; z-index:5; width:100%; flex:1; display:flex;
+  flex-direction:column; align-items:center; justify-content:flex-start;
+  padding-top:30px;
+  /* YouTube Shorts / Reels / TikTok safe-zone: the platform's own UI
+     (channel name, caption text — which can wrap to 2+ lines, like/comment/
+     share icons, progress bar) overlays roughly the bottom 380-420px of a
+     1920px-tall video, regardless of what we render there. Anything we
+     place lower than this gets visually covered once published. */
+  padding-bottom:420px;
+  box-sizing:border-box;
+}
+
+/* ═══ NICHE MARQUEE — "Sports Challenge No #18" etc.
+   Bold, centered, lucrative design — shown on every screen. ═══ */
+.niche-marquee {
+  position:relative; z-index:10; width:100%; min-height:88px; margin-top:220px;
+  background:linear-gradient(135deg, #0a0a0a 0%, #1a1200 50%, #0a0a0a 100%);
+  border-top:3px solid #ffd24a; border-bottom:3px solid #ffd24a;
+  display:flex; align-items:center; justify-content:center; flex-wrap:wrap;
+  flex-shrink:0; padding:14px 32px;
+  box-shadow:0 0 36px rgba(255,210,74,0.5), inset 0 0 40px rgba(255,210,74,0.08);
+}
+.niche-marquee .topic-word {
+  display:inline-block;
+  font-family:'Arial Black','Segoe UI',sans-serif; font-size:46px; font-weight:900; letter-spacing:4px;
+  text-transform:uppercase;
+  color:#ffd24a; margin:0 6px;
+  text-shadow:0 0 2px #000, 0 0 8px #000, 0 0 24px #ffd24a, 0 0 48px rgba(255,210,74,0.6);
+  animation: wordShimmer 2.4s ease-in-out infinite;
+}
+/* Each word's animation-delay is set inline per-word (staggered wave) */
+@keyframes wordShimmer {
+  0%, 100% { color:#ffd24a; text-shadow:0 0 2px #000, 0 0 8px #000, 0 0 24px #ffd24a; }
+  50%       { color:#fff;    text-shadow:0 0 2px #000, 0 0 8px #000, 0 0 40px #fff, 0 0 60px #ffd24a; }
+}
+
+/* ═══ Big floating niche icons — large, bold, with real directional travel ═══ */
+.float-icon-big {
+  position:absolute; z-index:2; font-size:89px; opacity:0;
+  filter: drop-shadow(0 0 36px color-mix(in srgb, var(--accent-1) 75%, transparent));
+  will-change: opacity, transform;
+}
+/* All icons now use a gentle fade-in / hold / fade-out cycle instead of
+   travelling across the screen — keeps them from ever drifting into text
+   or the YouTube safe-zone, while still reading as "alive" rather than
+   static. Each icon has a different cycle length + delay so they don't
+   all fade in/out in unison. */
+.float-icon-big.fi-0 { animation: floatFade 6s ease-in-out infinite; }
+.float-icon-big.fi-1 { animation: floatFade 7.5s ease-in-out infinite; }
+.float-icon-big.fi-2 { animation: floatFade 8.5s ease-in-out infinite; }
+.float-icon-big.fi-3 { animation: floatFade 6.8s ease-in-out infinite; }
+.float-icon-big.fi-4 { animation: floatFade 9.2s ease-in-out infinite; }
+
+@keyframes floatFade {
+  0%   { opacity:0;    transform:scale(0.85) translateY(10px); }
+  15%  { opacity:0.22; transform:scale(1)    translateY(0); }
+  50%  { opacity:0.22; transform:scale(1.04) translateY(-8px); }
+  85%  { opacity:0.22; transform:scale(1)    translateY(0); }
+  100% { opacity:0;    transform:scale(0.85) translateY(10px); }
+}
+
+/* ═══ Brand pill under logo ═══ */
+.brand-pill {
+  display:inline-block; margin-top:10px;
+  background:linear-gradient(135deg, var(--accent-1), var(--accent-3));
+  color:#04140d; font-weight:900; font-size:20px; letter-spacing:3px;
+  padding:6px 22px; border-radius:20px;
+  box-shadow:0 0 24px color-mix(in srgb, var(--accent-1) 55%, transparent);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TEXT ANIMATION LIBRARY
+   Add any class to any element for entrance animations.
+   ═══════════════════════════════════════════════════════════ */
+
+/* Fade in — clean, understated */
+.anim-fadeIn{ opacity:0; animation:_fadeIn 0.6s ease forwards; }
+@keyframes _fadeIn{ from{opacity:0} to{opacity:1} }
+
+/* Fly up from below — bouncy, energetic */
+.anim-flyUp{ opacity:0; transform:translateY(80px) scale(0.9); animation:_flyUp 0.7s cubic-bezier(.34,1.8,.64,1) forwards; }
+@keyframes _flyUp{ to{opacity:1;transform:translateY(0) scale(1)} }
+
+/* Fly in from left */
+.anim-flyLeft{ opacity:0; transform:translateX(-120px); animation:_flyLeft 0.6s cubic-bezier(.25,.46,.45,.94) forwards; }
+@keyframes _flyLeft{ to{opacity:1;transform:translateX(0)} }
+
+/* Dissolve — blur clears as it fades */
+.anim-dissolve{ opacity:0; filter:blur(14px); animation:_dissolve 0.8s ease forwards; }
+@keyframes _dissolve{ to{opacity:1;filter:blur(0)} }
+
+/* Scale in — pops out of centre with rotation */
+.anim-scaleIn{ opacity:0; transform:scale(0.4) rotate(-6deg); animation:_scaleIn 0.65s cubic-bezier(.34,1.8,.64,1) forwards; }
+@keyframes _scaleIn{ to{opacity:1;transform:scale(1) rotate(0deg)} }
+
+/* Stagger delays */
+.anim-delay-1{ animation-delay:0.10s !important; }
+.anim-delay-2{ animation-delay:0.20s !important; }
+.anim-delay-3{ animation-delay:0.35s !important; }
+.anim-delay-4{ animation-delay:0.50s !important; }
+.anim-delay-5{ animation-delay:0.65s !important; }
+
+/* ═══════════════════════════════════════════════════════════
+   SHARED COMPONENTS
+   ═══════════════════════════════════════════════════════════ */
+.glow-text{ text-shadow:0 0 20px rgba(255,255,255,0.6),0 0 40px color-mix(in srgb,var(--accent-3) 60%,transparent); }
+.badge-label{
+  display:inline-block; font-size:32px; font-weight:900; letter-spacing:8px;
+  text-transform:uppercase; padding:14px 36px; border-radius:50px;
+  background:linear-gradient(135deg,var(--accent-2),var(--accent-3));
+  box-shadow:0 0 30px color-mix(in srgb,var(--accent-2) 60%,transparent);
+  margin-bottom:40px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   STEP 1: HOOK
+   ═══════════════════════════════════════════════════════════ */
+.hook-text{
+  font-size:72px; font-weight:900; line-height:1.3;
+  opacity:0; transform:translateY(60px) scale(0.8);
+  animation:_flyUp 0.9s cubic-bezier(.34,1.8,.64,1) 0.5s forwards;
+}
+.sparkle{ position:absolute; font-size:60px; opacity:0; animation:sparkleAppear 2s ease-in-out infinite; }
+.sparkle.s1{top:15%;left:12%;animation-delay:0.2s}
+.sparkle.s2{top:25%;right:10%;animation-delay:0.8s}
+.sparkle.s3{bottom:20%;left:15%;animation-delay:1.4s}
+.sparkle.s4{bottom:30%;right:14%;animation-delay:0.5s}
+@keyframes sparkleAppear{0%,100%{opacity:0;transform:scale(0.5) rotate(0deg)}50%{opacity:1;transform:scale(1.3) rotate(180deg)}}
+
+/* ═══════════════════════════════════════════════════════════
+   STEP 2: INTRO SPEECH — dissolve text flash, 1.5s, no TTS
+   ═══════════════════════════════════════════════════════════ */
+.intro-speech{
+  font-size:50px; font-weight:800; line-height:1.4; text-align:center;
+  padding:0 40px; margin-top:30px; color:#fff;
+  opacity:0; filter:blur(10px);
+  animation:_dissolve 0.5s ease 0.15s forwards;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   STEP 3-5: QUESTION + OPTIONS
+   ═══════════════════════════════════════════════════════════ */
+.question-phase{ justify-content:flex-start; padding-top:80px; }
+
+.qp-card-question{
+  width:100%; background:rgba(255,255,255,0.06);
+  border:3px solid rgba(255,255,255,0.15); border-radius:32px;
+  padding:44px; margin-bottom:36px; backdrop-filter:blur(6px);
+  box-shadow:0 0 50px color-mix(in srgb,var(--accent-3) 35%,transparent);
+  opacity:0; animation:_flyUp 0.7s cubic-bezier(.34,1.8,.64,1) forwards;
+}
+.qp-question{ font-size:52px; font-weight:800; line-height:1.4; }
+
+.qp-timer-wrap{ margin-bottom:40px; position:relative; width:200px; height:200px; }
+.qp-timer-ring{ width:200px; height:200px; transform:rotate(-90deg); }
+.qp-timer-ring circle{ fill:none; stroke-width:18; stroke-linecap:round; }
+.qp-timer-bg{ stroke:rgba(255,255,255,0.12); }
+.qp-timer-fill{
+  stroke:url(#timerGradient); stroke-dasharray:628; stroke-dashoffset:0;
+  animation:timerDrain var(--qtime) linear forwards;
+}
+@keyframes timerDrain{ from{stroke-dashoffset:0} to{stroke-dashoffset:628} }
+.qp-timer-number{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:60px; font-weight:900; }
+
+.qp-options{ width:100%; display:flex; flex-direction:column; gap:22px; opacity:0; animation:_flyUp 0.7s ease-out 0.3s forwards; }
+.qp-option{
+  display:flex; align-items:center; gap:24px;
+  background:linear-gradient(135deg,rgba(255,255,255,0.09),rgba(255,255,255,0.04));
+  border:2.5px solid rgba(255,255,255,0.2); border-radius:28px;
+  padding:28px 32px; font-size:50px; font-weight:700; text-align:left;
+  transition:opacity 0.6s ease,transform 0.6s ease;
+  box-shadow:0 8px 32px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.12);
+  backdrop-filter:blur(8px);
+}
+.qp-option-badge{
+  flex-shrink:0; width:64px; height:64px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:32px; font-weight:900;
+  background:linear-gradient(135deg,var(--accent-1),var(--accent-3));
+  box-shadow:0 0 18px color-mix(in srgb,var(--accent-1) 50%,transparent); color:#fff;
+}
+.qp-option.eliminate{ animation:eliminateOpt 0.6s ease forwards; animation-delay:var(--fiftyfifty-time); }
+@keyframes eliminateOpt{ to{opacity:0.07;transform:scale(0.95)} }
+.qp-option.correct{
+  background:linear-gradient(135deg,rgba(0,255,140,0.25),rgba(0,200,100,0.12));
+  border-color:#00ff8c;
+  box-shadow:0 0 40px rgba(0,255,140,0.55),inset 0 1px 0 rgba(255,255,255,0.15);
+  animation:pulseCorrect 1.2s ease-in-out infinite;
+}
+@keyframes pulseCorrect{ 0%,100%{transform:scale(1)} 50%{transform:scale(1.025)} }
+.qp-option.wrong{ opacity:0.15; }
+
+.qp-hint{
+  position:absolute; bottom:380px; left:40px; right:40px;
+  font-size:36px; font-weight:700; color:#ffd166; text-align:center;
+  background:rgba(0,0,0,0.88); border:2px dashed #ffd166;
+  border-radius:12px; padding:12px 16px; opacity:0; z-index:30;
+  animation:hintIn 0.6s ease-out forwards;
+  animation-delay:var(--hint-time);
+  box-shadow:0 0 30px rgba(255,209,102,0.3);
+  -webkit-text-stroke:0.5px rgba(0,0,0,0.5);
+}
+@keyframes hintIn{ to{opacity:1;} }
+/* On the countdown phase, shrink everything so option D clears the hint zone */
+.question-phase{ justify-content:flex-start; padding-top:16px; }
+.question-phase .qp-card-question { padding:16px 24px; margin-bottom:10px; }
+.question-phase .qp-question       { font-size:38px; }
+.question-phase .qp-timer-wrap     { margin-bottom:8px; width:120px; height:120px; }
+.question-phase .qp-timer-ring     { width:120px; height:120px; }
+.question-phase .qp-options        { gap:6px; }
+.question-phase .qp-option         { padding:12px 18px; font-size:40px; }
+.question-phase .qp-option-badge   { width:46px; height:46px; font-size:24px; }
+/* Split layout in countdown: hint must clear the 2×2 grid bottom row */
+.layout-split .question-phase .qp-options { grid-template-rows:1fr 1fr !important; gap:6px !important; }
+.layout-split .qp-hint { bottom:420px !important; }
+
+/* ═══════════════════════════════════════════════════════════
+   STEP 10: ANSWER REVEAL
+   ═══════════════════════════════════════════════════════════ */
+.answer-badge{
+  font-size:64px; font-weight:900; margin-bottom:44px;
+  background:linear-gradient(135deg,var(--accent-1),#00ff8c);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  opacity:0; animation:_scaleIn 0.7s cubic-bezier(.34,1.8,.64,1) forwards;
+}
+.answer-slide .qp-options{ opacity:1; animation:none; }
+
+/* Explanation panel — shown below options on the answer slide.
+   No TTS — text only, stays for the full duration of the slide.
+   Fades in after the answer badge animation completes (~0.9s). */
+.answer-explanation{
+  margin-top:22px;
+  padding:0;
+  border-radius:24px;
+  background:linear-gradient(135deg, rgba(0,0,0,0.60), rgba(0,0,0,0.40));
+  border-left:6px solid var(--accent-1);
+  border-top:1px solid rgba(255,255,255,0.15);
+  border-right:1px solid rgba(255,255,255,0.08);
+  border-bottom:1px solid rgba(255,255,255,0.08);
+  backdrop-filter:blur(16px);
+  width:100%;
+  box-sizing:border-box;
+  overflow:hidden;
+  opacity:0;
+  animation:explanationReveal 0.6s ease forwards;
+  animation-delay:0.9s;
+  animation-fill-mode:forwards;
+}
+.answer-explanation-heading{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  background:rgba(255,255,255,0.07);
+  border-bottom:1px solid rgba(255,255,255,0.10);
+  padding:16px 26px;
+  font-size:32px;
+  font-weight:900;
+  color:var(--accent-1);
+  letter-spacing:0.04em;
+  text-transform:uppercase;
+}
+.answer-explanation-body{
+  padding:22px 26px;
+  font-size:36px;
+  font-weight:600;
+  line-height:1.5;
+  color:#ffffff;
+  text-align:left;
+}
+@keyframes explanationReveal{
+  0%  { opacity:0; transform:translateY(24px); }
+  100%{ opacity:1; transform:translateY(0); }
+}
+.confetti-piece{
+  position:absolute; top:-60px; opacity:0.95;
+  animation-name:confettiFall; animation-timing-function:linear; animation-iteration-count:infinite;
+  line-height:1;
+}
+@keyframes confettiFall{
+  0%{transform:translateY(-60px) rotate(0deg) scale(1);opacity:1}
+  100%{transform:translateY(2050px) rotate(720deg) scale(1);opacity:0.9}
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CTA SLIDES
+   ═══════════════════════════════════════════════════════════ */
+.cta-text{
+  font-size:50px; font-weight:900; line-height:1.6; margin-bottom:44px;
+  opacity:0; animation:_flyUp 0.8s cubic-bezier(.34,1.8,.64,1) 0.2s forwards;
+}
+.cta-url{
+  font-size:38px; font-weight:800;
+  background:linear-gradient(135deg,var(--accent-2),var(--accent-3));
+  border-radius:50px; padding:26px 48px;
+  box-shadow:0 0 40px color-mix(in srgb,var(--accent-2) 60%,transparent);
+  opacity:0; animation:_fadeIn 0.6s ease 0.5s forwards, ctaPulse 1.4s ease-in-out 1.2s infinite;
+}
+@keyframes ctaPulse{ 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
+
+/* ═══════════════════════════════════════════════════════════
+   MISSION IMPOSSIBLE
+   ═══════════════════════════════════════════════════════════ */
+.mission-title-huge{
+  font-size:96px; font-weight:900; letter-spacing:4px; text-transform:uppercase;
+  color:#ff3b3b; line-height:1.0; text-align:center;
+  text-shadow:0 0 40px rgba(255,59,59,0.9),0 0 80px rgba(255,59,59,0.5);
+  animation:shakeLabel 0.5s ease-in-out infinite alternate;
+  margin-bottom:24px;
+}
+.mission-tagline{
+  font-size:44px; font-weight:700; color:#fff; text-align:center;
+  opacity:0; animation:_dissolve 0.8s ease 0.5s forwards;
+}
+.mission-label{
+  font-size:52px; font-weight:900; letter-spacing:6px; text-transform:uppercase;
+  color:#ff3b3b; margin-bottom:30px;
+  text-shadow:0 0 30px rgba(255,59,59,0.8);
+  animation:shakeLabel 0.6s ease-in-out infinite alternate;
+}
+.mission-question{
+  font-size:56px; font-weight:900; line-height:1.4; margin-bottom:36px;
+  opacity:0; animation:_flyUp 0.7s cubic-bezier(.34,1.8,.64,1) 0.2s forwards;
+}
+.mission-hint{
+  font-size:40px; font-weight:600; color:#ffd166;
+  background:rgba(255,209,102,0.12); border:2px dashed #ffd166;
+  border-radius:20px; padding:28px; opacity:0;
+  transition:opacity 0.5s ease,transform 0.5s ease; transform:scale(0.9);
+}
+.mission-hint.shown{ opacity:1; transform:scale(1); }
+.cta3-text{ opacity:0; transform:translateY(30px) scale(0.9); transition:opacity 0.5s ease,transform 0.5s ease; }
+.cta3-text.show-cta3{ opacity:1; transform:translateY(0) scale(1); }
+@keyframes shakeLabel{ from{transform:rotate(-1.5deg) scale(1)} to{transform:rotate(1.5deg) scale(1.04)} }
+
+/* ═══════════════════════════════════════════════════════════
+   SHARED BACKGROUND LAYERS (overridden per theme / quiz_background_css)
+   ═══════════════════════════════════════════════════════════ */
+.bg-anim{ position:absolute; inset:0; z-index:0; }
+.bg-grid{
+  position:absolute; inset:0; z-index:1; opacity:0.15;
+  background-image:linear-gradient(rgba(255,255,255,0.5) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(255,255,255,0.5) 1px,transparent 1px);
+  background-size:80px 80px; animation:gridMove 8s linear infinite;
+}
+@keyframes gridMove{ from{background-position:0 0,0 0} to{background-position:0 80px,80px 0} }
+.bg-orb{ position:absolute; border-radius:50%; filter:blur(40px); z-index:1; opacity:0.5; }
+.orb1{ width:380px;height:380px;background:var(--accent-2);top:-100px;left:-100px;animation:floatA 9s ease-in-out infinite; }
+.orb2{ width:300px;height:300px;background:var(--accent-1);bottom:100px;right:-80px;animation:floatB 11s ease-in-out infinite; }
+.orb3{ width:260px;height:260px;background:var(--accent-3);bottom:-80px;left:30%;animation:floatA 13s ease-in-out infinite reverse; }
+@keyframes floatA{ 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(60px,80px) scale(1.2)} }
+@keyframes floatB{ 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(-50px,-60px) scale(1.15)} }
+
+/* Explanation card (kept for optional future use) */
+.explanation-card{
+  width:100%; background:rgba(255,255,255,0.06);
+  border:3px solid rgba(255,255,255,0.15); border-radius:32px;
+  padding:56px; backdrop-filter:blur(6px);
+  box-shadow:0 0 50px color-mix(in srgb,var(--accent-1) 30%,transparent);
+  opacity:0; animation:_flyUp 0.8s ease-out 0.2s forwards;
+}
+.explanation-text{ font-size:46px; line-height:1.7; font-weight:600; }
