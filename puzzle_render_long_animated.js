@@ -1,55 +1,39 @@
 'use strict';
 // ═══════════════════════════════════════════════════════════════
-// PUZZLE RENDER LONG — ANIMATED GOLD EDITION
+// PUZZLE RENDER LONG — ANIMATED VARIANT (separate from puzzle_render_long.js)
 //
-// A SEPARATE, PARALLEL long-format renderer. This is a full clone of
-// puzzle_render_long.js (which is left 100% untouched) with the following
-// changes ONLY:
+// This is a STANDALONE copy of the original long renderer. The original
+// file is NOT modified or touched by this one — they can coexist safely.
 //
-//   1. INTRO UNCHANGED — the hook screen (STEP 1: logo pop + hook text)
-//      renders with whatever theme/colours the row already has, exactly
-//      like the classic renderer. Nothing about it is touched.
-//
-//   2. EVERYTHING AFTER THE INTRO gets a runtime CSS override
-//      (page.addStyleTag, injected once right after the hook clip is
-//      recorded) that:
-//        • forces a black background everywhere,
-//        • restricts the whole accent palette to gold/yellow/white
-//          (no blue/deep colours anywhere — including the two hardcoded
-//          blue CTA pills in the template),
-//        • scales the puzzle visual (matchstick/geometry/grid/emoji/etc.)
-//          up ~20% and gives it a bold gold border/glow so objects read
-//          big instead of tiny,
-//        • adds a continuous gold "breathing" glow pulse + light-sweep
-//          shimmer + drifting gold particle field so the screen never
-//          sits static — the whole point of "animated".
-//      This is pure CSS layered on top of the existing template/theme
-//      CSS at runtime — puzzle_template.html, puzzleRenderers.js and
-//      every file in themes/ are all left completely untouched, so the
-//      short/medium formats and the classic long renderer are unaffected.
-//
-//   3. Thinking-time countdown is HARD-LOCKED to 10 seconds (ignores
-//      thinking_time_sec on the row) per spec.
-//
-//   4. The pre-recorded "pause" voice line (random cloudflare_url from
-//      the `pause_audios` table) firing 3s into the countdown, and the
-//      answer-reveal TTS speaking ONLY the correct answer text (never the
-//      explanation), are UNCHANGED — puzzle_render_long.js already does
-//      exactly this and it's reused verbatim.
-//
-//   5. QUEUE SAFETY: this script polls/claims rows the exact same way as
-//      puzzle_render_long.js (`long_status=pending_long` → `rendering_long`
-//      → `done_long`), so the two renderers safely share one queue — a row
-//      can only ever be claimed by whichever one runs first, never both.
-//      To keep results predictable, this workflow is workflow_dispatch
-//      (manual) ONLY — it is NOT wired to the automatic
-//      `trigger-puzzle-render` repository_dispatch event, so the existing
-//      automated long pipeline keeps behaving exactly as before unless a
-//      human deliberately runs the animated workflow.
-//
-//   6. Output artifacts/R2 keys use an `_animated` / `puzzles-animated/`
-//      naming so a render never collides with a classic-render file for
-//      the same puzzle id.
+// DIFFERENCES FROM THE ORIGINAL:
+//   • Intro is IDENTICAL: hook, question intro/reveal, options intro/
+//     reveal, and the 10s countdown with the pause_audios sting at 3s
+//     (all reused verbatim from the original — untouched).
+//   • STEP 10 (static answer-reveal slide + "Fun Fact" explanation) and
+//     the Final CTA + Mission Impossible blocks are REMOVED entirely.
+//     In their place: an animated clue-by-clue deduction walkthrough
+//     that ends on the culprit reveal. NO explanation is narrated or
+//     shown — TTS only ever says "The culprit is <name>."
+//   • Colors are gold/amber/warm-white on black — no blue/purple.
+//   • QTIME (thinking time) is hard-fixed to 10 seconds for this variant,
+//     regardless of the DB's thinking_time_sec value.
+//   • MANUAL, SINGLE-ROW DISPATCH ONLY — this script does NOT poll the
+//     puzzle_queue/puzzle table for pending work the way the original
+//     scheduled worker does. It renders exactly ONE row, whose id comes
+//     from the QUIZ_ID env var (set by the paired workflow's
+//     workflow_dispatch input). This is deliberate: it guarantees this
+//     script can NEVER pick up the same row as the original automatic
+//     long-render pipeline, so the two can run side by side with zero
+//     risk of a race condition or duplicate render.
+//   • It writes its own distinct status values (long_status =
+//     'rendering_long_animated' / 'done_long_animated' / 'error_long_animated')
+//     so it never satisfies the original worker's `long_status=eq.pending_long`
+//     filter, and the original worker's completion state ('done_long')
+//     is never touched by this script either.
+//   • The rendered URL is written to `medium_video_url` (an existing,
+//     otherwise-unused column on rows with assigned_format='long') as a
+//     stopgap output field — add a dedicated column whenever convenient
+//     and change ANIMATED_OUTPUT_URL_COLUMN below.
 // ═══════════════════════════════════════════════════════════════
 const { exec }    = require('child_process');
 const util        = require('util');
@@ -60,6 +44,11 @@ const puppeteer   = require('puppeteer');
 const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
 const { v4: uuidv4 } = require('uuid');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const sceneAnimatorGold = require('./puzzle_scene_animator_gold');
+
+// Column used to store this variant's video URL without touching the
+// original pipeline's `video_url` column. See header note above.
+const ANIMATED_OUTPUT_URL_COLUMN = 'medium_video_url';
 
 // ─────────────────────────────────────────────
 // ENV
@@ -96,119 +85,11 @@ const VOICE_MAP = {
   es: 'es-ES-ElviraNeural', pt: 'pt-BR-FranciscaNeural'
 };
 const THEMES_DIR        = path.join(__dirname, 'themes');
-const CACHE_DIR         = '/tmp/puzzle_cache_long_animated';  // separate from the classic long renderer's cache dir
+const CACHE_DIR         = '/tmp/puzzle_cache_long';  // persistent within one GH Actions run, avoids repo dir issues
 const DEFAULT_THEME     = 'particle_field';
 const LOGO_PATH         = path.join(__dirname, 'assets', 'jaasX-logo-saved-for-web.png');
 const DEFAULT_BG_MUSIC  = 'https://pub-3578d297d3904e1d8ffedfc9dd4102f2.r2.dev/audio/background_music/The_Midnight_Audit.mp3';
 const PLATFORM_URL_BASE = 'https://jaasblog.online/quiz';
-
-// ─────────────────────────────────────────────
-// ANIMATED GOLD OVERRIDE — injected via page.addStyleTag() AFTER the hook
-// (intro) clip is recorded. Everything from STEP 2 onward inherits this.
-// Pure CSS, layered on top of whatever theme the row already has — no
-// shared template/theme file is modified.
-// ─────────────────────────────────────────────
-const GOLD_PALETTES = [
-  ['#FFD700', '#FFC107', '#FFFFFF'], // gold / amber / white
-  ['#FFEA00', '#FFB300', '#FFF8E1'], // yellow / deep amber / cream white
-  ['#F5D67B', '#E8B33D', '#FFFFFF'], // soft gold / bronze-gold / white
-];
-function pickGoldPalette() { return GOLD_PALETTES[Math.floor(Math.random() * GOLD_PALETTES.length)]; }
-
-function buildAnimatedGoldCss(palette) {
-  const [a1, a2, a3] = palette;
-  return `
-/* ═══════════════════════════════════════════════════════════════
-   ANIMATED GOLD OVERRIDE (runtime-injected, intro excluded)
-   ═══════════════════════════════════════════════════════════════ */
-:root {
-  --accent-1: ${a1} !important;
-  --accent-2: ${a2} !important;
-  --accent-3: ${a3} !important;
-}
-
-/* ── Pure black stage — no blue/deep colour anywhere ── */
-html, body, .screen {
-  background: linear-gradient(160deg, #000000 0%, #0a0700 45%, #000000 100%) !important;
-}
-
-/* ── Golden drifting particle field on black, replaces whatever the
-   theme's own .bg-anim/.bg-grid layers were doing (blue/purple/etc.) ── */
-.bg-anim, .bg-grid {
-  background:
-    radial-gradient(2px 2px at 10% 15%, rgba(255,215,0,0.9) 0%, transparent 100%),
-    radial-gradient(2px 2px at 25% 40%, rgba(255,255,255,0.7) 0%, transparent 100%),
-    radial-gradient(3px 3px at 40% 10%, rgba(255,193,7,0.85) 0%, transparent 100%),
-    radial-gradient(2px 2px at 55% 60%, rgba(255,215,0,0.6) 0%, transparent 100%),
-    radial-gradient(2px 2px at 70% 25%, rgba(255,255,255,0.6) 0%, transparent 100%),
-    radial-gradient(3px 3px at 80% 70%, rgba(255,193,7,0.75) 0%, transparent 100%),
-    radial-gradient(2px 2px at 90% 45%, rgba(255,215,0,0.8) 0%, transparent 100%),
-    radial-gradient(2px 2px at 15% 75%, rgba(255,255,255,0.5) 0%, transparent 100%),
-    radial-gradient(3px 3px at 60% 85%, rgba(255,193,7,0.8) 0%, transparent 100%),
-    radial-gradient(ellipse at 50% 12%, rgba(255,215,0,0.28) 0%, transparent 60%),
-    radial-gradient(ellipse at 50% 100%, rgba(255,193,7,0.20) 0%, transparent 55%) !important;
-  background-size: 1080px 1920px !important;
-  opacity: 1 !important;
-  animation: goldParticleDrift 16s linear infinite !important;
-}
-.bg-anim::before, .bg-anim::after, .bg-grid::before, .bg-grid::after {
-  background: none !important;
-  opacity: 0 !important;
-}
-@keyframes goldParticleDrift {
-  0%   { background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, center top, center bottom; }
-  100% { background-position: 0 -90px, 0 -90px, 0 -90px, 0 -90px, 0 -90px, 0 -90px, 0 -90px, 0 -90px, 0 -90px, center top, center bottom; }
-}
-
-/* ── Puzzle visual: BIG, BOLD, gold-framed, always breathing/shimmering ── */
-.puzzle-visual-wrap {
-  position: relative !important;
-  width: 97vw !important;
-  max-width: 980px !important;
-  transform: scale(1.18) !important;
-  transform-origin: center top !important;
-  background: rgba(0,0,0,0.80) !important;
-  border: 3px solid ${a1} !important;
-  box-shadow: 0 10px 60px rgba(0,0,0,0.7), 0 0 90px rgba(255,215,0,0.55),
-              inset 0 1px 0 rgba(255,255,255,0.12) !important;
-  overflow: hidden !important;
-  animation: puzzleReveal 0.45s 0.15s ease forwards, goldBreathe 3.2s ease-in-out 0.6s infinite !important;
-}
-.puzzle-visual-wrap::after {
-  content: '';
-  position: absolute; inset: 0; pointer-events: none; z-index: 5;
-  background: linear-gradient(100deg, transparent 35%, rgba(255,255,255,0.30) 50%, transparent 65%);
-  background-size: 260% 100%;
-  animation: goldSweep 3.6s linear infinite;
-}
-@keyframes goldBreathe {
-  0%, 100% { box-shadow: 0 10px 60px rgba(0,0,0,0.7), 0 0 90px rgba(255,215,0,0.55), inset 0 1px 0 rgba(255,255,255,0.12); }
-  50%      { box-shadow: 0 10px 70px rgba(0,0,0,0.75), 0 0 130px rgba(255,215,0,0.85), inset 0 1px 0 rgba(255,255,255,0.18); }
-}
-@keyframes goldSweep {
-  0%   { background-position: 120% 0; }
-  100% { background-position: -120% 0; }
-}
-
-/* ── Floating decorative icons: slightly bigger, gold glow (auto via var(--accent-1)) ── */
-.float-icon-big {
-  font-size: 98px !important;
-}
-
-/* ── Neutralise the two hardcoded BLUE elements in the template
-   (Like pill on the combined CTA screen, Share pill on the cta3 screen)
-   — replace with warm gold tones instead of blue. ── */
-.cta-pill-share {
-  background: linear-gradient(135deg, #B8860B, #FFD700) !important;
-  box-shadow: 0 0 60px rgba(255,215,0,0.55), 0 12px 40px rgba(0,0,0,0.5) !important;
-  border: 3px solid rgba(255,215,0,0.5) !important;
-}
-.cta3-like {
-  background: linear-gradient(135deg, #B8860B, #FFD700) !important;
-  box-shadow: 0 0 40px rgba(255,215,0,0.7) !important;
-}
-`;
-}
 
 // Niche-specific centerpiece icon for the thumbnail (checklist: make it lucrative, not generic)
 const NICHE_ICON = {
@@ -1122,211 +1003,91 @@ async function buildImageCard(quiz, mode, bgImageDataUri, logoDataUri, workDir, 
 // JOB PROCESSING
 // ─────────────────────────────────────────────
 async function processJobs() {
-  console.log('[PZ-LONG-ANIMATED] Checking puzzle table...');
+  console.log('[PZ-LONG-ANIM] Manual single-row animated render starting...');
 
-  // ── Reset stuck LONG rows (rendering for >30 min) ─────────────────────
-  const stuckCutoff = new Date(Date.now()-30*60*1000).toISOString();
-  const stuckRows = await fetchSupabase(`puzzle?long_status=eq.rendering_long&assigned_format=eq.long&is_active=eq.true&updated_at=lt.${stuckCutoff}&select=id&limit=5`).catch(()=>null);
-  if (stuckRows?.length) {
-    console.log(`[WORKER] Resetting ${stuckRows.length} stuck long rows`);
-    for (const r of stuckRows) await fetchSupabase(`puzzle?id=eq.${r.id}`,{method:'PATCH',body:JSON.stringify({video_status:'pending',long_status:'pending_long',updated_at:new Date().toISOString()})}).catch(()=>{});
+  const quizId = process.env.QUIZ_ID;
+  if (!quizId) {
+    console.error('[PZ-LONG-ANIM] QUIZ_ID env var not set — this script only renders one');
+    console.error('[PZ-LONG-ANIM] explicitly-specified row at a time. Set QUIZ_ID and retry.');
+    process.exit(1);
   }
 
-  // ── TOPIC-FIRST SELECTION (3-rule logic) ──────────────────────────────
-  //
-  // Worker 8 creates 4 quiz rows per topic (q1, q2, q3, q4) with slugs like
-  // "argentina-vs-brazil-q1", "argentina-vs-brazil-q2" etc.
-  // These share the same raw `topic` string but have different topic_slugs.
-  //
-  // RULE 1: Always pick the NEWEST topic first (most recently enriched).
-  //         Fresh trending topics must be rendered before old ones.
-  //
-  // RULE 2: For each topic, render ONLY ONE video per run (the most recently
-  //         created quiz row for that topic). Skip all other rows for the
-  //         same topic — they will be considered in future runs only if no
-  //         fresher topic exists.
-  //
-  // RULE 3: Only render a second quiz row for the same topic if there are
-  //         NO other fresh topics with zero renders waiting. This prevents
-  //         Worker 10 from exhausting its run time on 4 rows of one topic
-  //         while newer topics pile up unrendered.
-  //
-  // Implementation:
-  //   Step A — fetch all pending rows, group by raw `topic` string.
-  //   Step B — for each unique topic, identify how many rows already have
-  //             a rendered video (video_status != pending/error).
-  //   Step C — sort topics: topics with 0 renders come first (newest first
-  //             within that group), then topics with 1 render, etc.
-  //   Step D — pick the single best row to render now:
-  //             → newest row for the highest-priority topic.
-  //   Step E — mark all OTHER pending rows for the SAME topic as 'skipped'
-  //             so they don't clog the pending queue, but keep them
-  //             recoverable (video_status='skipped' → re-queued next run
-  //             only if no fresh topics exist).
-
-  // STRICT FORMAT GATING (per requirement):
-  //   worker10 (this = LONG) renders ONLY rows where assigned_format='long'.
-  //   Those rows have long_status='pending_long' (set by worker8). We do NOT
-  //   fall back to video_status=pending anymore — that legacy fallback is what
-  //   let the long worker grab short/medium rows and produce duplicate videos.
-  //   The short worker polls short_status; the (future) medium worker polls
-  //   medium_status; each format is fully isolated by its own status column.
-  const pendingRows = await fetchSupabase(
-    'puzzle?long_status=eq.pending_long' +
-    '&assigned_format=eq.long' +
-    '&is_active=eq.true&puzzle_enriched=eq.true' +
-    '&select=id,topic,topic_slug,created_at,assigned_format,long_status&order=created_at.desc&limit=500'
-  );
-  if (!pendingRows?.length) {
-    // No fresh long rows — check if any skipped LONG rows can be revived
-    const skippedRows = await fetchSupabase(
-      'puzzle?long_status=eq.skipped_long&assigned_format=eq.long&is_active=eq.true&puzzle_enriched=eq.true' +
-      '&select=id,topic,topic_slug,created_at&order=created_at.desc&limit=100'
-    ).catch(()=>null);
-    if (skippedRows?.length) {
-      const revive = skippedRows[0];
-      console.log(`[WORKER] No fresh long topics — reviving skipped long row: "${revive.topic}" (${revive.id})`);
-      await fetchSupabase(`puzzle?id=eq.${revive.id}`,{method:'PATCH',body:JSON.stringify({long_status:'pending_long',updated_at:new Date().toISOString()})});
-      const revivedRows = await fetchSupabase(`puzzle?id=eq.${revive.id}&select=id,topic,topic_slug,puzzle_type,created_at`);
-      if (revivedRows?.length) pendingRows.push(revivedRows[0]);
-    }
-    if (!pendingRows?.length) { console.log('[WORKER] No pending long quizzes.'); return; }
-  }
-
-  // Group by raw topic string (NOT topic_slug — slugs differ per question)
-  const topicMap = new Map(); // topic -> [rows sorted newest first]
-  for (const r of pendingRows) {
-    const key = (r.topic || '').trim().toLowerCase();
-    if (!key) continue;
-    if (!topicMap.has(key)) topicMap.set(key, []);
-    topicMap.get(key).push(r);
-  }
-  console.log(`[WORKER] ${topicMap.size} distinct topics with pending rows (${pendingRows.length} total pending rows)`);
-
-  // For each topic, count how many LONG rows already have a rendered video
-  const renderCounts = {};
-  for (const [topicKey, rows] of topicMap) {
-    const sample = rows[0]; // use first row's topic string for the query
-    const rendered = await fetchSupabase(
-      `puzzle?puzzle_type=eq.${encodeURIComponent(sample.puzzle_type||sample.topic)}&assigned_format=eq.long&long_status=eq.done_long&select=id&limit=50`
-    ).catch(()=>null);
-    renderCounts[topicKey] = rendered?.length || 0;
-  }
-
-  // Sort topics: 0 renders first (fresh), then 1, 2, etc.
-  // Within same render count, newest topic wins (rows are already desc by created_at,
-  // so topicMap insertion order = newest topic first — Map preserves insertion order).
-  const sortedTopics = [...topicMap.entries()].sort((a, b) => {
-    const countDiff = (renderCounts[a[0]] ?? 0) - (renderCounts[b[0]] ?? 0);
-    if (countDiff !== 0) return countDiff;
-    // Same render count — prefer newer topic (first row = newest due to desc sort)
-    return new Date(b[1][0].created_at) - new Date(a[1][0].created_at);
-  });
-
-  // Pick the single best row: newest row for the top-priority topic
-  const [chosenTopicKey, chosenRows] = sortedTopics[0];
-  const chosenRow = chosenRows[0]; // newest row for this topic (desc sort)
-  const renderedSoFar = renderCounts[chosenTopicKey] ?? 0;
-
-  console.log(`[WORKER] Selected topic: "${chosenRow.topic}" (${renderedSoFar} already rendered, ${chosenRows.length} pending rows for this topic)`);
-  console.log(`[WORKER] Rendering: ${chosenRow.id} (slug=${chosenRow.topic_slug})`);
-
-  // RULE 2 + 3: Mark all OTHER pending rows for this same topic as skipped_long
-  // so they don't get picked up in this run or the next fresh-topics run.
-  // They'll be revived (long_status → pending_long) only when no fresh topics remain.
-  const otherRows = chosenRows.slice(1); // everything except the chosen row
-  if (otherRows.length > 0) {
-    console.log(`[WORKER] Skipping ${otherRows.length} other pending long row(s) for same topic (will revive when no fresh topics remain)`);
-    for (const r of otherRows) {
-      await fetchSupabase(`puzzle?id=eq.${r.id}`,{
-        method:'PATCH',
-        body:JSON.stringify({long_status:'skipped_long', updated_at:new Date().toISOString()}) // puzzle table
-      }).catch(()=>{});
-    }
-  }
-
-  const rows = await fetchSupabase(`puzzle?id=eq.${chosenRow.id}&select=*`);
-  if (!rows?.length) { console.log('[WORKER] Chosen row vanished — will retry next run.'); return; }
-
+  const rows = await fetchSupabase(`puzzle?id=eq.${quizId}&select=*`).catch(() => null);
+  if (!rows?.length) { console.error(`[PZ-LONG-ANIM] No puzzle row found for id=${quizId}`); process.exit(1); }
   const quiz = rows[0];
-  console.log(`[WORKER] Processing: ${quiz.id} — ${quiz.topic}`);
-  // Claim: set both video_status (legacy compat) and long_status (new system)
-  const claimPatch = { video_status: 'processing', long_status: 'rendering_long', updated_at: new Date().toISOString() };
-  await fetchSupabase(`puzzle?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(claimPatch)});
+
+  if (quiz.puzzle_type !== 'detective') {
+    console.error(`[PZ-LONG-ANIM] puzzle_type="${quiz.puzzle_type}" — this animated scene is currently`);
+    console.error('[PZ-LONG-ANIM] only built for "detective" puzzles. Aborting without changing the row.');
+    process.exit(1);
+  }
+  if (!sceneAnimatorGold.isSceneEligible(quiz)) {
+    console.error('[PZ-LONG-ANIM] Row is puzzle_type=detective but puzzle_spec is missing clues/suspects/correct_answer_1.');
+    process.exit(1);
+  }
+
+  console.log(`[PZ-LONG-ANIM] Rendering: ${quiz.id} — ${quiz.topic}`);
+
+  // Distinct status values — never intersect with the original worker's
+  // `long_status IN (pending_long, rendering_long, done_long, error_long)`
+  // states, so the two pipelines can never collide on the same row.
+  await fetchSupabase(`puzzle?id=eq.${quiz.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ long_status: 'rendering_long_animated', updated_at: new Date().toISOString() })
+  });
 
   const workDir = `/tmp/video_${uuidv4()}`;
   await ensureDir(workDir);
 
   try {
-    const { videoPath, thumbnailUrl, heroImageUrl } = await withTimeout(buildVideo(quiz,workDir), TIMEOUT_JOB, `buildVideo ${quiz.id}`);
+    const { videoPath } = await withTimeout(buildVideo(quiz, workDir), TIMEOUT_JOB, `buildVideo ${quiz.id}`);
     const stats  = await fs.stat(videoPath);
-    const sizeMb = parseFloat((stats.size/(1024*1024)).toFixed(2));
+    const sizeMb = parseFloat((stats.size / (1024 * 1024)).toFixed(2));
     const dur    = await videoDur(videoPath);
-    console.log(`[WORKER] Done. ${dur.toFixed(1)}s, ${sizeMb}MB, thumbnail=${thumbnailUrl||'none'}`);
+    console.log(`[PZ-LONG-ANIM] Done. ${dur.toFixed(1)}s, ${sizeMb}MB`);
 
     const artifactPath = `/tmp/${quiz.id}_puzzle_video_animated.mp4`;
     await fs.copyFile(videoPath, artifactPath);
-    await fs.writeFile('/tmp/puzzle_artifact_ready_animated', artifactPath);
+    await fs.writeFile('/tmp/puzzle_artifact_ready', artifactPath);
 
-    // Upload video to R2 so it's permanently accessible via URL
     let videoUrl = null;
     if (R2_CONFIGURED) {
       try {
         const videoBuf = await fs.readFile(artifactPath);
-        const videoKey = `puzzles-animated/${quiz.id}.mp4`;
+        const videoKey = `puzzles/${quiz.id}_animated.mp4`; // distinct key — never overwrites the original render
         await withTimeout(
           s3Client.send(new PutObjectCommand({
-            Bucket: R2_BUCKET,
-            Key: videoKey,
-            Body: videoBuf,
-            ContentType: 'video/mp4',
+            Bucket: R2_BUCKET, Key: videoKey, Body: videoBuf, ContentType: 'video/mp4',
           })),
           60000, 'R2 video upload'
         );
-        videoUrl = `${R2_PUBLIC_URL.replace(/\/$/,'')}/${videoKey}`;
-        console.log(`[R2] Video uploaded: ${videoUrl}`);
+        videoUrl = `${R2_PUBLIC_URL.replace(/\/$/, '')}/${videoKey}`;
+        console.log(`[R2] Animated video uploaded: ${videoUrl}`);
       } catch (e) {
         console.warn(`[R2] Video upload failed (non-fatal): ${e.message}`);
       }
     }
 
     const patchBody = {
-      video_status:'rendered',
-      long_status: 'done_long',   // this worker only ever renders long rows now
-      updated_at:new Date().toISOString()
+      long_status: 'done_long_animated',
+      updated_at: new Date().toISOString(),
     };
-    if (thumbnailUrl)        patchBody.thumbnail_url         = thumbnailUrl;
-    if (heroImageUrl)        patchBody.hero_image_url        = heroImageUrl;
-    if (videoUrl)            patchBody.video_url             = videoUrl;
-    if (quiz._inlineImageUrl) patchBody.inline_image_url     = quiz._inlineImageUrl;
+    if (videoUrl) patchBody[ANIMATED_OUTPUT_URL_COLUMN] = videoUrl;
+    await fetchSupabase(`puzzle?id=eq.${quiz.id}`, { method: 'PATCH', body: JSON.stringify(patchBody) });
 
-    // The render itself already succeeded and the file is already in R2 at
-    // this point — never let a bad/renamed column on this PATCH throw the
-    // whole job into the catch-block below and mark a good render as
-    // error_long (which would just cause a wasteful full re-render next
-    // run). If the full patch 400s for any reason, retry with only the
-    // columns we are certain exist on `puzzle`.
-    try {
-      await fetchSupabase(`puzzle?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(patchBody)});
-    } catch (patchErr) {
-      console.warn(`[WORKER] Full completion PATCH failed (${patchErr.message}) — retrying with minimal fields`);
-      const minimalBody = {
-        video_status:'rendered',
-        long_status: 'done_long',
-        updated_at:new Date().toISOString(),
-      };
-      if (videoUrl) minimalBody.video_url = videoUrl;
-      await fetchSupabase(`puzzle?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(minimalBody)});
-    }
-
-    await fs.rm(workDir,{recursive:true,force:true});
-    console.log(`[WORKER] Artifact: ${artifactPath}`);
+    await fs.rm(workDir, { recursive: true, force: true });
+    console.log(`[PZ-LONG-ANIM] Artifact: ${artifactPath}`);
   } catch (err) {
-    console.error('[WORKER] FAILED:', err.message);
-    await fetchSupabase(`puzzle?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify({
-      video_status:'error', long_status:'error_long', generation_error:String(err.message||err).slice(0,800), updated_at:new Date().toISOString()
-    })});
-    await fs.rm(workDir,{recursive:true,force:true}).catch(()=>{});
+    console.error('[PZ-LONG-ANIM] FAILED:', err.message);
+    await fetchSupabase(`puzzle?id=eq.${quiz.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        long_status: 'error_long_animated',
+        generation_error: String(err.message || err).slice(0, 800),
+        updated_at: new Date().toISOString()
+      })
+    }).catch(() => {});
+    await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
     throw err;
   }
 }
@@ -1349,7 +1110,7 @@ async function buildVideo(quiz, workDir) {
   const miOptions  = quiz.mission_options_1           || [];
   const hasMI      = !!(miQuestion);
 
-  const QTIME    = 10; // HARD-LOCKED to 10s for the animated edition (ignores thinking_time_sec on the row)
+  const QTIME    = 10; // ANIMATED VARIANT: fixed 10s thinking time per spec (DB's thinking_time_sec is ignored here)
   // FIX (checklist item 10): 50/50 fires at 2/3 of thinking time, not 1/2
   const HINT_AT  = QTIME / 4;
   const FIFTY_AT = QTIME * 2 / 3;
@@ -1767,15 +1528,6 @@ async function buildVideo(quiz, workDir) {
   // No cap — record for the full actual hook audio length
   pushClip(await recordedClip(page, hookAudio.path, Math.max(hookAudio.dur, 1.5), workDir, 'clip_hook', '.hook-slide'));
 
-  // ══ ANIMATED GOLD OVERRIDE — injected here, AFTER the intro is already
-  // recorded, so the hook screen keeps its original look untouched. Every
-  // screen recorded from this point forward (question, options, countdown,
-  // reveal, CTAs, mission impossible) picks up the black+gold big/bold
-  // animated treatment. ══
-  const goldPalette = pickGoldPalette();
-  console.log(`[GOLD] Applying animated gold override (palette: ${goldPalette.join(', ')})`);
-  await page.addStyleTag({ content: buildAnimatedGoldCss(goldPalette) });
-
   // ══ STEP 2 (white intro-flash removed per feedback — straight to question_intro) ══
 
   // ══ STEP 3a: question_intro_audio_url plays, question HIDDEN ══
@@ -1870,165 +1622,25 @@ async function buildVideo(quiz, workDir) {
   });
   pushClip(await recordedClip(page, timeupAudio.path, timeupAudio.dur, workDir, 'clip_timeup', '.pre-reveal-slide'));
 
-  // ══ STEP 10: Answer reveal ══
-  await showOnly('.answer-slide');
-  await new Promise(r=>setTimeout(r,100));
-  const s10p=[];
-  const silRev=path.join(workDir,'sil_reveal.mp3'); await silence(GAP_ANSWER,silRev); s10p.push(silRev);
-  if(correctSfxFile){ s10p.push(correctSfxFile); const sg3=path.join(workDir,'sfxgap3.mp3'); await silence(0.15,sg3); s10p.push(sg3); }
-  const correctTts=path.join(workDir,'correct_tts.mp3'); await tts(correct,voice,correctTts,1.5); s10p.push(correctTts);
-  const step10Combined=path.join(workDir,'step10.mp3');
-  await concatAudio(s10p,step10Combined,workDir);
-  const answerDur = Math.max(await audioDur(step10Combined), 1.5);
-  pushClip(await recordedClip(page, step10Combined, answerDur, workDir, 'clip_answer', '.answer-slide'));
-
-  // ══ FINAL CTA — now comes BEFORE Mission Impossible. ONE cta only: CTA1 if affiliate/
-  // cta1_description_text exists, else CTA2. Moved here so MI is the last dramatic beat. ══
-  await showOnly(hasCta1?'.cta1-slide':'.cta2-slide');
-  await new Promise(r=>setTimeout(r,150));
-  console.log(`[FINALCTA-DIAG] hasCta1=${hasCta1} cta1AudioFile=${cta1AudioFile||'NULL'} cta2AudioFile=${cta2AudioFile||'NULL'} cta2_text="${(quiz.cta2_text||'').slice(0,50)}"`);
-  const ctaAudio = await buildAudio({
-    prerecorded:hasCta1?cta1AudioFile:cta2AudioFile,
-    fallbackText:hasCta1
-      ?(cta1Desc||quiz.affiliate_text||'Check the exclusive link in the description below!')
-      :(quiz.cta2_text||'Want to play the real challenge? Click the link in the description now!'),
-    fallbackSec:3, voice, leadGap:GAP_DEFAULT, workDir, name:hasCta1?'cta1':'cta2'
-  });
-  console.log(`[FINALCTA-DIAG] built audio path=${ctaAudio.path} dur=${ctaAudio.dur.toFixed(2)}s`);
-  pushClip(await recordedClip(page, ctaAudio.path, ctaAudio.dur, workDir, 'clip_cta', hasCta1?'.cta1-slide':'.cta2-slide'));
-
-  // ══ MISSION IMPOSSIBLE — LAST screen, after CTA. Skip if mission_impossible_question
-  // is null. ONE combined screen: title flies in, then question+options fade in. ══
-  if (hasMI) {
-    await showOnly('.mission-final-slide');
-    await page.evaluate(()=>{
-      const c=document.getElementById('mi-cta3');
-      if(c) c.classList.remove('show-cta3');
+  // ══ STEP 10 (REPLACED): animated clue-by-clue deduction → culprit reveal ══
+  // No static answer-slide, no "Fun Fact" explanation, no Final CTA, no
+  // Mission Impossible — the video ends right after the reveal, per spec.
+  // TTS narrates ONLY the clues and "The culprit is <name>." — never the
+  // explanation text.
+  try {
+    const sceneClip = await sceneAnimatorGold.recordScene(page, quiz, {
+      workDir, voice, tts, silence, concatAudio, audioDur,
+      ffmpeg, withTimeout, TIMEOUT_RECORDER,
     });
-    await new Promise(r=>setTimeout(r,150));
-
-    const miParts=[];
-    if(sfxMissionFile){ miParts.push(sfxMissionFile); const g=path.join(workDir,'sfx_mi_gap.mp3'); await silence(0.25,g); miParts.push(g); }
-    if(missionIntroFile){ miParts.push(missionIntroFile); }
-    else { const mt=path.join(workDir,'mi_tts.mp3'); await tts(quiz.mission_intro_text||'Mission impossible! Are you smart enough?',voice,mt,2); miParts.push(mt); }
-    const miAudioRaw=path.join(workDir,'mi_audio_raw.mp3');
-    await concatAudio(miParts,miAudioRaw,workDir);
-    let miAudioDur = await audioDur(miAudioRaw);
-    let miAudio = miAudioRaw;
-    // MI minimum screen time = 5.5s (audio duration + 2s extra so viewer
-    // can read the question and options before the screen moves on)
-    const MI_MIN_SEC = 5.5;
-    if (miAudioDur < MI_MIN_SEC) {
-      const pad=path.join(workDir,'mi_pad.mp3'); await silence(MI_MIN_SEC - miAudioDur, pad);
-      miAudio=path.join(workDir,'mi_audio.mp3');
-      await concatAudio([miAudioRaw,pad],miAudio,workDir);
-      miAudioDur = MI_MIN_SEC;
-    }
-    pushClip(await recordedClip(page, miAudio, miAudioDur, workDir, 'clip_mi', '.mission-final-slide'));
-
-    // ══ COMBINED CTA SCREEN (like→share→subscribe + cta4) ══
-    await showOnly('.comment-cta-screen');
-    await new Promise(r=>setTimeout(r,200));
-
-    console.log(`[CTA-COMBINED] cta4AudioFile=${cta4AudioFile||'NULL'}`);
-
-    // ── REQ: Hardcoded SFX for like/share/subscribe (no DB fetch) ──
-    const PILL_SFX_URL = 'https://pub-3578d297d3904e1d8ffedfc9dd4102f2.r2.dev/audio/hint_reveal/sound10_sharp.wav';
-    const pillSfx = await downloadAudio(PILL_SFX_URL, `pillsfx_${quiz.id}`);
-    console.log(`[CTA-COMBINED] pillSfx (hardcoded URL) = ${pillSfx || 'DOWNLOAD FAILED'}`);
-
-    // ── REQ: cta4 audio MUST come from quiz table and MUST play ──
-    let cta4Mp3 = cta4AudioFile;
-    if (!cta4Mp3) {
-      console.warn(`[CTA-COMBINED] cta4AudioFile is NULL — quiz.cta4_audio_url=${quiz.cta4_audio_url||'(empty)'} — using TTS fallback`);
-      const cta4Tts = path.join(workDir,'cta4_tts.mp3');
-      await tts(quiz.cta4_text||'Write your answer in the comments right now!', voice, cta4Tts, 3);
-      cta4Mp3 = cta4Tts;
-    }
-    await checkAndBoostVolume(cta4Mp3, 'cta4_source');
-    const cta4SourceDur = await audioDur(cta4Mp3);
-    console.log(`[CTA-COMBINED] cta4 source dur=${cta4SourceDur.toFixed(2)}s`);
-
-    // Timeline — SFX fires at animation-delay + 0.25s (midpoint of 0.5s pop animation)
-    // so the sound hits exactly when the pill feels "arrived" not when it starts scaling in.
-    // CSS animation-delay: LIKE=0.1s, SHARE=0.8s, SUB=1.5s → add 0.25s offset each
-    // CTA4 card: animation-delay=2.3s + 0.25s offset
-    const LIKE_T  = 0.35;   // 0.10 + 0.25
-    const SHARE_T = 1.05;   // 0.80 + 0.25
-    const SUB_T   = 1.75;   // 1.50 + 0.25
-    const CTA4_T  = 2.55;   // 2.30 + 0.25
-    const CTA_TAIL = 0.5;
-    const totalCtaDur = CTA4_T + cta4SourceDur + CTA_TAIL;
-    console.log(`[CTA-COMBINED] total screen dur=${totalCtaDur.toFixed(2)}s`);
-
-    // Build CTA audio track. CRITICAL: force MONO (-ac 1) output to match all
-    // other clips' audio (which are mono from TTS). A stereo CTA clip mixed with
-    // mono body clips caused channel-count mismatch → audio dropped in concat.
-    const ctaFinalAudio = path.join(workDir,'cta_final_audio.mp3');
-    const ctaSilBase = path.join(workDir,'cta_sil_base.mp3');
-    await silence(totalCtaDur, ctaSilBase);
-
-    const cta4Ms = Math.round(CTA4_T * 1000);
-
-    if (pillSfx && await fileExists(pillSfx)) {
-      const likeMs = Math.round(LIKE_T*1000), shareMs = Math.round(SHARE_T*1000), subMs = Math.round(SUB_T*1000);
-      try {
-        // Mix base silence + 3 SFX (at pill times) + cta4 audio (at 2.3s).
-        // -ac 1 forces mono. normalize=0 keeps full volume.
-        await ffmpeg(
-          `-y -i "${ctaSilBase}" -i "${pillSfx}" -i "${pillSfx}" -i "${pillSfx}" -i "${cta4Mp3}" ` +
-          `-filter_complex ` +
-          `"[1:a]adelay=${likeMs}|${likeMs}[like];` +
-          `[2:a]adelay=${shareMs}|${shareMs}[share];` +
-          `[3:a]adelay=${subMs}|${subMs}[sub];` +
-          `[4:a]adelay=${cta4Ms}|${cta4Ms}[cta4];` +
-          `[0:a][like][share][sub][cta4]amix=inputs=5:duration=first:normalize=0[a]" ` +
-          `-map "[a]" -t ${totalCtaDur} -ar 44100 -ac 1 -acodec libmp3lame "${ctaFinalAudio}"`,
-          'cta_mix_with_sfx'
-        );
-        console.log(`[CTA-COMBINED] Mixed sfx@${LIKE_T}/${SHARE_T}/${SUB_T}s + cta4@${CTA4_T}s (mono)`);
-      } catch(e) {
-        console.warn(`[CTA-COMBINED] SFX mix failed (${e.message}) — cta4-only fallback`);
-        const lead=path.join(workDir,'cta_lead.mp3'), tail=path.join(workDir,'cta_tail.mp3');
-        await silence(CTA4_T, lead); await silence(CTA_TAIL, tail);
-        await concatAudio([lead, cta4Mp3, tail], ctaFinalAudio, workDir);
-      }
-    } else {
-      // SFX download failed — still must play cta4 audio
-      console.warn(`[CTA-COMBINED] pillSfx unavailable — cta4-only at ${CTA4_T}s`);
-      const lead=path.join(workDir,'cta_lead.mp3'), tail=path.join(workDir,'cta_tail.mp3');
-      await silence(CTA4_T, lead); await silence(CTA_TAIL, tail);
-      await concatAudio([lead, cta4Mp3, tail], ctaFinalAudio, workDir);
-    }
-
-    await checkAndBoostVolume(ctaFinalAudio, 'cta_final_audio');
-    console.log(`[CTA-COMBINED] final audio dur=${(await audioDur(ctaFinalAudio)).toFixed(2)}s`);
-
-    // Record visual
-    const ctaRawVideo = path.join(workDir,'clip_cta_combined_raw.mp4');
-    const recCta = new PuppeteerScreenRecorder(page, { fps:30, videoFrame:{width:1080,height:1920}, aspectRatio:'9:16', followNewTab:false });
-    await recCta.start(ctaRawVideo);
-    await new Promise(r=>setTimeout(r, totalCtaDur * 1000));
-    await withTimeout(recCta.stop(), TIMEOUT_RECORDER, 'clip_cta_combined recorder.stop()');
-
-    // Re-encode video-only (no audio)
-    const ctaH264 = path.join(workDir,'clip_cta_combined_h264.mp4');
-    await ffmpeg(`-y -i "${ctaRawVideo}" -an -c:v libx264 -crf 28 -preset faster -pix_fmt yuv420p -r 30 -vf "scale=1080:1920" "${ctaH264}"`, 'cta_combined reencode');
-
-    // Mux: -ac 1 (MONO) + 128k to EXACTLY match other clips → concat won't drop audio.
-    const ctaOut = path.join(workDir,'clip_cta_combined.mp4');
-    await ffmpeg(
-      `-y -stream_loop -1 -i "${ctaH264}" -i "${ctaFinalAudio}" ` +
-      `-map 0:v:0 -map 1:a:0 ` +
-      `-c:v libx264 -crf 28 -preset faster -pix_fmt yuv420p -r 30 ` +
-      `-c:a aac -b:a 128k -ar 44100 -ac 1 ` +
-      `-t ${totalCtaDur} "${ctaOut}"`,
-      'cta_combined mux'
-    );
-    const ctaActualDur = await videoDur(ctaOut);
-    await checkAndBoostVolume(ctaOut, 'clip_cta_combined_out');
-    console.log(`[CTA-COMBINED] final clip: ${ctaActualDur.toFixed(2)}s (mono 128k)`);
-    pushClip({ path: ctaOut, dur: ctaActualDur });
+    pushClip(sceneClip); // isVoice defaults true — bg music ducks under the narration
+    console.log(`[SCENE-GOLD] reveal scene added: +${sceneClip.dur.toFixed(2)}s`);
+  } catch (e) {
+    // If the scene fails we still want SOME ending rather than a broken
+    // job — fall back to a short silent hold on the last visible screen.
+    console.error(`[SCENE-GOLD] FAILED, using fallback hold: ${e.message}`);
+    const fallbackSil = path.join(workDir, 'scene_fallback_sil.mp3');
+    await silence(2, fallbackSil);
+    pushClip(await recordedClip(page, fallbackSil, 2, workDir, 'clip_fallback_end', '.question-phase'));
   }
 
   await browser.close();
