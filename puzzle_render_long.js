@@ -976,7 +976,7 @@ async function processJobs() {
 
   // ── Reset stuck LONG rows (rendering for >30 min) ─────────────────────
   const stuckCutoff = new Date(Date.now()-30*60*1000).toISOString();
-  const stuckRows = await fetchSupabase(`puzzle?long_status=eq.rendering_long&assigned_format=eq.long&is_active=eq.true&updated_at=lt.${stuckCutoff}&select=id&limit=5`).catch(()=>null);
+  const stuckRows = await fetchSupabase(`puzzle?long_status=eq.rendering_long&is_active=eq.true&updated_at=lt.${stuckCutoff}&select=id&limit=5`).catch(()=>null);
   if (stuckRows?.length) {
     console.log(`[WORKER] Resetting ${stuckRows.length} stuck long rows`);
     for (const r of stuckRows) await fetchSupabase(`puzzle?id=eq.${r.id}`,{method:'PATCH',body:JSON.stringify({video_status:'pending',long_status:'pending_long',updated_at:new Date().toISOString()})}).catch(()=>{});
@@ -1014,23 +1014,26 @@ async function processJobs() {
   //             recoverable (video_status='skipped' → re-queued next run
   //             only if no fresh topics exist).
 
-  // STRICT FORMAT GATING (per requirement):
-  //   worker10 (this = LONG) renders ONLY rows where assigned_format='long'.
-  //   Those rows have long_status='pending_long' (set by worker8). We do NOT
-  //   fall back to video_status=pending anymore — that legacy fallback is what
-  //   let the long worker grab short/medium rows and produce duplicate videos.
-  //   The short worker polls short_status; the (future) medium worker polls
-  //   medium_status; each format is fully isolated by its own status column.
+  // FORMAT GATING (updated — open pool, no assignment):
+  //   puzzle_generator no longer assigns a single format to a row via
+  //   assign_puzzle_format / puzzle_format_config. Every newly-created puzzle
+  //   row now ships with short_status/medium_status/long_status ALL set to
+  //   their pending_* value, so it's open to whichever format worker gets to
+  //   it first. This worker (LONG) polls purely on long_status — same model
+  //   short/medium already use via puzzleAssigner.js's pollPuzzleFormat — so
+  //   it no longer requires assigned_format='long'. Each format is still
+  //   isolated from the others by its OWN status column (claiming long_status
+  //   never touches short_status/medium_status), so no double-claim risk —
+  //   the same row can legitimately be rendered as short AND medium AND long.
   const pendingRows = await fetchSupabase(
     'puzzle?long_status=eq.pending_long' +
-    '&assigned_format=eq.long' +
     '&is_active=eq.true&puzzle_enriched=eq.true' +
     '&select=id,topic,topic_slug,created_at,assigned_format,long_status&order=created_at.desc&limit=500'
   );
   if (!pendingRows?.length) {
     // No fresh long rows — check if any skipped LONG rows can be revived
     const skippedRows = await fetchSupabase(
-      'puzzle?long_status=eq.skipped_long&assigned_format=eq.long&is_active=eq.true&puzzle_enriched=eq.true' +
+      'puzzle?long_status=eq.skipped_long&is_active=eq.true&puzzle_enriched=eq.true' +
       '&select=id,topic,topic_slug,created_at&order=created_at.desc&limit=100'
     ).catch(()=>null);
     if (skippedRows?.length) {
@@ -1058,7 +1061,7 @@ async function processJobs() {
   for (const [topicKey, rows] of topicMap) {
     const sample = rows[0]; // use first row's topic string for the query
     const rendered = await fetchSupabase(
-      `puzzle?puzzle_type=eq.${encodeURIComponent(sample.puzzle_type||sample.topic)}&assigned_format=eq.long&long_status=eq.done_long&select=id&limit=50`
+      `puzzle?puzzle_type=eq.${encodeURIComponent(sample.puzzle_type||sample.topic)}&long_status=eq.done_long&select=id&limit=50`
     ).catch(()=>null);
     renderCounts[topicKey] = rendered?.length || 0;
   }
