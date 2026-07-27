@@ -104,6 +104,32 @@ const VOICE_MAP = {
 };
 const TTS_RATE          = '+8%';   // slightly snappier than default, keeps total near ~10s
 const CACHE_DIR         = '/tmp/puzzle_micro_cache';
+
+// ─── AUDIO POOL FETCH HELPERS ────────────────────────────────────────────────
+// Fetches a random active audio URL from the given Supabase table.
+async function fetchRandomAudioUrl(table, extraFilter = '') {
+  try {
+    const rows = await fetchSupabase(`${table}?is_active=eq.true${extraFilter}&limit=50`);
+    if (!rows || !rows.length) return null;
+    const pick = rows[Math.floor(Math.random() * rows.length)];
+    return pick.cloudflare_url || null;
+  } catch (e) {
+    console.warn(`[POOL] Failed to fetch from ${table}: ${e.message.slice(0, 100)}`);
+    return null;
+  }
+}
+// Fetches a random CTA-5 row (url + cta_text) for the final screen
+async function fetchRandomCta5() {
+  try {
+    const rows = await fetchSupabase(`cta_5?is_active=eq.true&limit=50`);
+    if (!rows || !rows.length) return null;
+    const pick = rows[Math.floor(Math.random() * rows.length)];
+    return { url: pick.cloudflare_url || null, text: pick.cta_text || null };
+  } catch (e) {
+    console.warn(`[POOL] Failed to fetch cta_5: ${e.message.slice(0, 100)}`);
+    return null;
+  }
+}
 const TIMEOUT_JOB        = 10 * 60 * 1000;
 const TIMEOUT_RECORDER   = 60 * 1000;
 const VIDEO_W            = 1080;
@@ -116,6 +142,7 @@ const FIFTY_FIFTY_AT     = 2.0;   // seconds INTO the countdown when two wrong o
 const GAP_BEFORE_REVEAL_TTS = 0.15;
 const TAIL_BUFFER        = 0.40;  // silence after the final line before the clip ends
 
+// TTS fallback text — only used if the DB audio pool returns null
 const LINE_ASK    = 'Can you solve it within 5 seconds?';
 const LINE_PAUSE  = 'Pause the video if you need more time!';
 const LINE_REVEAL = 'Did you find the answer within 5 seconds? Write it in the comments!';
@@ -290,7 +317,7 @@ async function markMicroError(id, msg) {
 function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-function buildHtml(quiz, svgHtml) {
+function buildHtml(quiz, svgHtml, ctaText = null) {
   const accent  = quiz.theme_accent_primary   || '#00e0ff';
   const accent2 = quiz.theme_accent_secondary || '#22c55e';
   const question = quiz.question_1 || '';
@@ -326,10 +353,10 @@ function buildHtml(quiz, svgHtml) {
     max-width: 92vw;
     text-align:center;
     color:#ffffff;
-    font-size:34px;
+    font-size:42px;
     font-weight:900;
     line-height:1.2;
-    padding: 10px 22px;
+    padding: 14px 24px;
     margin-bottom: 14px;
     background: rgba(0,0,0,0.5);
     border: 2px solid color-mix(in srgb, ${accent} 55%, rgba(255,255,255,0.12));
@@ -347,8 +374,11 @@ function buildHtml(quiz, svgHtml) {
     box-shadow: 0 10px 46px rgba(0,0,0,0.55),
                 0 0 60px color-mix(in srgb, ${accent} 34%, transparent);
     overflow: visible;
+    padding-bottom: 12px;
   }
   .puzzle-visual-wrap svg, .puzzle-visual-wrap .puzzle-svg { width:100%; height:auto; display:block; }
+  /* FIX: SVG name labels get adequate min font-size so they don't overlap with figures */
+  .puzzle-visual-wrap svg text { font-size: max(20px, 1em); }
 
   /* ── Options — big, bold, 2x2 grid ── */
   .options-grid {
@@ -363,9 +393,9 @@ function buildHtml(quiz, svgHtml) {
     background: rgba(0,0,0,0.55);
     border: 3px solid rgba(255,255,255,0.22);
     border-radius: 18px;
-    padding: 20px 18px;
+    padding: 22px 18px;
     color:#ffffff;
-    font-size: 42px;
+    font-size: 44px;
     font-weight: 800;
     line-height: 1.15;
     overflow-wrap: anywhere;
@@ -373,10 +403,10 @@ function buildHtml(quiz, svgHtml) {
   }
   .opt-badge {
     flex-shrink:0;
-    width:46px; height:46px; border-radius:50%;
+    width:54px; height:54px; border-radius:50%;
     display:flex; align-items:center; justify-content:center;
     background: color-mix(in srgb, ${accent} 55%, #111);
-    color:#fff; font-size:24px; font-weight:900;
+    color:#fff; font-size:28px; font-weight:900;
   }
   .opt-mark { font-size:34px; margin-left:auto; }
 
@@ -434,30 +464,31 @@ function buildHtml(quiz, svgHtml) {
   .options-grid .opt:nth-child(3) { animation-delay: 0.40s; }
   .options-grid .opt:nth-child(4) { animation-delay: 0.46s; }
 
-  /* ── Hint line — shown from t=0, sits between question and puzzle ── */
+  /* ── Hint line — ENLARGED (min 32px, visibly prominent) ── */
   .hint-line {
     max-width: 90vw;
     text-align:center;
     color:#ffd24a;
-    font-size:26px;
-    font-weight:800;
+    font-size:32px;
+    font-weight:900;
     line-height:1.25;
-    padding: 8px 20px;
+    padding: 14px 24px;
     margin-bottom: 12px;
-    background: rgba(0,0,0,0.45);
-    border: 2px dashed rgba(255,210,74,0.55);
-    border-radius: 16px;
-    text-shadow: 0 2px 6px rgba(0,0,0,0.8);
+    background: rgba(0,0,0,0.55);
+    border: 3px dashed rgba(255,210,74,0.70);
+    border-radius: 18px;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+    letter-spacing: 0.3px;
   }
 
-  /* ── 50/50 — two wrong options fade + get crossed out, 2s into countdown ── */
+  /* ── 50/50 — two wrong options are REMOVED from view (visibility:hidden).
+     No strikethrough. Options vanish cleanly; grid space remains so layout
+     stays stable and doesn't jump. ── */
   .opt.opt-eliminated {
-    opacity: 0.28;
-    filter: grayscale(0.6);
-    transform: scale(0.97);
+    visibility: hidden;
+    pointer-events: none;
+    transition: none;
   }
-  .opt.opt-eliminated .opt-text { text-decoration: line-through; }
-  .opt.opt-eliminated .opt-mark::after { content: '✖'; font-size: 30px; color: #ff5c5c; }
 
 
   .pause-caption {
@@ -465,12 +496,12 @@ function buildHtml(quiz, svgHtml) {
     left: 5vw; right: 5vw; bottom: 54px;
     text-align:center;
     color:#ffd24a;
-    font-size: 32px;
+    font-size: 36px;
     font-weight: 900;
     letter-spacing: 0.5px;
-    padding: 16px 20px;
-    background: rgba(0,0,0,0.62);
-    border: 2px solid rgba(255,210,74,0.55);
+    padding: 18px 22px;
+    background: rgba(0,0,0,0.72);
+    border: 3px solid rgba(255,210,74,0.65);
     border-radius: 18px;
     text-shadow: 0 2px 8px rgba(0,0,0,0.85);
     opacity: 0;
@@ -479,6 +510,28 @@ function buildHtml(quiz, svgHtml) {
     z-index: 20;
   }
   .pause-caption.show { opacity: 1; transform: translateY(0); }
+
+  /* ── CTA overlay — shown on final screen, large text at bottom ── */
+  .cta-overlay {
+    display: none;
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    padding: 28px 32px 50px;
+    background: linear-gradient(0deg, rgba(0,0,0,0.92) 60%, transparent 100%);
+    text-align: center;
+    z-index: 30;
+  }
+  .cta-overlay.show { display: block; }
+  .cta-text {
+    color: #ffffff;
+    font-size: 46px;
+    font-weight: 900;
+    line-height: 1.3;
+    text-shadow: 0 3px 12px rgba(0,0,0,0.9);
+    letter-spacing: 0.3px;
+    border-top: 3px solid rgba(255,255,255,0.25);
+    padding-top: 22px;
+  }
 </style>
 </head>
 <body>
@@ -493,6 +546,10 @@ function buildHtml(quiz, svgHtml) {
   </div>
 
   <div class="pause-caption" id="pauseCaption">⏸ Pause the video if you need more time!</div>
+
+  <div class="cta-overlay" id="ctaOverlay">
+    <div class="cta-text" id="ctaText">${esc(ctaText || 'Drop your answer in the comments! 👇')}</div>
+  </div>
 </body>
 </html>`;
 }
@@ -563,20 +620,70 @@ async function buildMicroVideo(quiz, workDir) {
   const lang  = quiz.lang_code || 'en';
   const voice = VOICE_MAP[lang] || VOICE_MAP.en;
 
-  // ── 1. Generate the three TTS lines first — every timestamp below is
-  //        derived from their REAL rendered durations. ──────────────────
-  console.log('[MICRO] Generating TTS...');
+  // ── 1. Fetch audio from DB pools (intro_voices_5_sec, pause_audios, cta_5)
+  //        and fall back to TTS if a pool returns nothing. Every timestamp
+  //        below is derived from the REAL rendered audio durations. ──────
+  console.log('[MICRO] Fetching audio from DB pools...');
   const askPath    = path.join(workDir, 'tts_ask.mp3');
   const pausePath  = path.join(workDir, 'tts_pause.mp3');
   const revealPath = path.join(workDir, 'tts_reveal.mp3');
-  await tts(LINE_ASK, voice, askPath);
-  await tts(LINE_PAUSE, voice, pausePath);
-  await tts(LINE_REVEAL, voice, revealPath);
+
+  // CHANGE 4: intro voice from intro_voices_5_sec (random active row)
+  const introPoolUrl = await fetchRandomAudioUrl('intro_voices_5_sec');
+  if (introPoolUrl) {
+    console.log(`[MICRO] Using intro_voices_5_sec: ${introPoolUrl}`);
+    const dlPath = await download(introPoolUrl, `mi_intro_${quiz.id}`);
+    if (dlPath) {
+      await fs.copyFile(dlPath, askPath);
+      console.log('[MICRO] Intro audio downloaded from pool.');
+    } else {
+      console.warn('[MICRO] Intro pool download failed — falling back to TTS.');
+      await tts(LINE_ASK, voice, askPath);
+    }
+  } else {
+    console.warn('[MICRO] intro_voices_5_sec returned nothing — using TTS fallback.');
+    await tts(LINE_ASK, voice, askPath);
+  }
+
+  // CHANGE 5: pause audio from pause_audios (random active row)
+  const pausePoolUrl = await fetchRandomAudioUrl('pause_audios');
+  if (pausePoolUrl) {
+    console.log(`[MICRO] Using pause_audios: ${pausePoolUrl}`);
+    const dlPath = await download(pausePoolUrl, `mi_pause_${quiz.id}`);
+    if (dlPath) {
+      await fs.copyFile(dlPath, pausePath);
+      console.log('[MICRO] Pause audio downloaded from pool.');
+    } else {
+      console.warn('[MICRO] Pause pool download failed — falling back to TTS.');
+      await tts(LINE_PAUSE, voice, pausePath);
+    }
+  } else {
+    console.warn('[MICRO] pause_audios returned nothing — using TTS fallback.');
+    await tts(LINE_PAUSE, voice, pausePath);
+  }
+
+  // CHANGE 6: CTA/reveal audio from cta_5 (random active row); also get cta_text for overlay
+  const cta5Row = await fetchRandomCta5();
+  const cta5Text = cta5Row?.text || quiz.cta4_text || 'Drop your answer in the comments! 👇';
+  if (cta5Row?.url) {
+    console.log(`[MICRO] Using cta_5: ${cta5Row.url}`);
+    const dlPath = await download(cta5Row.url, `mi_cta5_${quiz.id}`);
+    if (dlPath) {
+      await fs.copyFile(dlPath, revealPath);
+      console.log('[MICRO] CTA-5 audio downloaded from pool.');
+    } else {
+      console.warn('[MICRO] CTA-5 pool download failed — falling back to TTS.');
+      await tts(LINE_REVEAL, voice, revealPath);
+    }
+  } else {
+    console.warn('[MICRO] cta_5 returned nothing — using TTS fallback.');
+    await tts(LINE_REVEAL, voice, revealPath);
+  }
 
   const askDur    = await probeNum(askPath)    || 1.2;
   const pauseDur  = await probeNum(pausePath)  || 1.6;
   const revealDur = await probeNum(revealPath) || 3.2;
-  console.log(`[MICRO] TTS durations — ask=${askDur.toFixed(2)}s pause=${pauseDur.toFixed(2)}s reveal=${revealDur.toFixed(2)}s`);
+  console.log(`[MICRO] Audio durations — ask=${askDur.toFixed(2)}s pause=${pauseDur.toFixed(2)}s reveal=${revealDur.toFixed(2)}s`);
 
   // ── 2. Timeline (all absolute offsets, seconds from t=0) ───────────────
   const countdownStart = askDur + GAP_AFTER_ASK_TTS;
@@ -610,7 +717,7 @@ async function buildMicroVideo(quiz, workDir) {
     throw new Error(`puzzleRenderers failed: ${e.message}`);
   }
 
-  const html = buildHtml(quiz, svgHtml);
+  const html = buildHtml(quiz, svgHtml, cta5Text);
   const htmlPath = path.join(workDir, 'micro_index.html');
   await fs.writeFile(htmlPath, html);
 
@@ -692,9 +799,16 @@ async function buildMicroVideo(quiz, workDir) {
         document.getElementById('pauseCaption')?.classList.remove('show');
         document.querySelectorAll('.opt').forEach((el, i) => {
           if (i === idx) { el.classList.add('opt-correct'); const m = el.querySelector('.opt-mark'); if (m) m.textContent = '✅'; }
-          else            { el.classList.add('opt-fade'); }
+          else if (!el.classList.contains('opt-eliminated')) { el.classList.add('opt-fade'); }
         });
       }, correctIdx >= 0 ? correctIdx : 0),
+    },
+    // CHANGE 6: Show CTA overlay with cta_5 text at the reveal moment
+    {
+      at: revealTtsAt,
+      fn: (p) => p.evaluate(() => {
+        document.getElementById('ctaOverlay')?.classList.add('show');
+      }),
     },
   ];
 
