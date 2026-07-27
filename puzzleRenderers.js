@@ -495,25 +495,25 @@ function renderVisualMath(spec, o) {
     { items: [{ icon: 'banana', count: 1 }, { icon: 'apple', count: 1 }], result: '?' },
   ].slice(0, 4);
   const W = 960;
-  const rowH = 130, top = 170;
+  const rowH = 158, top = 170;  // FIX: taller rows for larger icons
   const H = top + eqs.length * rowH + 50;
-  const R = 40;
+  const R = 52;  // FIX: larger icons for readability
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'Solve the Puzzle', o);
   eqs.forEach((eq, ri) => {
     const y = top + ri * rowH + rowH / 2;
-    let x = 120;
+    let x = 80;
     const parts = eq.items || [];
     let row = '';
     parts.forEach((it, pi) => {
       const count = clampNum(it.count, 1, 3);
-      for (let c = 0; c < count; c++) { row += drawIcon(it.icon, x, y, R, o); x += R * 2 + 10; }
-      if (pi < parts.length - 1) { row += `<text x="${x + 6}" y="${y + 20}" font-size="60" font-weight="800" fill="${C.inkDim}">+</text>`; x += 70; }
+      for (let c = 0; c < count; c++) { row += drawIcon(it.icon, x, y, R, o); x += R * 2 + 14; }
+      if (pi < parts.length - 1) { row += `<text x="${x + 4}" y="${y + 22}" font-size="72" font-weight="800" fill="${C.inkDim}">+</text>`; x += 80; }
     });
-    row += `<text x="${x + 10}" y="${y + 20}" font-size="60" font-weight="800" fill="${C.inkDim}">=</text>`;
-    x += 80;
+    row += `<text x="${x + 6}" y="${y + 22}" font-size="72" font-weight="800" fill="${C.inkDim}">=</text>`;
+    x += 96;
     const isQ = /^\?+$/.test(String(eq.result).trim());
-    row += `<text x="${x}" y="${y + 24}" font-size="72" font-weight="900"
+    row += `<text x="${x}" y="${y + 26}" font-size="84" font-weight="900"
       fill="${isQ ? o.accent : "#ffffff"}">${esc(eq.result)}</text>`;
     svg += fadeIn(row, ri * 0.12);
   });
@@ -1230,7 +1230,7 @@ function renderTruthOrLie(spec, o) {
     { name:'Carol', statement:'Alice tells the truth.',   gender:'f' },
   ];
   const W = 960, bubbleH = 148, bubbleGap = 24, topY = 172;
-  const H = topY + people.length*(bubbleH+bubbleGap) + 70;
+  const H = topY + people.length*(bubbleH+bubbleGap) + 110;  // FIX: extra space for name labels below figures
   // Accent colour variants per person so figures look distinct
   const colors = [o.accent, o.accent2 || '#22c55e', o.accent3 || '#f4c430', '#ff2d78', '#a78bfa', '#38bdf8'];
   const genders = ['f','m','f','m','f','m'];
@@ -1246,7 +1246,8 @@ function renderTruthOrLie(spec, o) {
     // human figure (no background circle — figure stands freely)
     svg += humanFigure(figCX, figCY, figH, gen, col);
     // name label below
-    svg += `<text x="${figCX}" y="${y+bubbleH-4}" text-anchor="middle" font-family="Poppins,Arial" font-size="24" font-weight="800" fill="${col}">${esc(p.name)}</text>`;
+    // FIX: larger font (34px) and moved down so it doesn't overlap the figure
+    svg += `<text x="${figCX}" y="${y+bubbleH+18}" text-anchor="middle" font-family="Poppins,Arial" font-size="34" font-weight="900" fill="${col}" stroke="#000" stroke-width="3" paint-order="stroke">${esc(p.name)}</text>`;
     // speech bubble
     const bx = 154, by = y, bw = W-bx-34, bh = bubbleH;
     svg += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="22" fill="rgba(255,255,255,0.07)" stroke="${col}" stroke-width="2.5" stroke-opacity="0.4"/>`;
