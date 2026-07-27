@@ -366,9 +366,9 @@ function buildHtml(quiz, svgHtml, ctaText = null) {
 
   /* ── Puzzle visual — EXTREMELY large, the dominant element ── */
   .puzzle-visual-wrap {
-    width: 94vw;
-    max-width: 94vw;
-    margin: 4px auto 18px;
+    width: 96vw;
+    max-width: 96vw;
+    margin: 6px auto 14px;
     border-radius: 30px;
     border: 3px solid color-mix(in srgb, ${accent} 55%, rgba(255,255,255,0.14));
     box-shadow: 0 10px 46px rgba(0,0,0,0.55),
