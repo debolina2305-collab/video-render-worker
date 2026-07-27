@@ -285,12 +285,12 @@ async function processPublish() {
 
   console.log('[FB-PUBLISHER] Checking for approved videos to publish to Facebook...');
 
-  // Poll across ALL THREE formats' own status column — short_status,
-  // medium_status, long_status — instead of only short_status. Previously
-  // medium/long rows were completely invisible to the Facebook publisher
-  // even when done + approved.
+  // Poll across ALL FOUR formats' own status column — short_status,
+  // medium_status, long_status, micro_status — instead of only short_status.
+  // Previously medium/long/micro rows were completely invisible to the
+  // Facebook publisher even when done + approved.
   const rows = await fetchSupabase(
-    'puzzle?or=(short_status.eq.done_short,medium_status.eq.done_medium,long_status.eq.done_long)' +
+    'puzzle?or=(short_status.eq.done_short,medium_status.eq.done_medium,long_status.eq.done_long,micro_status.eq.done_micro)' +
     '&is_human_approved=eq.true' +
     '&is_active=eq.true' +
     '&fb_video_id=is.null' +
@@ -305,8 +305,9 @@ async function processPublish() {
   const quiz = rows[0];
   console.log(`[FB-PUBLISHER] Publishing: ${quiz.id} — "${quiz.topic}"`);
   // Resolve the video URL for whichever format this row actually is:
-  //   short  → short_video_url   medium → medium_video_url   long → video_url
-  const videoUrlToUse = quiz.short_video_url || quiz.medium_video_url || quiz.video_url;
+  //   short  → short_video_url   medium → medium_video_url
+  //   long   → video_url         micro  → micro_video_url
+  const videoUrlToUse = quiz.short_video_url || quiz.medium_video_url || quiz.video_url || quiz.micro_video_url;
   console.log(`[FB-PUBLISHER] video_url=${videoUrlToUse}`);
 
   if (!videoUrlToUse) {
