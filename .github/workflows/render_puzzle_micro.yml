@@ -26,8 +26,7 @@ on:
 
   # Optional schedule — every 15 minutes. Remove this block if you'd rather
   # drive it purely via workflow_dispatch / repository_dispatch.
-  schedule:
-    - cron: '*/15 * * * *'
+ 
 
 # Queue — never cancel in progress, so no puzzle rows are missed
 concurrency:
