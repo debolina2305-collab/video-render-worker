@@ -89,15 +89,39 @@ function openSvg(W, H, o) {
     <filter id="pzGlow" x="-40%" y="-40%" width="180%" height="180%">
       <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="${a}" flood-opacity="0.8"/>
     </filter>
+    <style>
+      /* Universal dynamic motion — applies to EVERY puzzle_type, not just
+         rebus, since every renderer draws inside this same wrapping group.
+         One entrance (fade + scale up) plus one continuous "alive" glow
+         pulse on the whole card. Uses real interpolatable CSS filter values
+         (drop-shadow lists, not url()-referenced SVG filters) so it animates
+         smoothly rather than snapping between two states. This is captured
+         for real by any worker that screen-records the page (short/medium/
+         long/micro); a static context (thumbnail/blog) just shows frame 1. */
+      .pz-anim {
+        transform-box: fill-box;
+        transform-origin: 50% 50%;
+        animation: pzFadeIn 0.6s ease both, pzGlowPulse 2.4s ease-in-out 0.7s infinite;
+      }
+      @keyframes pzFadeIn {
+        from { opacity: 0; transform: scale(0.94) translateY(14px); }
+        to   { opacity: 1; transform: scale(1) translateY(0); }
+      }
+      @keyframes pzGlowPulse {
+        0%, 100% { filter: drop-shadow(0 10px 16px rgba(0,0,0,0.45)) drop-shadow(0 0 18px color-mix(in srgb, ${a} 30%, transparent)); }
+        50%      { filter: drop-shadow(0 10px 20px rgba(0,0,0,0.5)) drop-shadow(0 0 34px color-mix(in srgb, ${a} 55%, transparent)); }
+      }
+    </style>
   </defs>
+  <g class="pz-anim">
   <rect x="14" y="14" width="${W - 28}" height="${H - 28}" rx="34"
-        fill="url(#pzPanel)" stroke="${a}" stroke-width="4" filter="url(#pzShadow)">
+        fill="url(#pzPanel)" stroke="${a}" stroke-width="4">
     <animate attributeName="stroke-width" values="4;6.5;4" dur="2.2s" repeatCount="indefinite"/>
   </rect>
   <rect x="14" y="14" width="${W - 28}" height="${H - 28}" rx="34"
         fill="none" stroke="${C.stroke}" stroke-width="1" opacity="0.6"/>`;
 }
-function closeSvg() { return `</svg>`; }
+function closeSvg() { return `</g></svg>`; }
 
 // Title strip at top of the panel (e.g. "MOVE 1 MATCHSTICK").
 function titleStrip(W, text, o) {
@@ -108,6 +132,34 @@ function titleStrip(W, text, o) {
     <rect x="${W/2 - 300}" y="42" width="600" height="66" rx="33" fill="${o.accent}" opacity="0.30"/>
     <text x="${W/2}" y="88" text-anchor="middle" font-family="Poppins,Segoe UI,Arial,sans-serif"
           font-size="40" font-weight="800" fill="#ffffff" letter-spacing="1.5">${t}</text>
+  </g>`;
+}
+
+// Shared staggered entrance wrapper — SAME visual language as the original
+// matchstick/number_sequence animations (opacity 0→1 + either a rise or a
+// pop-scale, driven by SMIL <animate>/<animateTransform> so it plays back as
+// real motion the moment the SVG renders — captured by every worker that
+// embeds this SVG (micro/short/medium/long/blog thumbnail), not just one).
+// mode 'rise' : fades in while sliding up 14px — good for whole shapes/labels.
+// mode 'pop'  : fades in while scaling up from 0.6 about (cx,cy) — good for
+//               grid/icon cells that should feel like they "land" in place.
+// Kept under the same ~0.4s total budget the original entrances used, so it
+// finishes before the long-format thumbnail's 400ms settle wait fires.
+function fadeIn(innerSvg, delaySec, mode = 'rise', cx, cy) {
+  const d = Math.max(0, delaySec).toFixed(2);
+  if (mode === 'pop' && cx != null && cy != null) {
+    return `<g opacity="0" transform="translate(${cx} ${cy}) scale(0.6) translate(${-cx} ${-cy})">
+      <animate attributeName="opacity" from="0" to="1" begin="${d}s" dur="0.18s" fill="freeze"/>
+      <animateTransform attributeName="transform" type="scale" additive="sum"
+        from="0.6" to="1" begin="${d}s" dur="0.18s" fill="freeze"/>
+      ${innerSvg}
+    </g>`;
+  }
+  return `<g opacity="0" transform="translate(0,14)">
+    <animate attributeName="opacity" from="0" to="1" begin="${d}s" dur="0.18s" fill="freeze"/>
+    <animateTransform attributeName="transform" type="translate" from="0,14" to="0,0"
+      begin="${d}s" dur="0.18s" fill="freeze"/>
+    ${innerSvg}
   </g>`;
 }
 
@@ -240,7 +292,7 @@ function renderGeometryTriangle(spec, o) {
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'Find the Angle', o);
   // triangle fill + edges
-  svg += `<polygon points="${A.x},${A.y} ${B.x},${B.y} ${Cc.x},${Cc.y}"
+  let tri = `<polygon points="${A.x},${A.y} ${B.x},${B.y} ${Cc.x},${Cc.y}"
     fill="${o.accent}" fill-opacity="0.10" stroke="${o.accent}" stroke-width="6" stroke-linejoin="round"/>`;
   // small angle arcs at each vertex
   const arc = (v, p1, p2) => {
@@ -252,14 +304,17 @@ function renderGeometryTriangle(spec, o) {
     return `<path d="M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}"
       fill="none" stroke="${C.inkDim}" stroke-width="3"/>`;
   };
-  svg += arc(A, B, Cc) + arc(B, A, Cc) + arc(Cc, A, B);
+  tri += arc(A, B, Cc) + arc(B, A, Cc) + arc(Cc, A, B);
+  svg += fadeIn(tri, 0);
   // vertex dots
-  [A, B, Cc].forEach(v => { svg += `<circle cx="${v.x}" cy="${v.y}" r="8" fill="${C.ink}"/>`; });
-  // labels
-  for (const L of labels) {
+  let dots = '';
+  [A, B, Cc].forEach(v => { dots += `<circle cx="${v.x}" cy="${v.y}" r="8" fill="${C.ink}"/>`; });
+  svg += fadeIn(dots, 0.14);
+  // labels — staggered one after another
+  labels.forEach((L, i) => {
     const P = pos[(L.at || 'A').toUpperCase()] || pos.A;
-    svg += angleLabel(P.x, P.y, L.text, o, !!L.highlight);
-  }
+    svg += fadeIn(angleLabel(P.x, P.y, L.text, o, !!L.highlight), 0.22 + i * 0.07);
+  });
   svg += closeSvg();
   return { svg, ok: true, warnings: [] };
 }
@@ -275,15 +330,16 @@ function renderGeometryRightTriangle(spec, o) {
   const unk  = (spec.unknown || 'hypotenuse'); // which is the ?
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'Find the Missing Side', o);
-  svg += `<polygon points="${A.x},${A.y} ${B.x},${B.y} ${Cc.x},${Cc.y}"
+  let tri = `<polygon points="${A.x},${A.y} ${B.x},${B.y} ${Cc.x},${Cc.y}"
     fill="${o.accent}" fill-opacity="0.10" stroke="${o.accent}" stroke-width="6" stroke-linejoin="round"/>`;
   // right-angle square marker at B
-  svg += `<path d="M ${B.x} ${B.y-40} L ${B.x+40} ${B.y-40} L ${B.x+40} ${B.y}"
+  tri += `<path d="M ${B.x} ${B.y-40} L ${B.x+40} ${B.y-40} L ${B.x+40} ${B.y}"
     fill="none" stroke="${C.inkDim}" stroke-width="3"/>`;
+  svg += fadeIn(tri, 0);
   const sideLabel = (x, y, text, hi) => angleLabel(x, y, text, o, hi);
-  svg += sideLabel(B.x - 60, (A.y + B.y)/2 + 16, legA, unk === 'leg_a');
-  svg += sideLabel((B.x + Cc.x)/2, B.y + 66, legB, unk === 'leg_b');
-  svg += sideLabel((A.x + Cc.x)/2 + 60, (A.y + Cc.y)/2 - 30, hyp, unk === 'hypotenuse');
+  svg += fadeIn(sideLabel(B.x - 60, (A.y + B.y)/2 + 16, legA, unk === 'leg_a'), 0.20);
+  svg += fadeIn(sideLabel((B.x + Cc.x)/2, B.y + 66, legB, unk === 'leg_b'), 0.27);
+  svg += fadeIn(sideLabel((A.x + Cc.x)/2 + 60, (A.y + Cc.y)/2 - 30, hyp, unk === 'hypotenuse'), 0.34);
   svg += closeSvg();
   return { svg, ok: true, warnings: [] };
 }
@@ -299,13 +355,15 @@ function renderGeometryStraightLine(spec, o) {
   const ray = { x: O.x + 300 * Math.cos(rayAng), y: O.y + 300 * Math.sin(rayAng) };
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'Find x', o);
-  svg += `<line x1="${L.x}" y1="${L.y}" x2="${R.x}" y2="${R.y}" stroke="${o.accent}" stroke-width="7" stroke-linecap="round"/>`;
-  svg += `<line x1="${O.x}" y1="${O.y}" x2="${ray.x.toFixed(0)}" y2="${ray.y.toFixed(0)}" stroke="${o.accent}" stroke-width="7" stroke-linecap="round"/>`;
-  svg += `<circle cx="${O.x}" cy="${O.y}" r="9" fill="${C.ink}"/>`;
+  let base = `<line x1="${L.x}" y1="${L.y}" x2="${R.x}" y2="${R.y}" stroke="${o.accent}" stroke-width="7" stroke-linecap="round"/>`;
+  base += `<line x1="${O.x}" y1="${O.y}" x2="${ray.x.toFixed(0)}" y2="${ray.y.toFixed(0)}" stroke="${o.accent}" stroke-width="7" stroke-linecap="round"/>`;
+  base += `<circle cx="${O.x}" cy="${O.y}" r="9" fill="${C.ink}"/>`;
+  svg += fadeIn(base, 0);
   // left angle (known) and right angle (unknown x)
-  svg += `<path d="M ${O.x-70} ${O.y} A 70 70 0 0 1 ${(O.x+70*Math.cos(rayAng)).toFixed(1)} ${(O.y+70*Math.sin(rayAng)).toFixed(1)}" fill="none" stroke="${C.inkDim}" stroke-width="3"/>`;
-  svg += angleLabel(O.x - 150, O.y - 40, known, o, false);
-  svg += angleLabel(O.x + 130, O.y - 40, unk, o, true);
+  const arcSvg = `<path d="M ${O.x-70} ${O.y} A 70 70 0 0 1 ${(O.x+70*Math.cos(rayAng)).toFixed(1)} ${(O.y+70*Math.sin(rayAng)).toFixed(1)}" fill="none" stroke="${C.inkDim}" stroke-width="3"/>`;
+  svg += fadeIn(arcSvg, 0.16);
+  svg += fadeIn(angleLabel(O.x - 150, O.y - 40, known, o, false), 0.24);
+  svg += fadeIn(angleLabel(O.x + 130, O.y - 40, unk, o, true), 0.31);
   svg += closeSvg();
   return { svg, ok: true, warnings: [] };
 }
@@ -377,12 +435,17 @@ function renderNumberGrid(spec, o) {
     row.forEach((val, ci) => {
       const x = startX + ci * (cw + gap), y = startY + ri * (ch + gap);
       const isQ = /^\?+$/.test(String(val).trim());
-      svg += `<rect x="${x}" y="${y}" width="${cw}" height="${ch}" rx="20"
+      const delay = ((ri * nC + ci) * 0.025).toFixed(2);
+      const cellCx = x + cw/2, cellCy = y + ch/2;
+      let cell = `<rect x="${x}" y="${y}" width="${cw}" height="${ch}" rx="20"
         fill="${isQ ? o.accent : C.slotBg}" fill-opacity="${isQ ? '0.18' : '1'}"
-        stroke="${isQ ? o.accent : C.stroke}" stroke-width="${isQ ? 5 : 2}"/>`;
-      svg += `<text x="${x + cw/2}" y="${y + ch/2 + 22}" text-anchor="middle"
+        stroke="${isQ ? o.accent : C.stroke}" stroke-width="${isQ ? 5 : 2}">
+        ${isQ ? `<animate attributeName="stroke-width" values="5;8;5" dur="1.1s" begin="${(nR*nC*0.025+0.25).toFixed(2)}s" repeatCount="indefinite"/>` : ''}
+      </rect>`;
+      cell += `<text x="${x + cw/2}" y="${y + ch/2 + 22}" text-anchor="middle"
         font-family="Poppins,Arial" font-size="${isQ ? 66 : 56}" font-weight="800"
         fill="${isQ ? o.accent : "#ffffff"}">${esc(val)}</text>`;
+      svg += fadeIn(cell, delay, 'pop', cellCx, cellCy);
     });
   });
   svg += closeSvg();
@@ -441,16 +504,18 @@ function renderVisualMath(spec, o) {
     const y = top + ri * rowH + rowH / 2;
     let x = 120;
     const parts = eq.items || [];
+    let row = '';
     parts.forEach((it, pi) => {
       const count = clampNum(it.count, 1, 3);
-      for (let c = 0; c < count; c++) { svg += drawIcon(it.icon, x, y, R, o); x += R * 2 + 10; }
-      if (pi < parts.length - 1) { svg += `<text x="${x + 6}" y="${y + 20}" font-size="60" font-weight="800" fill="${C.inkDim}">+</text>`; x += 70; }
+      for (let c = 0; c < count; c++) { row += drawIcon(it.icon, x, y, R, o); x += R * 2 + 10; }
+      if (pi < parts.length - 1) { row += `<text x="${x + 6}" y="${y + 20}" font-size="60" font-weight="800" fill="${C.inkDim}">+</text>`; x += 70; }
     });
-    svg += `<text x="${x + 10}" y="${y + 20}" font-size="60" font-weight="800" fill="${C.inkDim}">=</text>`;
+    row += `<text x="${x + 10}" y="${y + 20}" font-size="60" font-weight="800" fill="${C.inkDim}">=</text>`;
     x += 80;
     const isQ = /^\?+$/.test(String(eq.result).trim());
-    svg += `<text x="${x}" y="${y + 24}" font-size="72" font-weight="900"
+    row += `<text x="${x}" y="${y + 24}" font-size="72" font-weight="900"
       fill="${isQ ? o.accent : "#ffffff"}">${esc(eq.result)}</text>`;
+    svg += fadeIn(row, ri * 0.12);
   });
   svg += closeSvg();
   return { svg, ok: true, warnings: [] };
@@ -479,9 +544,10 @@ function renderOddOneOut(spec, o) {
   items.forEach((it, i) => {
     const r = Math.floor(i / cols), c = i % cols;
     const cx = startX + c * cell + cell / 2, cy = startY + r * cell + cell / 2;
-    svg += `<circle cx="${cx}" cy="${cy}" r="${cell*0.44}" fill="#ffffff" fill-opacity="0.03" stroke="${C.stroke}" stroke-width="1.5"/>`;
-    svg += drawIcon(it.shape || 'circle', cx, cy - 4, R, { accent: it.color || o.accent, accent2: o.accent2, accent3: o.accent3 });
-    svg += `<text x="${cx}" y="${cy + cell*0.34}" text-anchor="middle" font-size="22" fill="#ffffff" font-family="Arial" font-weight="700">${i + 1}</text>`;
+    let cellSvg = `<circle cx="${cx}" cy="${cy}" r="${cell*0.44}" fill="#ffffff" fill-opacity="0.03" stroke="${C.stroke}" stroke-width="1.5"/>`;
+    cellSvg += drawIcon(it.shape || 'circle', cx, cy - 4, R, { accent: it.color || o.accent, accent2: o.accent2, accent3: o.accent3 });
+    cellSvg += `<text x="${cx}" y="${cy + cell*0.34}" text-anchor="middle" font-size="22" fill="#ffffff" font-family="Arial" font-weight="700">${i + 1}</text>`;
+    svg += fadeIn(cellSvg, i * 0.018, 'pop', cx, cy);
   });
   svg += closeSvg();
   return { svg, ok: true, warnings: [] };
@@ -657,20 +723,21 @@ function renderRebus(spec, o) {
   tokens.forEach((t, i) => {
     const w = widths[i];
     if (String(t) === '+' || String(t) === '=') {
-      svg += `<text x="${x + w/2}" y="${pillCy + 22}" text-anchor="middle" font-size="${fs}" font-weight="800" fill="${C.inkDim}">${esc(t)}</text>`;
+      svg += fadeIn(`<text x="${x + w/2}" y="${pillCy + 22}" text-anchor="middle" font-size="${fs}" font-weight="800" fill="${C.inkDim}">${esc(t)}</text>`, i * 0.1);
     } else {
       // Card background: gradient fill + glow border, bigger + more attractive
-      svg += `<rect x="${x}" y="${pillTop}" width="${w}" height="${pillH}" rx="28"
+      let pill = `<rect x="${x}" y="${pillTop}" width="${w}" height="${pillH}" rx="28"
         fill="url(#pzPanel)" stroke="${o.accent}" stroke-width="4" filter="url(#pzGlow)"/>
         <rect x="${x+4}" y="${pillTop+4}" width="${w-8}" height="${pillH-8}" rx="24"
         fill="${o.accent}" fill-opacity="0.16"/>`;
       const icon = hasIcon[i] ? drawRebusIcon(t, x + w / 2, pillTop + 68, iconR, o) : null;
       if (icon) {
-        svg += icon;
-        svg += `<text x="${x + w/2}" y="${pillTop + pillH - 34}" text-anchor="middle" font-family="Poppins,Arial" font-size="${fs*0.72}" font-weight="800" fill="#ffffff">${esc(t)}</text>`;
+        pill += icon;
+        pill += `<text x="${x + w/2}" y="${pillTop + pillH - 34}" text-anchor="middle" font-family="Poppins,Arial" font-size="${fs*0.72}" font-weight="800" fill="#ffffff">${esc(t)}</text>`;
       } else {
-        svg += `<text x="${x + w/2}" y="${pillCy + 24}" text-anchor="middle" font-family="Poppins,Arial" font-size="${fs}" font-weight="800" fill="#ffffff">${esc(t)}</text>`;
+        pill += `<text x="${x + w/2}" y="${pillCy + 24}" text-anchor="middle" font-family="Poppins,Arial" font-size="${fs}" font-weight="800" fill="#ffffff">${esc(t)}</text>`;
       }
+      svg += fadeIn(pill, i * 0.1, 'pop', x + w / 2, pillTop + pillH / 2);
     }
     x += w + gap;
   });
