@@ -979,7 +979,7 @@ async function processJobs() {
   const stuckRows = await fetchSupabase(`puzzle?long_status=eq.rendering_long&is_active=eq.true&updated_at=lt.${stuckCutoff}&select=id&limit=5`).catch(()=>null);
   if (stuckRows?.length) {
     console.log(`[WORKER] Resetting ${stuckRows.length} stuck long rows`);
-    for (const r of stuckRows) await fetchSupabase(`puzzle?id=eq.${r.id}`,{method:'PATCH',body:JSON.stringify({video_status:'pending',long_status:'pending_long',updated_at:new Date().toISOString()})}).catch(()=>{});
+    for (const r of stuckRows) await fetchSupabase(`puzzle?id=eq.${r.id}`,{method:'PATCH',body:JSON.stringify({video_status:'pending',long_status:'pending_long',is_rendered:false,updated_at:new Date().toISOString()})}).catch(()=>{});
   }
 
   // ── TOPIC-FIRST SELECTION (3-rule logic) ──────────────────────────────
@@ -1014,26 +1014,30 @@ async function processJobs() {
   //             recoverable (video_status='skipped' → re-queued next run
   //             only if no fresh topics exist).
 
-  // FORMAT GATING (updated — open pool, no assignment):
+  // FORMAT GATING (updated — open pool, but one video per row):
   //   puzzle_generator no longer assigns a single format to a row via
   //   assign_puzzle_format / puzzle_format_config. Every newly-created puzzle
-  //   row now ships with short_status/medium_status/long_status ALL set to
-  //   their pending_* value, so it's open to whichever format worker gets to
-  //   it first. This worker (LONG) polls purely on long_status — same model
-  //   short/medium already use via puzzleAssigner.js's pollPuzzleFormat — so
-  //   it no longer requires assigned_format='long'. Each format is still
-  //   isolated from the others by its OWN status column (claiming long_status
-  //   never touches short_status/medium_status), so no double-claim risk —
-  //   the same row can legitimately be rendered as short AND medium AND long.
+  //   row ships with short_status/medium_status/long_status ALL set to their
+  //   pending_* value, so any format worker CAN pick it up. But the
+  //   is_rendered column is a CROSS-FORMAT lock: whichever format claims the
+  //   row first flips is_rendered=true, and every other format's poll query
+  //   filters on is_rendered=eq.false, so it becomes invisible to them from
+  //   that moment on. Net effect: still whichever format gets there first,
+  //   but now exactly ONE video comes out of a given row, not one per format.
+  //   is_rendered releases back to false on failure/stuck-reset so a row that
+  //   never actually became a video can still be claimed by anyone.
+  // CROSS-FORMAT LOCK: is_rendered=eq.false excludes any row already claimed
+  // by short/medium/micro (or a prior long attempt) — one row produces
+  // exactly one video, whichever format worker gets to it first.
   const pendingRows = await fetchSupabase(
     'puzzle?long_status=eq.pending_long' +
-    '&is_active=eq.true&puzzle_enriched=eq.true' +
+    '&is_active=eq.true&puzzle_enriched=eq.true&is_rendered=eq.false' +
     '&select=id,topic,topic_slug,created_at,assigned_format,long_status&order=created_at.desc&limit=500'
   );
   if (!pendingRows?.length) {
     // No fresh long rows — check if any skipped LONG rows can be revived
     const skippedRows = await fetchSupabase(
-      'puzzle?long_status=eq.skipped_long&is_active=eq.true&puzzle_enriched=eq.true' +
+      'puzzle?long_status=eq.skipped_long&is_active=eq.true&puzzle_enriched=eq.true&is_rendered=eq.false' +
       '&select=id,topic,topic_slug,created_at&order=created_at.desc&limit=100'
     ).catch(()=>null);
     if (skippedRows?.length) {
@@ -1103,8 +1107,10 @@ async function processJobs() {
 
   const quiz = rows[0];
   console.log(`[WORKER] Processing: ${quiz.id} — ${quiz.topic}`);
-  // Claim: set both video_status (legacy compat) and long_status (new system)
-  const claimPatch = { video_status: 'processing', long_status: 'rendering_long', updated_at: new Date().toISOString() };
+  // Claim: set both video_status (legacy compat) and long_status (new system),
+  // plus is_rendered — the cross-format lock that stops short/medium/micro
+  // from also picking up this same row.
+  const claimPatch = { video_status: 'processing', long_status: 'rendering_long', is_rendered: true, updated_at: new Date().toISOString() };
   await fetchSupabase(`puzzle?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(claimPatch)});
 
   const workDir = `/tmp/video_${uuidv4()}`;
@@ -1146,6 +1152,7 @@ async function processJobs() {
     const patchBody = {
       video_status:'rendered',
       long_status: 'done_long',   // this worker only ever renders long rows now
+      is_rendered: true,          // defensive — should already be true from claim
       updated_at:new Date().toISOString()
     };
     if (thumbnailUrl)        patchBody.thumbnail_url         = thumbnailUrl;
@@ -1166,6 +1173,7 @@ async function processJobs() {
       const minimalBody = {
         video_status:'rendered',
         long_status: 'done_long',
+        is_rendered: true,
         updated_at:new Date().toISOString(),
       };
       if (videoUrl) minimalBody.video_url = videoUrl;
@@ -1177,7 +1185,7 @@ async function processJobs() {
   } catch (err) {
     console.error('[WORKER] FAILED:', err.message);
     await fetchSupabase(`puzzle?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify({
-      video_status:'error', long_status:'error_long', generation_error:String(err.message||err).slice(0,800), updated_at:new Date().toISOString()
+      video_status:'error', long_status:'error_long', is_rendered:false, generation_error:String(err.message||err).slice(0,800), updated_at:new Date().toISOString()
     })});
     await fs.rm(workDir,{recursive:true,force:true}).catch(()=>{});
     throw err;

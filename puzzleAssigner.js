@@ -52,6 +52,9 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
   console.log(`${label} Polling puzzle format="${format}" column="${cfg.pollCol}"="${cfg.pendingVal}"`);
 
   // ── Reset stuck rows (claimed >30 min ago without completion) ──────────
+  // Also clears is_rendered — a stuck/never-finished claim never actually
+  // produced a video, so the cross-format lock should release too, not just
+  // this format's own status column.
   try {
     const stuckCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const stuckRows = await fetchFn(
@@ -63,6 +66,7 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
       for (const r of stuckRows) {
         await patchFn(`puzzle?id=eq.${r.id}`, {
           [cfg.pollCol]: cfg.pendingVal,
+          is_rendered: false,
           updated_at: new Date().toISOString(),
         }).catch(() => {});
       }
@@ -70,9 +74,13 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
   } catch {}
 
   // ── Fetch all pending rows for this format, newest first ───────────────
+  // is_rendered=eq.false is the CROSS-FORMAT guard: once ANY format worker
+  // (short/medium/long/micro) claims a row, is_rendered flips true and every
+  // other format's poll excludes it from here on — one row produces exactly
+  // one video, whichever format gets to it first.
   let pendingRows = await fetchFn(
     `puzzle?${cfg.pollCol}=eq.${cfg.pendingVal}` +
-    `&is_active=eq.true&puzzle_enriched=eq.true` +
+    `&is_active=eq.true&puzzle_enriched=eq.true&is_rendered=eq.false` +
     `&order=created_at.desc&limit=500` +
     `&select=id,topic,topic_slug,puzzle_type,created_at`
   ).catch(() => null);
@@ -81,7 +89,7 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
   if (!pendingRows?.length) {
     const skipped = await fetchFn(
       `puzzle?${cfg.pollCol}=eq.${cfg.skipVal}` +
-      `&is_active=eq.true&puzzle_enriched=eq.true` +
+      `&is_active=eq.true&puzzle_enriched=eq.true&is_rendered=eq.false` +
       `&order=created_at.desc&limit=1&select=id,topic,topic_slug,puzzle_type,created_at`
     ).catch(() => null);
     if (skipped?.length) {
@@ -158,6 +166,7 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
 
   await patchFn(`puzzle?id=eq.${puzzle.id}`, {
     [cfg.pollCol]: cfg.claimVal,
+    is_rendered: true,
     updated_at: new Date().toISOString(),
   }).catch(() => {});
 
@@ -168,20 +177,27 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
 async function markPuzzleDone(patchFn, puzzleId, cfg, videoUrl = null) {
   const patch = {
     [cfg.pollCol]: cfg.doneVal,
+    is_rendered: true, // defensive — should already be true from the claim step
     updated_at: new Date().toISOString(),
   };
   if (videoUrl) patch[cfg.videoUrlCol] = videoUrl;
   await patchFn(`puzzle?id=eq.${puzzleId}`, patch).catch(async () => {
     await patchFn(`puzzle?id=eq.${puzzleId}`, {
       [cfg.pollCol]: cfg.doneVal,
+      is_rendered: true,
       updated_at: new Date().toISOString(),
     }).catch(() => {});
   });
 }
 
 async function markPuzzleError(patchFn, puzzleId, cfg, errMsg) {
+  // Release the cross-format lock — this row never actually became a video,
+  // so any format (this one on retry, or another one) should still be able
+  // to claim it. Leaving is_rendered=true here would permanently strand rows
+  // that fail their very first render attempt.
   await patchFn(`puzzle?id=eq.${puzzleId}`, {
     [cfg.pollCol]: cfg.errorVal,
+    is_rendered: false,
     generation_error: `[puzzle-${cfg.pollCol}] ${String(errMsg).slice(0, 700)}`,
     updated_at: new Date().toISOString(),
   }).catch(() => {});

@@ -38,13 +38,17 @@
 //
 // DATA SOURCE: reads ONE row from the EXISTING `puzzle` table (question_1,
 // options_1, correct_answer_1, puzzle_type, puzzle_spec, theme_accent_*).
-// It does NOT read puzzle_queue, and it does NOT touch short_status /
-// medium_status / long_status / assigned_format — a puzzle can get a MICRO
-// video independently of (and in addition to) its short/medium/long video.
+// It does NOT read puzzle_queue. It DOES now respect the cross-format
+// is_rendered lock (see REQUIRED MIGRATION below) — a row already claimed by
+// short/medium/long (or a prior micro attempt) is invisible to this worker,
+// and claiming a row here makes it invisible to short/medium/long in turn.
+// One puzzle row produces exactly one video, in whichever format gets to it
+// first — micro is no longer an "extra, independent" video on top.
 //
 // REQUIRED ONE-TIME SUPABASE MIGRATION (new columns, additive only):
 //   alter table public.puzzle add column if not exists micro_status text null;
 //   alter table public.puzzle add column if not exists micro_video_url text null;
+//   alter table public.puzzle add column if not exists is_rendered boolean not null default false;
 //   create index if not exists idx_puzzle_micro_status
 //     on public.puzzle (micro_status, is_active, created_at)
 //     where (micro_status is null or micro_status = 'pending_micro');
@@ -212,16 +216,18 @@ async function download(url, name) {
   }
 }
 
-// ─── JOB CLAIMING (micro_status is entirely local to this file) ────────────
+// ─── JOB CLAIMING (micro_status is local to this file; is_rendered is the
+//     cross-format lock shared with short/medium/long) ─────────────────────
 async function claimMicroRow() {
-  // Reclaim rows stuck mid-render
+  // Reclaim rows stuck mid-render — also release the cross-format lock,
+  // since a stuck/never-finished claim never actually produced a video.
   try {
     const stuckCutoff = new Date(Date.now() - STUCK_RESET_MIN * 60000).toISOString();
     const stuck = await fetchSupabase(
       `puzzle?micro_status=eq.rendering_micro&is_active=eq.true&updated_at=lt.${stuckCutoff}&select=id&limit=5`
     ).catch(() => null);
     for (const r of stuck || []) {
-      await patchSupabase(`puzzle?id=eq.${r.id}`, { micro_status: 'pending_micro', updated_at: new Date().toISOString() }).catch(() => {});
+      await patchSupabase(`puzzle?id=eq.${r.id}`, { micro_status: 'pending_micro', is_rendered: false, updated_at: new Date().toISOString() }).catch(() => {});
     }
   } catch {}
 
@@ -236,34 +242,37 @@ async function claimMicroRow() {
     }
   } catch {}
 
-  // Fresh/pending rows first (NULL == never touched by the micro pipeline)
+  // Fresh/pending rows first (NULL == never touched by the micro pipeline).
+  // is_rendered=eq.false is the CROSS-FORMAT guard — excludes any row
+  // already claimed by short/medium/long (or a prior micro attempt).
   let candidates;
   try {
     candidates = await fetchSupabase(
       `puzzle?or=(micro_status.is.null,micro_status.eq.pending_micro)` +
-      `&is_active=eq.true&puzzle_enriched=eq.true&order=created_at.desc&limit=1&select=*`
+      `&is_active=eq.true&puzzle_enriched=eq.true&is_rendered=eq.false&order=created_at.desc&limit=1&select=*`
     );
   } catch (e) {
     // Previously this was `.catch(() => null)`, which made a genuine query
-    // failure (e.g. the micro_status column not existing yet — see the
-    // REQUIRED ONE-TIME SUPABASE MIGRATION comment at the top of this file)
-    // print the exact same "No pending puzzle rows." as a real empty result.
-    // That's a silent failure mode — log it loudly so it's diagnosable.
+    // failure (e.g. the micro_status/is_rendered column not existing yet —
+    // see the REQUIRED ONE-TIME SUPABASE MIGRATION comment at the top of
+    // this file) print the exact same "No pending puzzle rows." as a real
+    // empty result. That's a silent failure mode — log it loudly instead.
     console.error(`[MICRO] Query for pending rows FAILED (not just empty): ${e.message}`);
-    console.error('[MICRO] If this mentions micro_status/micro_video_url, the one-time migration in the file header has not been run yet.');
+    console.error('[MICRO] If this mentions micro_status/micro_video_url/is_rendered, the one-time migration in the file header has not been run yet.');
     return null;
   }
 
   if (!candidates?.length) { console.log('[MICRO] No pending puzzle rows.'); return null; }
 
   const row = candidates[0];
-  await patchSupabase(`puzzle?id=eq.${row.id}`, { micro_status: 'rendering_micro', updated_at: new Date().toISOString() }).catch(() => {});
+  await patchSupabase(`puzzle?id=eq.${row.id}`, { micro_status: 'rendering_micro', is_rendered: true, updated_at: new Date().toISOString() }).catch(() => {});
   console.log(`[MICRO] Claimed puzzle id=${row.id} type=${row.puzzle_type}`);
   return row;
 }
 async function markMicroDone(id, videoUrl) {
   await patchSupabase(`puzzle?id=eq.${id}`, {
     micro_status: 'done_micro',
+    is_rendered: true, // defensive — should already be true from the claim step
     micro_video_url: videoUrl || null,
     updated_at: new Date().toISOString(),
   }).catch(() => {});
@@ -271,6 +280,7 @@ async function markMicroDone(id, videoUrl) {
 async function markMicroError(id, msg) {
   await patchSupabase(`puzzle?id=eq.${id}`, {
     micro_status: 'error_micro',
+    is_rendered: false, // release the cross-format lock — never became a video
     generation_error: `[puzzle-micro] ${String(msg).slice(0, 700)}`,
     updated_at: new Date().toISOString(),
   }).catch(() => {});
