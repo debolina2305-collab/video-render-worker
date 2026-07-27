@@ -61,7 +61,7 @@ jobs:
           ROWS=$(curl -sf \
             -H "apikey: $SUPABASE_SERVICE_KEY" \
             -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
-            "$SUPABASE_URL/rest/v1/puzzle?short_status=eq.pending_short&assigned_format=eq.short&is_active=eq.true&puzzle_enriched=eq.true&select=id&limit=1" \
+            "$SUPABASE_URL/rest/v1/puzzle?short_status=eq.pending_short&is_active=eq.true&puzzle_enriched=eq.true&is_rendered=eq.false&select=id&limit=1" \
           | jq 'length' 2>/dev/null || echo "0")
           echo "pending=$ROWS" >> $GITHUB_OUTPUT
           if [ "$ROWS" = "0" ]; then
