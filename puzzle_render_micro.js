@@ -377,8 +377,15 @@ function buildHtml(quiz, svgHtml, ctaText = null) {
     padding-bottom: 12px;
   }
   .puzzle-visual-wrap svg, .puzzle-visual-wrap .puzzle-svg { width:100%; height:auto; display:block; }
-  /* FIX: SVG name labels get adequate min font-size so they don't overlap with figures */
-  .puzzle-visual-wrap svg text { font-size: max(20px, 1em); }
+  /* NOTE: previously had a blanket ".puzzle-visual-wrap svg text { font-size:
+     max(20px,1em) }" rule here. CSS on an ancestor/selector always wins over
+     an SVG element's own font-size presentation attribute, so that rule was
+     silently flattening EVERY text node in the puzzle SVG — titles, angle
+     labels, dimension numbers, everything — down to ~20px regardless of what
+     puzzleRenderers.js actually set. That's why increasing font sizes there
+     had no visible effect. Removed: puzzleRenderers.js now sizes every text
+     element generously on its own (32px+ SVG units, most 38-90px+), so no
+     blanket override is needed and this one was actively working against it. */
 
   /* ── Options — big, bold, 2x2 grid ── */
   .options-grid {
