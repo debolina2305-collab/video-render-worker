@@ -720,6 +720,12 @@
    strip. Avatars are 20% smaller than the trending layout (see render worker).
    Standard _base.css value: 420px. Puzzle override: 300px.
    Also reduce qp-card-question vertical padding to free up vertical space.
+
+   SHIFT-UP (new): _base.css's .niche-marquee has margin-top:220px, which on
+   the puzzle screens (question/options/countdown) just reserves a big empty
+   band at the very top of the frame before the question card even starts.
+   Pulled up 100px here (220px -> 120px) — scoped to this template only, so
+   the trending quiz_template.html marquee spacing is untouched.
 ──────────────────────────────────────────────────────────────────────── */
 .content {
   padding-bottom: 300px !important;
@@ -734,6 +740,9 @@
 .qp-card-question {
   padding: 18px 22px !important;
   margin-bottom: 6px !important;
+}
+.niche-marquee {
+  margin-top: 120px !important;
 }
 </style>
 {{thumb_bg_style_block}}
