@@ -32,6 +32,12 @@ const PUZZLE_TYPES = [
   'cipher_decode','flag_puzzle','area_perimeter','dominoes','clock_angle','truth_or_lie',
 ];
 
+// Solid gold/yellow used for the MAIN drawing (triangle outlines, grid cells,
+// scale beams, clock hands, flag border, etc.) in every puzzle_type — see the
+// override in renderPuzzle() below. Chosen to read instantly against the
+// near-black panel background within the first ~1s a viewer sees the frame.
+const GOLD = '#FFC700';
+
 // ── Base palette (overridden per-render by theme accents) ──────────────────
 const C = {
   panel:   '#000000',   // card background — pure black
@@ -131,7 +137,7 @@ function titleStrip(W, text, o) {
   <g>
     <rect x="${W/2 - 300}" y="42" width="600" height="66" rx="33" fill="${o.accent}" opacity="0.30"/>
     <text x="${W/2}" y="88" text-anchor="middle" font-family="Poppins,Segoe UI,Arial,sans-serif"
-          font-size="40" font-weight="800" fill="#ffffff" letter-spacing="1.5">${t}</text>
+          font-size="46" font-weight="800" fill="#ffffff" letter-spacing="1.5">${t}</text>
   </g>`;
 }
 
@@ -238,7 +244,7 @@ function renderMatchstick(spec, o) {
   const DW_dig = o.thick ? 160  : 120;
   const DW_op  = o.thick ? 120  : 100;
   const instrY = o.thick ? 196  : 170;
-  const instrFS= o.thick ? 46   : 34;
+  const instrFS= o.thick ? 52   : 42;
   const cells  = eq.split('');
   const widths = cells.map(ch => (SEG[ch] ? DW_dig : DW_op));
   const totalW = widths.reduce((s, w) => s + w, 0) + GAP * (cells.length - 1);
@@ -277,9 +283,9 @@ function renderMatchstick(spec, o) {
 // ────────────────────────────────────────────────────────────────────────────
 function angleLabel(x, y, text, o, hi) {
   const fill = hi ? o.accent : "#ffffff";
-  const box  = hi ? `<circle cx="${x}" cy="${y-14}" r="42" fill="${o.accent}" opacity="0.18"/>` : '';
+  const box  = hi ? `<circle cx="${x}" cy="${y-14}" r="46" fill="${o.accent}" opacity="0.18"/>` : '';
   return `${box}<text x="${x}" y="${y}" text-anchor="middle" font-family="Poppins,Arial"
-    font-size="52" font-weight="800" fill="${fill}">${esc(text)}</text>`;
+    font-size="58" font-weight="800" fill="${fill}">${esc(text)}</text>`;
 }
 function renderGeometryTriangle(spec, o) {
   const W = 960, H = 480;
@@ -546,7 +552,7 @@ function renderOddOneOut(spec, o) {
     const cx = startX + c * cell + cell / 2, cy = startY + r * cell + cell / 2;
     let cellSvg = `<circle cx="${cx}" cy="${cy}" r="${cell*0.44}" fill="#ffffff" fill-opacity="0.03" stroke="${C.stroke}" stroke-width="1.5"/>`;
     cellSvg += drawIcon(it.shape || 'circle', cx, cy - 4, R, { accent: it.color || o.accent, accent2: o.accent2, accent3: o.accent3 });
-    cellSvg += `<text x="${cx}" y="${cy + cell*0.34}" text-anchor="middle" font-size="22" fill="#ffffff" font-family="Arial" font-weight="700">${i + 1}</text>`;
+    cellSvg += `<text x="${cx}" y="${cy + cell*0.34}" text-anchor="middle" font-size="32" fill="#ffffff" font-family="Arial" font-weight="700">${i + 1}</text>`;
     svg += fadeIn(cellSvg, i * 0.018, 'pop', cx, cy);
   });
   svg += closeSvg();
@@ -835,7 +841,7 @@ function renderDetective(spec, o) {
 
   // ── Header: "CASE FILE" ribbon + icon badge + big case title ───────────
   svg += `<rect x="60" y="46" width="${W - 180}" height="52" rx="14" fill="${o.accent}" opacity="0.18"/>`;
-  svg += `<text x="86" y="82" font-family="Poppins,Arial" font-size="26" font-weight="800" fill="${o.accent}" letter-spacing="3">CASE FILE</text>`;
+  svg += `<text x="86" y="82" font-family="Poppins,Arial" font-size="34" font-weight="800" fill="${o.accent}" letter-spacing="3">CASE FILE</text>`;
 
   // Icon badge — top-right corner, colour-matched to the theme accent
   const badgeR = 52, badgeCx = W - 96, badgeCy = 98;
@@ -852,13 +858,13 @@ function renderDetective(spec, o) {
   // ── Scenario — bigger, serif for a "case file" feel ─────────────────────
   y += 46;
   scenarioLines.forEach(ln => {
-    svg += `<text x="60" y="${y}" font-family="Georgia,serif" font-size="38" fill="#e8e8e8">${esc(ln)}</text>`;
+    svg += `<text x="60" y="${y}" font-family="Georgia,serif" font-size="42" fill="#e8e8e8">${esc(ln)}</text>`;
     y += 46;
   });
 
   // ── CLUES header ─────────────────────────────────────────────────────────
   y += 26;
-  svg += `<text x="60" y="${y}" font-family="Poppins,Arial" font-size="32" font-weight="800" fill="${o.accent}" letter-spacing="2">CLUES</text>`;
+  svg += `<text x="60" y="${y}" font-family="Poppins,Arial" font-size="38" font-weight="800" fill="${o.accent}" letter-spacing="2">CLUES</text>`;
   y += 22;
 
   // ── Numbered clue cards — big text, generous spacing, easy to read ──────
@@ -868,11 +874,11 @@ function renderDetective(spec, o) {
     svg += `<rect x="56" y="${cardY}" width="${W - 112}" height="${rowH}" rx="18" fill="${C.slotBg}" stroke="${C.stroke}" stroke-width="2"/>`;
     // number badge
     svg += `<circle cx="${56 + 42}" cy="${cardY + rowH / 2}" r="26" fill="${o.accent}" opacity="0.9"/>`;
-    svg += `<text x="${56 + 42}" y="${cardY + rowH / 2 + 12}" text-anchor="middle" font-family="Poppins,Arial" font-size="30" font-weight="800" fill="#ffffff">${i + 1}</text>`;
+    svg += `<text x="${56 + 42}" y="${cardY + rowH / 2 + 12}" text-anchor="middle" font-family="Poppins,Arial" font-size="36" font-weight="800" fill="#ffffff">${i + 1}</text>`;
     // clue text (vertically centred within the card)
     const textStartY = cardY + rowH / 2 - ((lines.length - 1) * 21) + 12;
     lines.forEach((ln, li) => {
-      svg += `<text x="112" y="${textStartY + li * 42}" font-family="Georgia,serif" font-size="34" fill="#ffffff">${esc(ln)}</text>`;
+      svg += `<text x="112" y="${textStartY + li * 42}" font-family="Georgia,serif" font-size="40" fill="#ffffff">${esc(ln)}</text>`;
     });
     y += rowH + 18;
   });
@@ -897,7 +903,7 @@ function renderWordLadder(spec, o) {
   const H = startY + words.length * (cellH + gap) + 60;
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'Word Ladder', o);
-  svg += `<text x="${W/2}" y="138" text-anchor="middle" font-family="Poppins,Arial" font-size="32" font-weight="600" fill="#ffffff">Change one letter each step</text>`;
+  svg += `<text x="${W/2}" y="138" text-anchor="middle" font-family="Poppins,Arial" font-size="38" font-weight="600" fill="#ffffff">Change one letter each step</text>`;
   words.forEach((word, i) => {
     const y = startY + i * (cellH + gap);
     const isQ = /^\?+$/.test(String(word).trim());
@@ -956,7 +962,7 @@ function renderVisualPatternSequence(spec, o) {
   const startX = 60, midY = 300, H = 500;
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'What comes next?', o);
-  svg += `<text x="${W/2}" y="146" text-anchor="middle" font-family="Poppins,Arial" font-size="32" font-weight="600" fill="#ffffff">Find the pattern</text>`;
+  svg += `<text x="${W/2}" y="146" text-anchor="middle" font-family="Poppins,Arial" font-size="38" font-weight="600" fill="#ffffff">Find the pattern</text>`;
   steps.forEach((step, i) => {
     const cx = startX + i * (cell + gap) + cell / 2;
     const isQ = /^\?+$/.test(String(step.shape || '').trim());
@@ -1039,7 +1045,7 @@ function renderCipherDecode(spec, o) {
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'Crack the Code', o);
   svg += `<rect x="160" y="148" width="640" height="54" rx="18" fill="${o.accent}" fill-opacity="0.15"/>`;
-  svg += `<text x="${W/2}" y="182" text-anchor="middle" font-family="Poppins,Arial" font-size="34" font-weight="700" fill="${o.accent}">${esc(keyLabel)}</text>`;
+  svg += `<text x="${W/2}" y="182" text-anchor="middle" font-family="Poppins,Arial" font-size="40" font-weight="700" fill="${o.accent}">${esc(keyLabel)}</text>`;
   const n = encoded.length, cellW = Math.min(130, Math.floor((W-80)/n) - 14), cellH = 130, gap = 14;
   const totalW = n*cellW + (n-1)*gap, sx = (W-totalW)/2, sy = 260;
   encoded.forEach((val, i) => {
@@ -1063,7 +1069,7 @@ function renderFlagPuzzle(spec, o) {
   const sh = Math.floor(flagH / stripes.length);
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'Which Country?', o);
-  svg += `<text x="${W/2}" y="134" text-anchor="middle" font-family="Poppins,Arial" font-size="32" fill="#ffffff" font-weight="600">Identify this flag</text>`;
+  svg += `<text x="${W/2}" y="134" text-anchor="middle" font-family="Poppins,Arial" font-size="38" fill="#ffffff" font-weight="600">Identify this flag</text>`;
   svg += `<rect x="${fx-4}" y="${fy-4}" width="${flagW+8}" height="${flagH+8}" rx="14" fill="none" stroke="${o.accent}" stroke-width="4"/>`;
   stripes.forEach((col, i) => {
     const sy = fy + i * sh;
@@ -1100,7 +1106,7 @@ function renderAreaPerimeter(spec, o) {
   const dl = (x1,y1,x2,y2,lbl) => {
     const mx=(x1+x2)/2, my=(y1+y2)/2, horiz=y1===y2;
     return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${o.accent}" stroke-width="2" stroke-dasharray="8 5" opacity="0.5"/>` +
-      `<text x="${horiz?mx:mx-40}" y="${horiz?my-28:my+8}" text-anchor="middle" font-family="Poppins,Arial" font-size="34" font-weight="800" fill="#ffffff">${esc(lbl)}</text>`;
+      `<text x="${horiz?mx:mx-40}" y="${horiz?my-28:my+8}" text-anchor="middle" font-family="Poppins,Arial" font-size="46" font-weight="800" fill="#ffffff">${esc(lbl)}</text>`;
   };
   svg += dl(ox,oy-26,ox+sw,oy-26,`${outerW}`);
   svg += dl(ox+sw+30,oy,ox+sw+30,oy+sh,`${outerH}`);
@@ -1110,8 +1116,8 @@ function renderAreaPerimeter(spec, o) {
   // unknown label box on the right
   const rx = ox+sw+90, ry = oy+sh/2-90;
   svg += `<rect x="${rx}" y="${ry}" width="220" height="190" rx="22" fill="${o.accent}" fill-opacity="0.12" stroke="${o.accent}" stroke-width="3"/>`;
-  svg += `<text x="${rx+110}" y="${ry+54}" text-anchor="middle" font-family="Poppins,Arial" font-size="34" font-weight="700" fill="${o.accent}">Find</text>`;
-  svg += `<text x="${rx+110}" y="${ry+100}" text-anchor="middle" font-family="Poppins,Arial" font-size="36" font-weight="900" fill="${o.accent}">${esc(unknown.toUpperCase())}</text>`;
+  svg += `<text x="${rx+110}" y="${ry+54}" text-anchor="middle" font-family="Poppins,Arial" font-size="38" font-weight="700" fill="${o.accent}">Find</text>`;
+  svg += `<text x="${rx+110}" y="${ry+100}" text-anchor="middle" font-family="Poppins,Arial" font-size="40" font-weight="900" fill="${o.accent}">${esc(unknown.toUpperCase())}</text>`;
   svg += `<text x="${rx+110}" y="${ry+164}" text-anchor="middle" font-family="Poppins,Arial" font-size="96" font-weight="900" fill="${o.accent}">?</text>`;
   svg += closeSvg();
   return { svg, ok: true, warnings: [] };
@@ -1140,7 +1146,7 @@ function renderDominoes(spec, o) {
   const sx=(W-totalW)/2,sy=200,H=sy+TH+110;
   let svg=openSvg(W,H,o);
   svg+=titleStrip(W,spec.title||'Complete the Chain',o);
-  svg+=`<text x="${W/2}" y="150" text-anchor="middle" font-family="Poppins,Arial" font-size="32" font-weight="600" fill="#ffffff">Touching halves must match</text>`;
+  svg+=`<text x="${W/2}" y="150" text-anchor="middle" font-family="Poppins,Arial" font-size="38" font-weight="600" fill="#ffffff">Touching halves must match</text>`;
   chain.forEach(([t,b],i)=>{
     const x=sx+i*(TW+gap);
     const isQ=String(t)==='?'||String(b)==='?';
@@ -1169,7 +1175,7 @@ function renderClockAngle(spec, o) {
     const a=toRad(i*30-90),r1=R-10,r2=R-36;
     svg+=`<line x1="${(cx+r1*Math.cos(a)).toFixed(1)}" y1="${(cy+r1*Math.sin(a)).toFixed(1)}" x2="${(cx+r2*Math.cos(a)).toFixed(1)}" y2="${(cy+r2*Math.sin(a)).toFixed(1)}" stroke="rgba(255,255,255,0.4)" stroke-width="5" stroke-linecap="round"/>`;
     const n=i===0?12:i;
-    svg+=`<text x="${(cx+(R-62)*Math.cos(a)).toFixed(1)}" y="${(cy+(R-62)*Math.sin(a)+12).toFixed(1)}" text-anchor="middle" font-family="Poppins,Arial" font-size="34" font-weight="700" fill="#ffffff">${n}</text>`;
+    svg+=`<text x="${(cx+(R-62)*Math.cos(a)).toFixed(1)}" y="${(cy+(R-62)*Math.sin(a)+12).toFixed(1)}" text-anchor="middle" font-family="Poppins,Arial" font-size="40" font-weight="700" fill="#ffffff">${n}</text>`;
   }
   svg+=`<line x1="${cx}" y1="${cy}" x2="${hx.toFixed(1)}" y2="${hy.toFixed(1)}" stroke="#ffffff" stroke-width="14" stroke-linecap="round"/>`;
   svg+=`<line x1="${cx}" y1="${cy}" x2="${mx.toFixed(1)}" y2="${my.toFixed(1)}" stroke="${o.accent}" stroke-width="9" stroke-linecap="round"/>`;
@@ -1236,7 +1242,7 @@ function renderTruthOrLie(spec, o) {
   const genders = ['f','m','f','m','f','m'];
   let svg = openSvg(W, H, o);
   svg += titleStrip(W, spec.title || 'Who Tells the Truth?', o);
-  svg += `<text x="${W/2}" y="148" text-anchor="middle" font-family="Poppins,Arial" font-size="32" font-weight="600" fill="#ffffff">Only ONE person always tells the truth</text>`;
+  svg += `<text x="${W/2}" y="148" text-anchor="middle" font-family="Poppins,Arial" font-size="38" font-weight="600" fill="#ffffff">Only ONE person always tells the truth</text>`;
   people.forEach((p, i) => {
     const y   = topY + i*(bubbleH+bubbleGap);
     const col = colors[i % colors.length];
@@ -1247,7 +1253,7 @@ function renderTruthOrLie(spec, o) {
     svg += humanFigure(figCX, figCY, figH, gen, col);
     // name label below
     // FIX: larger font (34px) and moved down so it doesn't overlap the figure
-    svg += `<text x="${figCX}" y="${y+bubbleH+18}" text-anchor="middle" font-family="Poppins,Arial" font-size="34" font-weight="900" fill="${col}" stroke="#000" stroke-width="3" paint-order="stroke">${esc(p.name)}</text>`;
+    svg += `<text x="${figCX}" y="${y+bubbleH+18}" text-anchor="middle" font-family="Poppins,Arial" font-size="38" font-weight="900" fill="${col}" stroke="#000" stroke-width="3" paint-order="stroke">${esc(p.name)}</text>`;
     // speech bubble
     const bx = 154, by = y, bw = W-bx-34, bh = bubbleH;
     svg += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="22" fill="rgba(255,255,255,0.07)" stroke="${col}" stroke-width="2.5" stroke-opacity="0.4"/>`;
@@ -1255,7 +1261,7 @@ function renderTruthOrLie(spec, o) {
     const lines = wrapText(p.statement || '', 38);
     const lh = 42, ty = by + bh/2 - ((lines.length-1)*lh)/2;
     lines.forEach((ln, li) => {
-      svg += `<text x="${bx+bw/2}" y="${ty+li*lh+14}" text-anchor="middle" font-family="Georgia,serif" font-size="36" font-weight="700" fill="#ffffff">${esc(ln)}</text>`;
+      svg += `<text x="${bx+bw/2}" y="${ty+li*lh+14}" text-anchor="middle" font-family="Georgia,serif" font-size="40" font-weight="700" fill="#ffffff">${esc(ln)}</text>`;
     });
   });
   svg += closeSvg();
@@ -1290,7 +1296,14 @@ const RENDERERS = {
 
 function renderPuzzle(type, spec, opts = {}) {
   const o = {
-    accent:  opts.accent  || '#00cfff',
+    // NOTE: always GOLD, ignoring opts.accent — the puzzle diagram itself
+    // (triangle/shape outlines, grid highlight cells, scale/clock/flag
+    // strokes, the "?" glyph, etc.) always renders in one solid gold so it
+    // pops instantly regardless of which random theme_accent_primary the row
+    // was assigned. accent2/accent3 are left as-is so puzzles needing 2+
+    // visually distinct icon colours (e.g. visual_math with two fruit types)
+    // still read clearly.
+    accent:  GOLD,
     accent2: opts.accent2 || '#22c55e',
     accent3: opts.accent3 || '#f4c430',
     width:   opts.width   || 960,
