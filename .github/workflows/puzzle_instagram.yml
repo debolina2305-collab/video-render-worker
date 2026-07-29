@@ -1,0 +1,55 @@
+name: Puzzle Publisher — Instagram Reels
+
+on:
+  repository_dispatch:
+    types: [trigger-puzzle-instagram]
+  workflow_dispatch:
+  schedule:
+    # Times are UTC; IST = UTC+5:30
+    # Staggered 30 min after FB posts to avoid simultaneous API load
+    - cron: '0 17 * * *'    # 10:30 PM IST
+    - cron: '0 21 * * *'    # 02:30 AM IST
+    - cron: '0 23 * * *'    # 04:30 AM IST
+    - cron: '30 23 * * *'   # 05:00 AM IST
+
+jobs:
+  publish-puzzle-instagram:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15   # Container polling can take up to 5 min — leave headroom
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Gate — check for approved puzzle rows without IG publish
+        id: gate
+        env:
+          SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          ROWS=$(curl -sf \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            "$SUPABASE_URL/rest/v1/puzzle?or=(short_status.eq.done_short,medium_status.eq.done_medium,long_status.eq.done_long,micro_status.eq.done_micro)&is_human_approved=eq.true&ig_video_id=is.null&select=id&limit=1" \
+          | jq 'length' 2>/dev/null || echo "0")
+          echo "pending=$ROWS" >> $GITHUB_OUTPUT
+          echo "[GATE] Puzzle rows ready for Instagram: $ROWS"
+
+      - name: Setup Node.js
+        if: steps.gate.outputs.pending != '0'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        if: steps.gate.outputs.pending != '0'
+        run: npm install
+
+      - name: Publish puzzle to Instagram Reels
+        if: steps.gate.outputs.pending != '0'
+        env:
+          SUPABASE_URL:         ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          IG_ACCOUNT_ID:        ${{ secrets.PUZZLE_IG_ACCOUNT_ID }}
+          IG_ACCESS_TOKEN:      ${{ secrets.PUZZLE_IG_ACCESS_TOKEN }}
+        run: node puzzle_publisher_instagram.js
