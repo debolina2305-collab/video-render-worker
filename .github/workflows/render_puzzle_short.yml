@@ -7,6 +7,9 @@ on:
 
   # Manual trigger for testing
   workflow_dispatch:
+  schedule:
+    # Times are UTC; IST = UTC+5:30
+    - cron: '31 16 * * *'    # 10:00 PM IST
 
 # Queue — never cancel in progress, so no puzzle rows are missed
 concurrency:
