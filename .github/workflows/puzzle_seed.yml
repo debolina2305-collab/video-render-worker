@@ -3,7 +3,7 @@ name: Puzzle Seeder — Queue new puzzle jobs
 on:
   # Seed every 3 hours so puzzles generate at a steady pace independent of trends
   schedule:
-    - cron: '2 */12 * * *'   # 17 past each 3rd hour UTC — offset from trending cron
+    - cron: '2 */12 * * *'   # 2 past each 12th hour UTC — offset from trending cron
 
   # Manual trigger: ?type=matchstick or ?count=3
   workflow_dispatch:
