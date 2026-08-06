@@ -3,7 +3,7 @@ name: Puzzle Seeder — Queue new puzzle jobs
 on:
   # Seed every 3 hours so puzzles generate at a steady pace independent of trends
   schedule:
-    - cron: '17 */3 * * *'   # 17 past each 3rd hour UTC — offset from trending cron
+    - cron: '2 */12 * * *'   # 17 past each 3rd hour UTC — offset from trending cron
 
   # Manual trigger: ?type=matchstick or ?count=3
   workflow_dispatch:
@@ -15,7 +15,7 @@ on:
       count:
         description: 'Number of puzzles to seed (1-5)'
         required: false
-        default: '2'
+        default: '5'
 
 jobs:
   seed:
@@ -27,7 +27,7 @@ jobs:
         env:
           PUZZLE_SEEDER_URL: ${{ secrets.PUZZLE_SEEDER_URL }}  # https://puzzle-seeder.your-account.workers.dev
         run: |
-          COUNT="${{ github.event.inputs.count || '2' }}"
+          COUNT="${{ github.event.inputs.count || '5' }}"
           TYPE="${{ github.event.inputs.puzzle_type || '' }}"
           QUERY="?count=${COUNT}"
           if [ -n "$TYPE" ]; then QUERY="${QUERY}&type=${TYPE}"; fi
