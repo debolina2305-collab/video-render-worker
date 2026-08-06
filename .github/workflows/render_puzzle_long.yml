@@ -5,6 +5,9 @@ on:
     types: [trigger-puzzle-render]
 
   workflow_dispatch:
+    schedule:
+    # Times are UTC; IST = UTC+5:30
+    - cron: '3 16 * * *'    # 10:00 PM IST
 
 concurrency:
   group: render-puzzle-long
