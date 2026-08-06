@@ -20,6 +20,9 @@ name: Puzzle Render — Micro Format (~10s)
 
 on:
   workflow_dispatch: {}
+  schedule:
+    # Times are UTC; IST = UTC+5:30
+    - cron: '4 15 * * *'    
 
   repository_dispatch:
     types: [trigger-puzzle-render-micro]
