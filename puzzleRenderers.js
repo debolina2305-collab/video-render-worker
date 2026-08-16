@@ -1,4 +1,5 @@
 'use strict';
+const { renderGeometryPuzzle } = require('./geometry_engine');
 // ════════════════════════════════════════════════════════════════════════════
 // puzzleRenderers.js — VISUAL ENGINE for the JaasX "Brain Challenge" pipeline
 //
@@ -30,6 +31,11 @@ const PUZZLE_TYPES = [
   // New 10 — buyer pipeline (10,000+ unique each)
   'word_ladder','pattern_matrix','visual_pattern_sequence','balance_scale',
   'cipher_decode','flag_puzzle','area_perimeter','dominoes','clock_angle','truth_or_lie',
+  // Procedural geometry engine (31 families, no LLM, guaranteed-correct math —
+  // see geometry_engine.js). Retires geometry_triangle/geometry_right_triangle/
+  // geometry_straight_line/area_perimeter going forward; those 4 stay in this
+  // list only so any already-queued/legacy rows still render correctly.
+  'geometry',
 ];
 
 // Solid gold/yellow used for the MAIN drawing (triangle outlines, grid cells,
@@ -1292,6 +1298,9 @@ const RENDERERS = {
   dominoes: renderDominoes,
   clock_angle: renderClockAngle,
   truth_or_lie: renderTruthOrLie,
+  // Procedural geometry engine — 31 families, own internal fill-color pick,
+  // ignores the GOLD override below (spec.fillColor drives it instead).
+  geometry: renderGeometryPuzzle,
 };
 
 function renderPuzzle(type, spec, opts = {}) {
@@ -1338,4 +1347,5 @@ module.exports = {
   renderWordLadder, renderPatternMatrix, renderVisualPatternSequence,
   renderBalanceScale, renderCipherDecode, renderFlagPuzzle,
   renderAreaPerimeter, renderDominoes, renderClockAngle, renderTruthOrLie,
+  renderGeometryPuzzle,
 };
