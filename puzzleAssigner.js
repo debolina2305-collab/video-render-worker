@@ -21,6 +21,21 @@ const PUZZLE_FORMAT_CONFIG = {
     skipVal:     'skipped_short',
     videoUrlCol: 'short_video_url',
   },
+  // Distinct from `short` — puzzle_render_short.js (intro) and
+  // puzzlerenderswithoutintro.js (no intro) used to share `short_status`,
+  // which meant they raced for the same rows and only one could ever render
+  // a given puzzle. Split into its own column so a puzzle can be rendered by
+  // BOTH the intro and no-intro variants (deliberate fan-out — see
+  // `fanout_enabled` below), not a race.
+  short_nointro: {
+    pollCol:     'short_nointro_status',
+    pendingVal:  'pending_short_nointro',
+    claimVal:    'rendering_short_nointro',
+    doneVal:     'done_short_nointro',
+    errorVal:    'error_short_nointro',
+    skipVal:     'skipped_short_nointro',
+    videoUrlCol: 'short_nointro_video_url',
+  },
   medium: {
     pollCol:     'medium_status',
     pendingVal:  'pending_medium',
@@ -74,13 +89,25 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
   } catch {}
 
   // ── Fetch all pending rows for this format, newest first ───────────────
-  // is_rendered=eq.false is the CROSS-FORMAT guard: once ANY format worker
-  // (short/medium/long/micro) claims a row, is_rendered flips true and every
-  // other format's poll excludes it from here on — one row produces exactly
-  // one video, whichever format gets to it first.
+  // is_rendered=eq.false is the CROSS-FORMAT guard for ORDINARY rows: once
+  // ANY format claims one, is_rendered flips true and every other format's
+  // poll excludes it — one row produces exactly one video, whichever format
+  // gets there first. That's still the default for every LLM-driven type.
+  //
+  // FANOUT rows (fanout_enabled=true — currently only the procedural
+  // geometry engine's rows) are the deliberate exception: the same puzzle
+  // is meant to be rendered by SEVERAL formats independently (e.g. an
+  // "easy" geometry puzzle → micro + short-nointro + short + medium + long,
+  // all five). For those rows is_rendered must NOT gate anything — the
+  // `or=(is_rendered.eq.false,fanout_enabled.eq.true)` below lets a fanout
+  // row stay visible to every format's poll no matter what is_rendered is,
+  // while ordinary rows (fanout_enabled defaults false) keep the exact old
+  // exclusive behavior. Each format's OWN status column (pending → claimed
+  // → done) still prevents that SAME format from double-claiming it.
   let pendingRows = await fetchFn(
     `puzzle?${cfg.pollCol}=eq.${cfg.pendingVal}` +
-    `&is_active=eq.true&puzzle_enriched=eq.true&is_rendered=eq.false` +
+    `&is_active=eq.true&puzzle_enriched=eq.true` +
+    `&or=(is_rendered.eq.false,fanout_enabled.eq.true)` +
     `&order=created_at.desc&limit=500` +
     `&select=id,topic,topic_slug,puzzle_type,created_at`
   ).catch(() => null);
@@ -89,7 +116,8 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
   if (!pendingRows?.length) {
     const skipped = await fetchFn(
       `puzzle?${cfg.pollCol}=eq.${cfg.skipVal}` +
-      `&is_active=eq.true&puzzle_enriched=eq.true&is_rendered=eq.false` +
+      `&is_active=eq.true&puzzle_enriched=eq.true` +
+      `&or=(is_rendered.eq.false,fanout_enabled.eq.true)` +
       `&order=created_at.desc&limit=1&select=id,topic,topic_slug,puzzle_type,created_at`
     ).catch(() => null);
     if (skipped?.length) {
