@@ -930,14 +930,9 @@ async function buildHookStep(humanHookPath, workDir) {
 // MAIN SHORT VIDEO BUILDER
 // ═══════════════════════════════════════════════════════════════════════
 async function buildShortVideo(quiz, workDir) {
-  // Detective puzzles pack a case file + clue list + options on screen —
-  // give viewers more time to read before the countdown starts eliminating
-  // options. Reset to the standard 5s for every other puzzle type.
-  if (quiz.puzzle_type === 'detective') {
-    SHORT_COUNTDOWN = 8; SHORT_FIFTY_AT = 4;   SHORT_HINT_AT = 1.6;
-  } else {
-    SHORT_COUNTDOWN = 5; SHORT_FIFTY_AT = 2.5; SHORT_HINT_AT = 1;
-  }
+  // FIXED 7-second countdown for every puzzle rendered by this (with-intro)
+  // format — no longer varies by puzzle_type.
+  SHORT_COUNTDOWN = 7; SHORT_FIFTY_AT = 3.5; SHORT_HINT_AT = 1.4;
 
   const lang     = quiz.lang_code || 'en';
   const voice    = VOICE_MAP[lang] || VOICE_MAP.en;

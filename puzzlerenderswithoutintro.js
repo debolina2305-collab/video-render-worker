@@ -978,14 +978,11 @@ async function buildHookStep(humanHookPath, workDir) {
 // MAIN SHORT VIDEO BUILDER
 // ═══════════════════════════════════════════════════════════════════════
 async function buildShortVideo(quiz, workDir) {
-  // Detective puzzles pack a case file + clue list + options on screen —
-  // give viewers more time to read before the countdown starts eliminating
-  // options. Reset to the standard 5s for every other puzzle type.
-  if (quiz.puzzle_type === 'detective') {
-    SHORT_COUNTDOWN = 8; SHORT_FIFTY_AT = 4;   SHORT_HINT_AT = 1.6;
-  } else {
-    SHORT_COUNTDOWN = 5; SHORT_FIFTY_AT = 2.5; SHORT_HINT_AT = 1;
-  }
+  // FIXED 6-second countdown for every puzzle rendered by this (no-intro)
+  // format — no longer varies by puzzle_type. (Previously detective puzzles
+  // got 8s here; that distinction now lives in which formats a puzzle is
+  // even routed to, not a per-type countdown override within one format.)
+  SHORT_COUNTDOWN = 6; SHORT_FIFTY_AT = 3; SHORT_HINT_AT = 1.2;
 
   const lang     = quiz.lang_code || 'en';
   const voice    = VOICE_MAP[lang] || VOICE_MAP.en;
@@ -2162,7 +2159,7 @@ async function patchForAssigner(pathStr, body) {
 async function processJobs() {
   console.log('[PZ-SHORT-NOINTRO] Starting — puzzle short format (no-intro variant)');
 
-  const result = await pollPuzzleFormat(fetchSupabase, patchForAssigner, 'short', '[PZ-SHORT-NOINTRO]');
+  const result = await pollPuzzleFormat(fetchSupabase, patchForAssigner, 'short_nointro', '[PZ-SHORT-NOINTRO]');
   if (!result) return;
   const { puzzle: quiz, cfg } = result;   // alias puzzle → quiz so all helpers below work unchanged
 

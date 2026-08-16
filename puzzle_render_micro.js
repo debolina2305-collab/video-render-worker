@@ -269,14 +269,19 @@ async function claimMicroRow() {
     }
   } catch {}
 
-  // Fresh/pending rows first (NULL == never touched by the micro pipeline).
-  // is_rendered=eq.false is the CROSS-FORMAT guard — excludes any row
-  // already claimed by short/medium/long (or a prior micro attempt).
+  // Fresh/pending rows first (NULL == never touched by the micro pipeline —
+  // this is why every geometry "medium"/"hard" row below MUST explicitly set
+  // micro_status='skipped_micro' rather than leaving it null, or this OR
+  // clause would treat it as eligible and pull it into micro anyway).
+  // is_rendered=eq.false is the CROSS-FORMAT guard for ORDINARY rows — but
+  // FANOUT rows (fanout_enabled=true, the procedural geometry engine's
+  // "easy"-tier rows) deliberately want micro to ALSO claim them alongside
+  // short-nointro/short/medium/long, so is_rendered must not gate those.
   let candidates;
   try {
     candidates = await fetchSupabase(
-      `puzzle?or=(micro_status.is.null,micro_status.eq.pending_micro)` +
-      `&is_active=eq.true&puzzle_enriched=eq.true&is_rendered=eq.false&order=created_at.desc&limit=1&select=*`
+      `puzzle?and=(or(micro_status.is.null,micro_status.eq.pending_micro),or(is_rendered.eq.false,fanout_enabled.eq.true))` +
+      `&is_active=eq.true&puzzle_enriched=eq.true&order=created_at.desc&limit=1&select=*`
     );
   } catch (e) {
     // Previously this was `.catch(() => null)`, which made a genuine query
