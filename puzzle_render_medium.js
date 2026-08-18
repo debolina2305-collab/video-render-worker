@@ -1070,84 +1070,31 @@ async function buildMediumVideo(quiz, workDir) {
     resolvedBgFile = await download(DEFAULT_BG_MUSIC, 'sh_bg_default');
   }
 
-  // ── NO BACKGROUND PHOTO for puzzles — diagram IS the visual; overlay always hidden ──
-  const videoPhotoStyleBlock = '';
-  const videoPhotoClass      = 'no-photo';
-  console.log('[PZ-SHORT] No background image overlay (puzzle = SVG-based).');
-  // (Legacy variable kept so the R replacement map below compiles without changes)
-  const _bgPhotoSkip = true; void _bgPhotoSkip;
-  /* ── VIDEO PHOTO OVERLAY — background image at 30% opacity behind all screens ──
-  //
-  // Root cause of "image not showing": the previous raw fetch() call was
-  // silently failing in GitHub Actions (network restrictions, slow response,
-  // non-200, etc.) with no useful log output. The download() function already
-  // used for audio has: 45s timeout, caching, and per-attempt logging —
-  // so we reuse it here. If it fails, we see EXACTLY why in the GA log.
-  //
-  // Priority: topic_image_url (Tavily R2 image — always present after W8) →
-  //           hero_image_url → inline_image_url → thumbnail_url (null at short
-  //           render time; set only after long video renders) → blog post images.
+  // ── VIDEO PHOTO OVERLAY — R2-hosted background image at 30% opacity ────
+  // behind every screen (puzzle_template.html's .topic-photo-overlay).
+  // Source is puzzle_background_image_url — a curated pool row picked at
+  // generation time by puzzle_generator.js (pickBgImagePool), NOT a
+  // per-topic Tavily/Wikipedia fetch like the quiz pipeline uses, since
+  // puzzles don't have a real-world "topic" to search an image for.
   let videoPhotoStyleBlock = '';
   let videoPhotoClass      = 'no-photo';
-  let bgLocalFile = null, bgImageSrc = null;
-
-  for (const [srcName, url] of [
-    ['topic_image_url',  quiz.topic_image_url],
-    ['hero_image_url',   quiz.hero_image_url],
-    ['inline_image_url', quiz.inline_image_url],
-    ['thumbnail_url',    quiz.thumbnail_url],
-  ]) {
-    if (!url || !String(url).startsWith('http')) {
-      console.log(`[SHORT-BG] ${srcName}: null/empty — skip`);
-      continue;
-    }
-    console.log(`[SHORT-BG] Trying ${srcName}: ${url.slice(0, 70)}`);
-    // download() saves to CACHE_DIR (/tmp/audio_cache_short) — accessible
-    // via file:// since Puppeteer runs with --allow-file-access-from-files.
-    const dl = await download(url, `sh_bgphoto_${quiz.id}_${srcName}`).catch(e => {
-      console.warn(`[SHORT-BG] download() error for ${srcName}: ${e.message.slice(0, 60)}`);
+  if (quiz.puzzle_background_image_url && String(quiz.puzzle_background_image_url).startsWith('http')) {
+    const dl = await download(quiz.puzzle_background_image_url, `md_bgphoto_${quiz.id}`).catch(e => {
+      console.warn(`[MEDIUM-BG] download() error: ${e.message.slice(0, 60)}`);
       return null;
     });
     if (dl && await fileExists(dl)) {
-      bgLocalFile = dl;
-      bgImageSrc  = srcName;
-      console.log(`[SHORT-BG] ✓ ${srcName} → ${dl}`);
-      break;
-    }
-    console.log(`[SHORT-BG] ${srcName} download returned null — trying next`);
-  }
-
-  // Last resort: blog post hero/inline images
-  if (!bgLocalFile) {
-    try {
-      const bp = await fetchSupabase(
-        `quiz_blog_posts?quiz_id=eq.${quiz.id}&select=hero_image_url,inline_image_url&limit=1`
-      );
-      const cand = bp?.[0]?.hero_image_url || bp?.[0]?.inline_image_url || null;
-      if (cand && String(cand).startsWith('http')) {
-        const dl = await download(cand, `sh_bgphoto_${quiz.id}_blog`).catch(() => null);
-        if (dl && await fileExists(dl)) {
-          bgLocalFile = dl;
-          bgImageSrc  = 'quiz_blog_posts';
-          console.log(`[SHORT-BG] ✓ blog post fallback → ${dl}`);
-        }
-      }
-    } catch (e) {
-      console.warn(`[SHORT-BG] blog-post lookup failed: ${e.message.slice(0, 60)}`);
-    }
-  }
-
-  if (bgLocalFile) {
-    videoPhotoStyleBlock = `<style>
-:root { --topic-photo-url: url("file://${bgLocalFile}"); }
+      videoPhotoStyleBlock = `<style>
+:root { --topic-photo-url: url("file://${dl}"); }
 </style>`;
-    videoPhotoClass = '';
-    console.log(`[SHORT-BG] Photo overlay active (${bgImageSrc})`);
+      videoPhotoClass = '';
+      console.log(`[MEDIUM-BG] Photo overlay active: ${quiz.puzzle_background_image_url.slice(0, 70)}`);
+    } else {
+      console.log('[MEDIUM-BG] Download failed — overlay hidden (.no-photo).');
+    }
   } else {
-    console.log('[SHORT-BG] No background image found — overlay will be hidden (.no-photo)');
+    console.log('[MEDIUM-BG] No puzzle_background_image_url on this row — overlay hidden.');
   }
-
-  */ // end of skipped bg block
   // ── Theme ──────────────────────────────────────────────────────────
   const { themeCss, decoHtml, designEngineCss } = await resolveTheme(quiz);
 

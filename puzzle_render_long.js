@@ -319,6 +319,33 @@ async function downloadAudio(url, cacheKey, preferKey) {
   return null;
 }
 
+// Plain image downloader (no ffmpeg/audio conversion) — used by the
+// puzzle_background_image_url overlay. Mirrors downloadAudio's caching/
+// curl/timeout pattern but keeps the file as-is (whatever image format R2
+// serves it as) instead of converting to mp3.
+async function downloadImageGeneric(url, cacheKey, destDir) {
+  if (!url || !String(url).startsWith('http')) return null;
+  await ensureDir(destDir);
+  const encoded = encodeR2Url(url);
+  const safe = cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const ext = (url.split('?')[0].split('.').pop() || 'jpg').toLowerCase().slice(0, 4);
+  const local = path.join(destDir, `${safe}.${ext}`);
+  if (await fileExists(local)) { console.log(`[IMG-DL CACHE HIT] ${safe}`); return local; }
+  console.log(`[IMG-DL] ${safe} <- ${encoded}`);
+  try {
+    await withTimeout(execPromise(`curl -sL --fail "${encoded}" -o "${local}" --max-time 30`), TIMEOUT_CURL, `img-download ${safe}`);
+    if (!(await fileExists(local))) { console.warn(`[IMG-DL] ${safe}: curl produced no file`); return null; }
+    const st = await fs.stat(local);
+    if (st.size === 0) { console.warn(`[IMG-DL] ${safe}: downloaded file is empty`); await fs.unlink(local).catch(() => {}); return null; }
+    console.log(`[IMG-DL] ${safe}: OK (${(st.size / 1024).toFixed(0)}KB)`);
+    return local;
+  } catch (e) {
+    console.warn(`[IMG-DL FAIL] ${safe}: ${e.message}`);
+    await fs.unlink(local).catch(() => {});
+    return null;
+  }
+}
+
 // Picks one random row's cloudflare_url from the `pause_audios` table.
 // Used to drop a random "pause" voice line into the long-form countdown.
 async function fetchRandomPauseAudioUrl() {
@@ -1349,70 +1376,33 @@ async function buildVideo(quiz, workDir) {
     }
   }
 
-  // ── VIDEO PHOTO OVERLAY — Tavily image at 30% opacity behind all screens ──
-  // This is the NEW feature: the Tavily news photo (best available image,
-  // already downloaded above by fetchTavilyImagesForQuiz) is injected as a
-  // fixed-position layer behind ALL quiz screens.
-  // Priority: thumbnail slot image → hero slot image → Wikipedia image → none
-  // The overlay sits above the theme animated bg but below all UI content.
-  // 30% opacity + slight blur = visible context without distracting from quiz.
+  // ── VIDEO PHOTO OVERLAY — R2-hosted background image at 30% opacity ────
+  // behind every screen (puzzle_template.html's .topic-photo-overlay).
+  // This used to reuse the Tavily/Wikipedia image (thumbImgData etc. above,
+  // still used elsewhere in this file for the end-screen image cards — NOT
+  // touched here) for the quiz pipeline. For puzzles there's no real-world
+  // "topic" to search an image for, so this now reads
+  // puzzle_background_image_url — a curated R2 pool row picked at
+  // generation time by puzzle_generator.js (pickBgImagePool) — instead.
   let videoPhotoStyleBlock = '';
   let videoPhotoClass = 'no-photo'; // CSS class on the overlay div
-
-  // Only use data URIs that are actually valid (>500 chars = real image data)
-  // 0KB images produce tiny broken data URIs that render as blank
-  const validDataUri = (d) => d && d.length > 500;
-  const videoPhotoDataUri = (validDataUri(thumbImgData?.dataUri) ? thumbImgData.dataUri : null)
-                         || (validDataUri(heroImgData?.dataUri)  ? heroImgData.dataUri  : null)
-                         || (validDataUri(inlineImgData?.dataUri)? inlineImgData.dataUri: null)
-                         || null;
-
-  if (videoPhotoDataUri) {
-    // IMPORTANT: Chrome cannot use large data URIs (>32KB) as CSS custom properties.
-    // The CSS var(--topic-photo-url) silently fails for large images.
-    // Fix: write the image to a temp file and use a file:// URL instead.
-    // This is safe because Puppeteer already has --allow-file-access-from-files.
+  if (quiz.puzzle_background_image_url && String(quiz.puzzle_background_image_url).startsWith('http')) {
     try {
-      const overlayImgPath = path.join(workDir, 'overlay_photo.jpg');
-      // Extract base64 data from the data URI and write as binary file
-      const b64 = videoPhotoDataUri.split(',')[1];
-      if (b64) {
-        await fs.writeFile(overlayImgPath, Buffer.from(b64, 'base64'));
-        const overlayFileUrl = `file://${overlayImgPath}`;
+      const dl = await downloadImageGeneric(quiz.puzzle_background_image_url, `lg_bgphoto_${quiz.id}`, workDir);
+      if (dl) {
         videoPhotoStyleBlock = `<style>
-:root { --topic-photo-url: url("${overlayFileUrl}"); }
+:root { --topic-photo-url: url("file://${dl}"); }
 </style>`;
-        videoPhotoClass = ''; // no "no-photo" class → overlay is visible
-        console.log(`[VIDEO-OVERLAY] Photo written to temp file and injected as overlay (${(Buffer.from(b64,'base64').length/1024).toFixed(0)}KB)`);
+        videoPhotoClass = '';
+        console.log(`[VIDEO-OVERLAY] Photo overlay active: ${quiz.puzzle_background_image_url.slice(0, 70)}`);
       } else {
-        console.log('[VIDEO-OVERLAY] Could not extract base64 from data URI');
+        console.log('[VIDEO-OVERLAY] Download failed — overlay hidden (.no-photo).');
       }
     } catch (e) {
-      console.warn(`[VIDEO-OVERLAY] Failed to write overlay file (non-fatal): ${e.message}`);
-    }
-  } else if (videoBgImageUrl && thumbBgStyleBlock) {
-    // Fallback: use Wikipedia image for the overlay
-    // Wikipedia image is already downloaded — extract its data URI from the style block
-    const wikiDataUri = thumbBgStyleBlock.match(/url\("([^"]+)"\)/)?.[1] || null;
-    if (wikiDataUri) {
-      try {
-        const overlayImgPath = path.join(workDir, 'overlay_photo_wiki.jpg');
-        const b64 = wikiDataUri.split(',')[1];
-        if (b64) {
-          await fs.writeFile(overlayImgPath, Buffer.from(b64, 'base64'));
-          const overlayFileUrl = `file://${overlayImgPath}`;
-          videoPhotoStyleBlock = `<style>
-:root { --topic-photo-url: url("${overlayFileUrl}"); }
-</style>`;
-          videoPhotoClass = '';
-          console.log('[VIDEO-OVERLAY] Wikipedia image used as fallback overlay (file://)');
-        }
-      } catch (e) {
-        console.warn(`[VIDEO-OVERLAY] Wikipedia fallback failed (non-fatal): ${e.message}`);
-      }
+      console.warn(`[VIDEO-OVERLAY] Failed (non-fatal): ${e.message}`);
     }
   } else {
-    console.log('[VIDEO-OVERLAY] No photo available — overlay hidden');
+    console.log('[VIDEO-OVERLAY] No puzzle_background_image_url on this row — overlay hidden.');
   }
 
   console.log(`[CONFETTI] niche=${niche} set=${confettiSet.join(' ')}`);
@@ -1452,7 +1442,7 @@ async function buildVideo(quiz, workDir) {
     '{{niche_challenge_label}}': `${nicheLabel} Challenge No #${nicheNo}`,
     '{{thumb_bg_style_block}}': thumbBgStyleBlock,
     '{{thumb_bg_image_class}}': thumbBgStyleBlock ? ' thumb-photo-bg-img' : ' thumb-photo-bg-hidden',
-    '{{VIDEO_PHOTO_STYLE_BLOCK}}': '', // puzzle: no photo
+    '{{VIDEO_PHOTO_STYLE_BLOCK}}': videoPhotoStyleBlock,
     '{{VIDEO_PHOTO_CLASS}}':       videoPhotoClass,
     '{{confetti_0}}':confettiSet[0], '{{confetti_1}}':confettiSet[1],
     '{{confetti_2}}':confettiSet[2], '{{confetti_3}}':confettiSet[3],

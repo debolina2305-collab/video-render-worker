@@ -661,7 +661,25 @@
 .hidden-pre-reveal { opacity:0 !important; visibility:hidden !important; }
 
 /* ── TOPIC PHOTO OVERLAY — hidden in puzzle template (no Tavily photo) ─── */
-.topic-photo-overlay { display: none !important; }
+.topic-photo-overlay {
+  /* Same proven pattern as quiz_template.html's overlay — position:absolute
+     inside each .screen (position:relative + overflow:hidden), fills it. */
+  position: absolute;
+  inset: 0;
+  /* puzzle_template.html's layers: .bg-anim=1, gradient-overlay=2, .content=5.
+     z-index:3 sits above both background layers but below all quiz content —
+     same relationship quiz_template.html uses (photo behind text, above bg). */
+  z-index: 3;
+  background-image: var(--topic-photo-url);
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+  opacity: 0.30;
+  pointer-events: none;
+  /* Slight blur softens the photo so it reads as texture, not a distraction
+     from the puzzle diagram/options. */
+  filter: blur(2px) saturate(0.8);
+}
 .topic-photo-overlay.no-photo { display: none !important; }
 
 /* ══════════════════════════════════════════════════════════════════════════
