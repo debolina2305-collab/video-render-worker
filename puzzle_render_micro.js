@@ -322,13 +322,24 @@ async function markMicroError(id, msg) {
 function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-function buildHtml(quiz, svgHtml, ctaText = null) {
+function buildHtml(quiz, svgHtml, ctaText = null, bgImageLocalPath = null) {
   const accent  = quiz.theme_accent_primary   || '#00e0ff';
   const accent2 = quiz.theme_accent_secondary || '#22c55e';
   const question = quiz.question_1 || '';
   const hint     = quiz.hint_1 || '';
   const options  = (quiz.options_1 || []).slice(0, 4);
   const labels   = ['A', 'B', 'C', 'D'];
+  // Background image overlay at 30% opacity — same curated R2 pool + visual
+  // treatment as the template-based renderers' .topic-photo-overlay, just
+  // inlined here since micro builds its own standalone HTML rather than
+  // using puzzle_template.html. z-index:-1 (not 0) is deliberate: micro's
+  // body has no separate .bg-anim wrapper div like the other renderers —
+  // content here is plain in-flow (non-positioned) elements, which paint
+  // ABOVE a positioned z-index:0 layer per normal CSS stacking order, so a
+  // negative z-index is what actually puts this behind the text/puzzle.
+  const photoOverlayHtml = bgImageLocalPath
+    ? `<div class="photo-overlay" style="background-image:url('file://${bgImageLocalPath}')"></div>`
+    : '';
 
   const optionsHtml = options.map((opt, i) => `
     <div class="opt" id="opt-${i}" data-idx="${i}">
@@ -344,6 +355,11 @@ function buildHtml(quiz, svgHtml, ctaText = null) {
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body { width:${VIDEO_W}px; height:${VIDEO_H}px; overflow:hidden; background:#05070d; }
+  .photo-overlay {
+    position:absolute; inset:0; z-index:-1;
+    background-size:cover; background-position:center center; background-repeat:no-repeat;
+    opacity:0.30; pointer-events:none; filter:blur(2px) saturate(0.8);
+  }
   body {
     font-family: 'Arial Black', Arial, Helvetica, sans-serif;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -547,6 +563,7 @@ function buildHtml(quiz, svgHtml, ctaText = null) {
 </style>
 </head>
 <body>
+  ${photoOverlayHtml}
   <div class="question-line">${esc(question)}</div>
   ${hint ? `<div class="hint-line">💡 HINT: ${esc(hint)}</div>` : ''}
   <div class="puzzle-visual-wrap">${svgHtml}</div>
@@ -729,7 +746,20 @@ async function buildMicroVideo(quiz, workDir) {
     throw new Error(`puzzleRenderers failed: ${e.message}`);
   }
 
-  const html = buildHtml(quiz, svgHtml, cta5Text);
+  // Background photo overlay — same curated R2 pool as the other formats,
+  // at 30% opacity. Best-effort: falls back to no overlay if missing/fails.
+  let bgImageLocalPath = null;
+  if (quiz.puzzle_background_image_url && String(quiz.puzzle_background_image_url).startsWith('http')) {
+    bgImageLocalPath = await download(quiz.puzzle_background_image_url, `mi_bgphoto_${quiz.id}`).catch(e => {
+      console.warn(`[MICRO-BG] download failed: ${e.message.slice(0, 60)}`);
+      return null;
+    });
+    console.log(bgImageLocalPath ? `[MICRO-BG] Photo overlay active: ${quiz.puzzle_background_image_url.slice(0, 70)}` : '[MICRO-BG] Download failed — overlay hidden.');
+  } else {
+    console.log('[MICRO-BG] No puzzle_background_image_url on this row — overlay hidden.');
+  }
+
+  const html = buildHtml(quiz, svgHtml, cta5Text, bgImageLocalPath);
   const htmlPath = path.join(workDir, 'micro_index.html');
   await fs.writeFile(htmlPath, html);
 
