@@ -1634,6 +1634,23 @@ ${AVATAR_CSS}`;
   await new Promise(r => setTimeout(r, 1200));
   await page.evaluate(() => { document.body.classList.add('short-fmt'); });
 
+  // ── FORCE-REPAINT the .topic-photo-overlay (same fix as puzzle_render_long.js) ──
+  // Chromium headless doesn't reliably paint a CSS var()-driven background-image
+  // on the very first frame it's asked to screenshot/record — without this
+  // toggle+reflow, the overlay div exists in the DOM but never actually paints,
+  // so the background photo silently never shows up in the rendered video even
+  // though download + CSS injection both succeeded.
+  if (videoPhotoClass !== 'no-photo') {
+    await page.evaluate(() => {
+      document.querySelectorAll('.topic-photo-overlay').forEach(el => {
+        el.style.opacity = '0';
+        el.offsetHeight; // force reflow
+        el.style.opacity = '0.30';
+      });
+    }).catch(() => {});
+    await new Promise(r => setTimeout(r, 300));
+  }
+
   // ── TOP STRIP: inject logo + challenge ID into identity column ────────
   try {
     const logoSrc = typeof getLogoDataUri === 'function' ? await getLogoDataUri() : '';
@@ -2197,17 +2214,24 @@ ${AVATAR_CSS}`;
 const { pollPuzzleFormat, markPuzzleDone, markPuzzleError } = require('./puzzleAssigner');
 
 async function patchForAssigner(pathStr, body) {
+  // NOTE: 'return=representation' (not 'return=minimal') is required so
+  // pollPuzzleFormat()'s atomic claim can tell whether its conditional PATCH
+  // actually matched/updated a row (claim succeeded) or matched zero rows
+  // (another format worker already claimed it first — race avoided instead
+  // of silently double-rendering the same puzzle).
   const res = await fetch(`${cleanUrl}/rest/v1/${pathStr}`, {
     method: 'PATCH',
     headers: {
       'apikey':        supabaseKey,
       'Authorization': `Bearer ${supabaseKey}`,
       'Content-Type':  'application/json',
-      'Prefer':        'return=minimal',
+      'Prefer':        'return=representation',
     },
     body: JSON.stringify(body)
   });
   if (!res.ok) throw new Error(`PATCH ${pathStr} -> ${res.status}: ${await res.text()}`);
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : [];
 }
 
 // ═══════════════════════════════════════════════════════════════════════

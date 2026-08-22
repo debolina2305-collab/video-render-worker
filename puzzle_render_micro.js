@@ -160,13 +160,16 @@ async function fetchSupabase(pathStr) {
   if (!res.ok) throw new Error(`GET ${pathStr} → ${res.status}: ${txt.slice(0, 300)}`);
   return txt.trim() ? JSON.parse(txt) : [];
 }
-async function patchSupabase(pathStr, body) {
+async function patchSupabase(pathStr, body, { returnRepresentation = false } = {}) {
   const res = await fetch(`${cleanUrl}/rest/v1/${pathStr}`, {
     method: 'PATCH',
-    headers: { ...sbHeaders(), Prefer: 'return=minimal' },
+    headers: { ...sbHeaders(), Prefer: returnRepresentation ? 'return=representation' : 'return=minimal' },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`PATCH ${pathStr} → ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!returnRepresentation) return null;
+  const txt = await res.text();
+  return txt.trim() ? JSON.parse(txt) : [];
 }
 
 // ─── FS / PROCESS HELPERS ────────────────────────────────────────────────────
@@ -297,7 +300,26 @@ async function claimMicroRow() {
   if (!candidates?.length) { console.log('[MICRO] No pending puzzle rows.'); return null; }
 
   const row = candidates[0];
-  await patchSupabase(`puzzle?id=eq.${row.id}`, { micro_status: 'rendering_micro', is_rendered: true, updated_at: new Date().toISOString() }).catch(() => {});
+  // ── ATOMIC CLAIM ────────────────────────────────────────────────────
+  // Repeats the exact eligibility condition the SELECT above used. If
+  // another format worker (long/medium/short) or an overlapping micro run
+  // claimed this exact row in the gap since our SELECT, this conditional
+  // UPDATE matches zero rows and we detect that instead of silently
+  // rendering a puzzle someone else is already rendering.
+  const claimGuard =
+    `puzzle?id=eq.${row.id}` +
+    `&and=(or(micro_status.is.null,micro_status.eq.pending_micro),or(is_rendered.eq.false,fanout_enabled.eq.true))`;
+  const claimed = await patchSupabase(claimGuard,
+    { micro_status: 'rendering_micro', is_rendered: true, updated_at: new Date().toISOString() },
+    { returnRepresentation: true }
+  ).catch(e => {
+    console.warn(`[MICRO] Claim PATCH failed: ${e.message}`);
+    return null;
+  });
+  if (!claimed?.length) {
+    console.log(`[MICRO] Row ${row.id} was already claimed by another worker (race avoided) — skipping this run.`);
+    return null;
+  }
   console.log(`[MICRO] Claimed puzzle id=${row.id} type=${row.puzzle_type}`);
   return row;
 }
@@ -782,6 +804,24 @@ async function buildMicroVideo(quiz, workDir) {
   });
   await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await new Promise(r => setTimeout(r, 500));
+
+  // ── Confirm the .photo-overlay background-image actually painted ───────
+  // Unlike the other formats, micro bakes the background-image straight into
+  // the initial HTML (no runtime CSS var toggle), so it doesn't need the
+  // long.js-style reflow trick — but Chromium can still take a beat to
+  // decode+paint a file:// background-image, and the flat 500ms wait above
+  // isn't guaranteed to be enough. Force a reflow as cheap insurance so the
+  // photo isn't randomly missing depending on CI runner speed.
+  if (bgImageLocalPath) {
+    await page.evaluate(() => {
+      document.querySelectorAll('.photo-overlay').forEach(el => {
+        el.style.opacity = '0';
+        el.offsetHeight; // force reflow
+        el.style.opacity = '0.30';
+      });
+    }).catch(() => {});
+    await new Promise(r => setTimeout(r, 300));
+  }
 
   // correct option index (needed for the reveal event)
   const options = quiz.options_1 || [];

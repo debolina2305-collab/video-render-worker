@@ -1141,11 +1141,25 @@ async function processJobs() {
 
   const quiz = rows[0];
   console.log(`[WORKER] Processing: ${quiz.id} — ${quiz.topic}`);
-  // Claim: set both video_status (legacy compat) and long_status (new system),
-  // plus is_rendered — the cross-format lock that stops short/medium/micro
-  // from also picking up this same row.
+  // ── ATOMIC CLAIM ────────────────────────────────────────────────────
+  // The WHERE clause repeats the same eligibility condition the earlier
+  // SELECT used (still pending_long, AND still open on the cross-format
+  // lock unless it's a fanout row). PostgREST only updates — and only
+  // returns — rows that STILL match at UPDATE time, so if another format
+  // worker (short/medium/micro) or an overlapping long run claimed this
+  // exact row in the gap since our SELECT, this conditional UPDATE matches
+  // zero rows and we detect that instead of silently double-rendering the
+  // same puzzle.
   const claimPatch = { video_status: 'processing', long_status: 'rendering_long', is_rendered: true, updated_at: new Date().toISOString() };
-  await fetchSupabase(`puzzle?id=eq.${quiz.id}`,{method:'PATCH',body:JSON.stringify(claimPatch)});
+  const claimGuard = `puzzle?id=eq.${quiz.id}&long_status=eq.pending_long&or=(is_rendered.eq.false,fanout_enabled.eq.true)`;
+  const claimed = await fetchSupabase(claimGuard, { method: 'PATCH', body: JSON.stringify(claimPatch) }).catch(e => {
+    console.warn(`[WORKER] Claim PATCH failed: ${e.message}`);
+    return null;
+  });
+  if (!claimed?.length) {
+    console.log(`[WORKER] Row ${quiz.id} was already claimed by another format worker (race avoided) — skipping this run.`);
+    return;
+  }
 
   const workDir = `/tmp/video_${uuidv4()}`;
   await ensureDir(workDir);

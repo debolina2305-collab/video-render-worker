@@ -184,7 +184,7 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
     }
   }
 
-  // Fetch full row + claim atomically
+  // Fetch full row
   const full = await fetchFn(`puzzle?id=eq.${chosenRow.id}&select=*`).catch(() => null);
   if (!full?.length) {
     console.log(`${label} Chosen row vanished — retry next run.`);
@@ -192,11 +192,30 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
   }
   const puzzle = full[0];
 
-  await patchFn(`puzzle?id=eq.${puzzle.id}`, {
+  // ── ATOMIC CLAIM ─────────────────────────────────────────────────────
+  // The PATCH's WHERE clause repeats the SAME eligibility condition the
+  // SELECT above used (still pending for this format, AND still open on
+  // the cross-format lock unless it's a fanout row). PostgREST only updates
+  // rows that STILL match at UPDATE time and only returns the rows it
+  // actually touched — so if another format worker (or another overlapping
+  // run of this same workflow) claimed this exact row in the gap between
+  // our SELECT and this PATCH, the conditional UPDATE matches zero rows and
+  // we detect that and bail out instead of proceeding to render a puzzle
+  // someone else is already rendering.
+  const claimGuard =
+    `puzzle?id=eq.${puzzle.id}` +
+    `&${cfg.pollCol}=eq.${cfg.pendingVal}` +
+    `&or=(is_rendered.eq.false,fanout_enabled.eq.true)`;
+  const claimed = await patchFn(claimGuard, {
     [cfg.pollCol]: cfg.claimVal,
     is_rendered: true,
     updated_at: new Date().toISOString(),
-  }).catch(() => {});
+  }).catch((e) => { console.warn(`${label} Claim PATCH failed: ${e.message}`); return null; });
+
+  if (!claimed?.length) {
+    console.log(`${label} Row ${puzzle.id} was already claimed by another worker (race avoided) — skipping this run.`);
+    return null;
+  }
 
   console.log(`${label} Claimed: "${puzzle.topic}" id=${puzzle.id} format=${format}`);
   return { puzzle, cfg };
