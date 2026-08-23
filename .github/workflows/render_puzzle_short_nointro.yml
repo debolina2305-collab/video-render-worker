@@ -24,14 +24,14 @@ name: Puzzle Render — Short Format (No Intro)
 on:
   # Manual trigger — click "Run workflow" in the Actions tab
   workflow_dispatch:
-  schedule:
-    # Times are UTC; IST = UTC+5:30
-    - cron: '3 17 * * *'    # 10:00 PM IST
     inputs:
       trigger_publish:
         description: 'Trigger downstream publishers (YouTube/Blog/Facebook) after render?'
         type: boolean
         default: false
+  schedule:
+    # Times are UTC; IST = UTC+5:30
+    - cron: '3 17 * * *'    # 10:00 PM IST
 
   # Optional: fire this from puzzle_generator.js (or manually via the API)
   # using a DISTINCT event type so it never collides with the original
