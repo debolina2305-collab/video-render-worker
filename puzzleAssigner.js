@@ -24,9 +24,10 @@ const PUZZLE_FORMAT_CONFIG = {
   // Distinct from `short` — puzzle_render_short.js (intro) and
   // puzzlerenderswithoutintro.js (no intro) used to share `short_status`,
   // which meant they raced for the same rows and only one could ever render
-  // a given puzzle. Split into its own column so a puzzle can be rendered by
-  // BOTH the intro and no-intro variants (deliberate fan-out — see
-  // `fanout_enabled` below), not a race.
+  // a given puzzle. Split into its own column so each variant tracks its
+  // own claim progress independently — but is_rendered (see the atomic
+  // claim below) still means only ONE of {short, short_nointro, medium,
+  // long, micro} ever actually renders a given puzzle, full stop.
   short_nointro: {
     pollCol:     'short_nointro_status',
     pendingVal:  'pending_short_nointro',
@@ -89,25 +90,14 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
   } catch {}
 
   // ── Fetch all pending rows for this format, newest first ───────────────
-  // is_rendered=eq.false is the CROSS-FORMAT guard for ORDINARY rows: once
-  // ANY format claims one, is_rendered flips true and every other format's
-  // poll excludes it — one row produces exactly one video, whichever format
-  // gets there first. That's still the default for every LLM-driven type.
-  //
-  // FANOUT rows (fanout_enabled=true — currently only the procedural
-  // geometry engine's rows) are the deliberate exception: the same puzzle
-  // is meant to be rendered by SEVERAL formats independently (e.g. an
-  // "easy" geometry puzzle → micro + short-nointro + short + medium + long,
-  // all five). For those rows is_rendered must NOT gate anything — the
-  // `or=(is_rendered.eq.false,fanout_enabled.eq.true)` below lets a fanout
-  // row stay visible to every format's poll no matter what is_rendered is,
-  // while ordinary rows (fanout_enabled defaults false) keep the exact old
-  // exclusive behavior. Each format's OWN status column (pending → claimed
-  // → done) still prevents that SAME format from double-claiming it.
+  // is_rendered=eq.false is the ONE unconditional cross-format lock: once
+  // ANY format claims a puzzle, is_rendered flips true and every other
+  // format's poll (this one included) excludes it from then on — one
+  // puzzle produces exactly one video, full stop, no exceptions.
   let pendingRows = await fetchFn(
     `puzzle?${cfg.pollCol}=eq.${cfg.pendingVal}` +
     `&is_active=eq.true&puzzle_enriched=eq.true` +
-    `&or=(is_rendered.eq.false,fanout_enabled.eq.true)` +
+    `&is_rendered=eq.false` +
     `&order=created_at.desc&limit=500` +
     `&select=id,topic,topic_slug,puzzle_type,created_at`
   ).catch(() => null);
@@ -117,7 +107,7 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
     const skipped = await fetchFn(
       `puzzle?${cfg.pollCol}=eq.${cfg.skipVal}` +
       `&is_active=eq.true&puzzle_enriched=eq.true` +
-      `&or=(is_rendered.eq.false,fanout_enabled.eq.true)` +
+      `&is_rendered=eq.false` +
       `&order=created_at.desc&limit=1&select=id,topic,topic_slug,puzzle_type,created_at`
     ).catch(() => null);
     if (skipped?.length) {
@@ -194,18 +184,17 @@ async function pollPuzzleFormat(fetchFn, patchFn, format, label = '[PZ-WORKER]')
 
   // ── ATOMIC CLAIM ─────────────────────────────────────────────────────
   // The PATCH's WHERE clause repeats the SAME eligibility condition the
-  // SELECT above used (still pending for this format, AND still open on
-  // the cross-format lock unless it's a fanout row). PostgREST only updates
-  // rows that STILL match at UPDATE time and only returns the rows it
-  // actually touched — so if another format worker (or another overlapping
-  // run of this same workflow) claimed this exact row in the gap between
-  // our SELECT and this PATCH, the conditional UPDATE matches zero rows and
-  // we detect that and bail out instead of proceeding to render a puzzle
-  // someone else is already rendering.
+  // SELECT above used (still pending for this format, AND is_rendered still
+  // false). PostgREST only updates rows that STILL match at UPDATE time and
+  // only returns the rows it actually touched — so if another format
+  // worker (or another overlapping run of this same workflow) claimed this
+  // exact row in the gap between our SELECT and this PATCH, the conditional
+  // UPDATE matches zero rows and we detect that and bail out instead of
+  // proceeding to render a puzzle someone else already claimed.
   const claimGuard =
     `puzzle?id=eq.${puzzle.id}` +
     `&${cfg.pollCol}=eq.${cfg.pendingVal}` +
-    `&or=(is_rendered.eq.false,fanout_enabled.eq.true)`;
+    `&is_rendered=eq.false`;
   const claimed = await patchFn(claimGuard, {
     [cfg.pollCol]: cfg.claimVal,
     is_rendered: true,

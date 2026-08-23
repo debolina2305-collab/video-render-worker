@@ -272,18 +272,14 @@ async function claimMicroRow() {
     }
   } catch {}
 
-  // Fresh/pending rows first (NULL == never touched by the micro pipeline —
-  // this is why every geometry "medium"/"hard" row below MUST explicitly set
-  // micro_status='skipped_micro' rather than leaving it null, or this OR
-  // clause would treat it as eligible and pull it into micro anyway).
-  // is_rendered=eq.false is the CROSS-FORMAT guard for ORDINARY rows — but
-  // FANOUT rows (fanout_enabled=true, the procedural geometry engine's
-  // "easy"-tier rows) deliberately want micro to ALSO claim them alongside
-  // short-nointro/short/medium/long, so is_rendered must not gate those.
+  // Fresh/pending rows first (NULL == never touched by the micro pipeline).
+  // is_rendered=eq.false is the ONE unconditional cross-format lock: once
+  // any format claims a puzzle, it's off-limits to every other format,
+  // including micro, no exceptions.
   let candidates;
   try {
     candidates = await fetchSupabase(
-      `puzzle?and=(or(micro_status.is.null,micro_status.eq.pending_micro),or(is_rendered.eq.false,fanout_enabled.eq.true))` +
+      `puzzle?and=(or(micro_status.is.null,micro_status.eq.pending_micro),is_rendered.eq.false)` +
       `&is_active=eq.true&puzzle_enriched=eq.true&order=created_at.desc&limit=1&select=*`
     );
   } catch (e) {
@@ -308,7 +304,7 @@ async function claimMicroRow() {
   // rendering a puzzle someone else is already rendering.
   const claimGuard =
     `puzzle?id=eq.${row.id}` +
-    `&and=(or(micro_status.is.null,micro_status.eq.pending_micro),or(is_rendered.eq.false,fanout_enabled.eq.true))`;
+    `&and=(or(micro_status.is.null,micro_status.eq.pending_micro),is_rendered.eq.false)`;
   const claimed = await patchSupabase(claimGuard,
     { micro_status: 'rendering_micro', is_rendered: true, updated_at: new Date().toISOString() },
     { returnRepresentation: true }

@@ -295,7 +295,15 @@ html,body{ width:1080px; height:1920px; overflow:hidden; background:#05030f; }
   padding:16px 26px;
   font-size:32px;
   font-weight:900;
-  color:var(--accent-1);
+  /* Fixed light colour, NOT var(--accent-1) — this panel's background is
+     always a dark rgba(0,0,0,...) overlay regardless of theme (see
+     .answer-explanation above), but --accent-1 is tuned per-theme against
+     that THEME's own background, not against this fixed dark panel. Some
+     themes' accent-1 (e.g. news #cc0000, luxury #c9a227) is itself a dark
+     colour, which reads as dark-text-on-dark-panel here. A fixed warm gold
+     guarantees readability on the dark panel no matter which theme/accent
+     the rest of the video is using. */
+  color:#ffd24a;
   letter-spacing:0.04em;
   text-transform:uppercase;
 }

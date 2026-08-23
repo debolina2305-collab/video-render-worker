@@ -1403,9 +1403,10 @@ async function processPuzzleQueue(env) {
       is_human_approved: false, video_status: 'pending',
       created_at: now.toISOString(), updated_at: now.toISOString(),
 
-      // format columns — set below (open to all formats, no RPC/assignment)
+      // format columns — placeholder here, real values set in step 7 below
+      // (every row now targets exactly one format; see step 7)
       assigned_format: null, short_status: null, medium_status: null, long_status: null,
-      is_rendered: false, // cross-format lock — flips true when ANY format claims this row
+      is_rendered: false, // cross-format lock — flips true the moment any format claims this row, and gates every format unconditionally from then on
 
       // ⭐ puzzle-specific
       puzzle_type: puzzleType,
@@ -1481,59 +1482,41 @@ async function processPuzzleQueue(env) {
     };
 
     // ── 7. Format assignment + insert ───────────────────────────────────
-    // Default (non-geometry) behavior: open to ALL formats, first claim
-    // wins. No assign_puzzle_format RPC, no puzzle_format_config read.
-    // Each format worker claims independently via its own status column, so
-    // the same puzzle can end up rendered in more than one format depending
-    // on which format workers happen to run.
+    // is_rendered is now an UNCONDITIONAL cross-format lock (see
+    // puzzleAssigner.js / puzzle_render_long.js / puzzle_render_micro.js):
+    // once ANY format claims a puzzle, every other format's poll excludes
+    // it immediately, no exceptions. One puzzle → exactly one video, ever.
     //
-    // 'geometry' rows use a deliberate FAN-OUT matrix instead — the same
-    // puzzle is meant to become MULTIPLE videos across specific formats,
-    // not a race with one winner:
-    //   quick  → ALL FIVE:  micro + short-nointro + short + medium + long
-    //   medium → FOUR:      short-nointro + short + medium + long (no micro)
-    //   hard   → ONE:       long only (needs the full 42s/12s-countdown slot)
-    // `fanout_enabled: true` is what makes this actually work — see
-    // puzzleAssigner.js / puzzle_render_long.js / puzzle_render_micro.js's
-    // poll queries: it stops `is_rendered` (normally a cross-format
-    // exclusivity lock) from hiding this row from formats it's still
-    // pending in, once a different format has already claimed it.
-    // micro_status is set to the literal 'skipped_micro' (never left null)
-    // for medium/hard rows — puzzle_render_micro.js treats a NULL
-    // micro_status as "eligible", so null would accidentally let micro grab
-    // rows we explicitly don't want it to.
-    const GEOMETRY_FANOUT = {
-      quick:  { micro: true,  short_nointro: true,  short: true,  medium: true,  long: true  },
-      medium: { micro: false, short_nointro: true,  short: true,  medium: true,  long: true  },
-      hard:   { micro: false, short_nointro: false, short: false, medium: false, long: true  },
-    };
+    // Because of that, there's no reason to open a row up to several
+    // formats at once and let them race — whichever one wins would just
+    // leave every other format's status column stuck on a 'pending_X' that
+    // can never actually be claimed. So every puzzle (procedural or
+    // LLM-driven) is now assigned to exactly ONE target format at insert
+    // time, and every other format's status column is set to its
+    // 'skipped_X' value up front — never null, and never a second pending
+    // status — so it's excluded immediately rather than lingering.
+    //
+    // Procedural/geometry rows already compute a natural target_format from
+    // their difficulty tier (quick→short, medium→medium, hard→long — see
+    // GEO_DIFFICULTY_TO_FORMAT / PROC_DIFF_CFG above). LLM-driven rows fall
+    // back to a random target so load still spreads across short/medium/long
+    // over time instead of always picking the same one.
+    const targetFormat = isProcedural
+      ? chosen.target_format
+      : randomPick(['short', 'medium', 'long']);
 
-    if (isProcedural) {
-      const fanout = GEOMETRY_FANOUT[chosen.difficulty] || GEOMETRY_FANOUT.medium;
-      row.assigned_format = Object.entries(fanout).filter(([, on]) => on).map(([f]) => f).join('+');
-      row.fanout_enabled       = true;
-      row.micro_status         = fanout.micro         ? 'pending_micro'         : 'skipped_micro';
-      row.short_nointro_status = fanout.short_nointro  ? 'pending_short_nointro' : null;
-      row.short_status         = fanout.short          ? 'pending_short'         : null;
-      row.medium_status        = fanout.medium         ? 'pending_medium'        : null;
-      row.long_status          = fanout.long           ? 'pending_long'          : null;
-    } else {
-      row.assigned_format = null;
-      row.fanout_enabled  = false;
-      // Non-procedural (LLM) rows never touch micro_status/short_nointro_status —
-      // leaving them null preserves today's behavior for those remaining
-      // LLM-driven types (micro's NULL-is-eligible poll still picks these up
-      // exactly as before; short-nointro simply never runs for them unless
-      // you choose to route some of them through this fan-out later).
-      row.short_status  = 'pending_short';
-      row.medium_status = 'pending_medium';
-      row.long_status   = 'pending_long';
-    }
+    row.assigned_format = targetFormat;
+    row.fanout_enabled  = false; // fan-out is disabled — kept as an explicit column value, not just a default, for clarity in the DB
+    row.micro_status         = targetFormat === 'micro'         ? 'pending_micro'         : 'skipped_micro';
+    row.short_nointro_status = targetFormat === 'short_nointro' ? 'pending_short_nointro' : 'skipped_short_nointro';
+    row.short_status         = targetFormat === 'short'         ? 'pending_short'         : 'skipped_short';
+    row.medium_status        = targetFormat === 'medium'        ? 'pending_medium'        : 'skipped_medium';
+    row.long_status          = targetFormat === 'long'          ? 'pending_long'          : 'skipped_long';
 
     const ins = await dbInsert(env, 'puzzle', row);
     const puzzleId = ins?.[0]?.id || null;
-    console.log(`[PGEN] Inserted puzzle ${puzzleId} slug=${baseSlug} — ` +
-      (isProcedural ? `fanned out to [${row.assigned_format}] (difficulty=${chosen.difficulty})` : 'open to short/medium/long'));
+    console.log(`[PGEN] Inserted puzzle ${puzzleId} slug=${baseSlug} — targeted at format=${targetFormat}` +
+      (isProcedural ? ` (procedural, difficulty=${chosen.difficulty})` : ''));
 
     // ── 8. Bump audio usage counts (only tables WITH last_used_at) ────────
     await bumpUsage(env, {
@@ -1548,7 +1531,7 @@ async function processPuzzleQueue(env) {
       status: 'completed', completed_at: new Date().toISOString(), quiz_id: puzzleId,
       payload: {
         ...(job.payload || {}), puzzle_id: puzzleId, slug: baseSlug,
-        format: isProcedural ? chosen.target_format : 'open_all',
+        format: targetFormat,
         ...(poolWarnings.length ? { pool_warnings: poolWarnings } : {}),
       }
     });

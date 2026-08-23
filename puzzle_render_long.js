@@ -1053,25 +1053,20 @@ async function processJobs() {
   //   but now exactly ONE video comes out of a given row, not one per format.
   //   is_rendered releases back to false on failure/stuck-reset so a row that
   //   never actually became a video can still be claimed by anyone.
-  // CROSS-FORMAT LOCK for ORDINARY rows: is_rendered=eq.false excludes any
-  // row already claimed by short/medium/micro (or a prior long attempt) —
-  // one row produces exactly one video. FANOUT rows (fanout_enabled=true —
-  // the procedural geometry engine's rows) are the deliberate exception:
-  // "hard" geometry puzzles are meant to reach long regardless of what any
-  // other format did, and "easy"/"medium" ones are meant to ALSO land here
-  // alongside micro/short/short-nointro/medium — so is_rendered must not
-  // gate them. See puzzleAssigner.js's pollPuzzleFormat for the same pattern.
+  // CROSS-FORMAT LOCK: is_rendered=eq.false unconditionally excludes any row
+  // already claimed by short/short-nointro/medium/micro (or a prior long
+  // attempt) — one row produces exactly one video, ever, no exceptions.
   const pendingRows = await fetchSupabase(
     'puzzle?long_status=eq.pending_long' +
     '&is_active=eq.true&puzzle_enriched=eq.true' +
-    '&or=(is_rendered.eq.false,fanout_enabled.eq.true)' +
+    '&is_rendered=eq.false' +
     '&select=id,topic,topic_slug,created_at,assigned_format,long_status&order=created_at.desc&limit=500'
   );
   if (!pendingRows?.length) {
     // No fresh long rows — check if any skipped LONG rows can be revived
     const skippedRows = await fetchSupabase(
       'puzzle?long_status=eq.skipped_long&is_active=eq.true&puzzle_enriched=eq.true' +
-      '&or=(is_rendered.eq.false,fanout_enabled.eq.true)' +
+      '&is_rendered=eq.false' +
       '&select=id,topic,topic_slug,created_at&order=created_at.desc&limit=100'
     ).catch(()=>null);
     if (skippedRows?.length) {
@@ -1151,7 +1146,7 @@ async function processJobs() {
   // zero rows and we detect that instead of silently double-rendering the
   // same puzzle.
   const claimPatch = { video_status: 'processing', long_status: 'rendering_long', is_rendered: true, updated_at: new Date().toISOString() };
-  const claimGuard = `puzzle?id=eq.${quiz.id}&long_status=eq.pending_long&or=(is_rendered.eq.false,fanout_enabled.eq.true)`;
+  const claimGuard = `puzzle?id=eq.${quiz.id}&long_status=eq.pending_long&is_rendered=eq.false`;
   const claimed = await fetchSupabase(claimGuard, { method: 'PATCH', body: JSON.stringify(claimPatch) }).catch(e => {
     console.warn(`[WORKER] Claim PATCH failed: ${e.message}`);
     return null;
