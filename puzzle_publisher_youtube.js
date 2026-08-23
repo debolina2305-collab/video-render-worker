@@ -27,6 +27,20 @@ if (!cleanUrl || !supabaseKey) { console.error('[FATAL] Missing Supabase credent
 if (!YT_CLIENT_ID || !YT_CLIENT_SECRET || !YT_REFRESH_TOKEN) { console.error('[FATAL] Missing YouTube OAuth credentials'); process.exit(1); }
 
 // ─────────────────────────────────────────────
+// VARIANT ROTATION
+// Picks a random entry from an array of pre-written variants. Used
+// throughout buildMetadata() below so that the boilerplate portions of the
+// description (niche block, CTAs, subscribe reminder, etc.) are NOT
+// byte-identical on every single video. High-volume channels publishing
+// near-duplicate description text across hundreds of videos is a known
+// signal platforms use for spam/templated-content detection — rotating a
+// handful of hand-written variants for each fixed line keeps the unique
+// per-video content (title/explanation/quiz numbers) exactly as accurate
+// as before while breaking up the repeated boilerplate around it.
+// ─────────────────────────────────────────────
+function pickVariant(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// ─────────────────────────────────────────────
 // SUPABASE HELPERS
 // ─────────────────────────────────────────────
 async function fetchSupabase(path_, opts = {}) {
@@ -92,63 +106,150 @@ async function downloadVideo(videoUrl, destPath) {
 // ─────────────────────────────────────────────
 // NICHE-SPECIFIC FIXED DESCRIPTION BLOCKS
 // ─────────────────────────────────────────────
-const NICHE_DESC = {
-
-  general: `🧠 Think you know everything? Let's find out!
+// NOTE: puzzle_generator.js hardcodes niche='brain' for every puzzle row,
+// and this map previously had NO 'brain' key — so every single video fell
+// through to 'general' and got the exact same paragraph, word for word,
+// forever. Each entry below is now an ARRAY of variants; buildMetadata()
+// picks one at random per video via pickVariant() so the niche block is no
+// longer identical across the whole channel.
+// NOTE: puzzle_generator.js hardcodes niche='brain' for every puzzle row.
+// BRAIN_DESC_VARIANTS is the pool actually used on every single video —
+// bumped up to 10 hand-written variants (from the original 5) for more
+// spread. buildMetadata() picks one at random via pickVariant().
+const BRAIN_DESC_VARIANTS = [
+`🧠 Think you know everything? Let's find out!
 
 Welcome to JaasX Brain Challenge — where we turn today's hottest trending topics into quiz challenges that test your real-world knowledge.
 
 Every day, a new challenge. Every answer, a chance to prove you're smarter than 99% of viewers.
 
 💡 Play the REAL interactive challenge, earn ONS tokens, and compete with players worldwide at jaasblog.online`,
+`🧠 Ready to put your brain to the test?
 
-  sports: `🏆 How deep is your sports knowledge?
+JaasX Brain Challenge turns everyday knowledge into fast, addictive puzzle videos — one fresh challenge at a time.
+
+Some are easy. Some will genuinely stump you. Either way, only one way to find out which one this is.
+
+💡 Play the full interactive version, earn ONS tokens, and see how you stack up at jaasblog.online`,
+`🧠 Most people get this wrong on the first try.
+
+JaasX Brain Challenge posts a brand-new puzzle every single day — built to look easy and play tricky.
+
+Think it through, lock in your answer, and see if you actually cracked it.
+
+💡 Play the real interactive challenge and earn ONS tokens at jaasblog.online`,
+`🧠 A new brain teaser, every single day.
+
+JaasX Brain Challenge is where quick thinkers come to test themselves — and get humbled more often than they'd like to admit.
+
+Ten seconds on the clock. Can you beat it?
+
+💡 Play the full challenge, earn ONS tokens, and compare your score at jaasblog.online`,
+`🧠 This one looks simple. It usually isn't.
+
+JaasX Brain Challenge takes everyday logic and turns it into a puzzle that's a lot harder than it looks at first glance.
+
+Give it a real shot before you scroll to the answer.
+
+💡 Play the interactive version and earn ONS tokens at jaasblog.online`,
+`🧠 Stop scrolling — this one's worth your ten seconds.
+
+JaasX Brain Challenge pulls a fresh puzzle from today's trends and puts it to the test. No prep, no prior knowledge needed — just think it through.
+
+💡 Play the full challenge and earn ONS tokens at jaasblog.online`,
+`🧠 Smart people get tripped up by this all the time.
+
+JaasX Brain Challenge is a daily puzzle series built to reward careful thinking over quick guessing.
+
+See if you can spot what everyone else misses.
+
+💡 Play the interactive version and earn ONS tokens at jaasblog.online`,
+`🧠 One puzzle. Ten seconds. No do-overs.
+
+JaasX Brain Challenge drops a brand-new brain teaser every day — some are quick wins, some are traps in disguise.
+
+💡 Play the full challenge, earn ONS tokens, and see how you rank at jaasblog.online`,
+`🧠 Here's today's challenge — think you can crack it?
+
+JaasX Brain Challenge turns quick logic and everyday knowledge into a puzzle worth pausing for.
+
+Lock in your answer before the clock runs out.
+
+💡 Play the real interactive version and earn ONS tokens at jaasblog.online`,
+`🧠 Slow down — this one rewards a second look.
+
+JaasX Brain Challenge posts a new puzzle daily, built to look obvious and play a little sneaky.
+
+Take your best shot before you check the answer.
+
+💡 Play the full challenge and earn ONS tokens at jaasblog.online`,
+];
+
+const NICHE_DESC = {
+
+  general: BRAIN_DESC_VARIANTS,
+
+  brain: BRAIN_DESC_VARIANTS,
+
+  sports: [
+`🏆 How deep is your sports knowledge?
 
 From World Cup drama to NBA finals, F1 pit stops to Wimbledon classics — JaasX Brain Challenge covers every sport trending right now in America and beyond.
 
 Answer today's challenge, drop your score in the comments, and challenge your friends!
 
 💡 Play the full interactive sports challenge and earn ONS tokens at jaasblog.online/quiz/brain`,
+  ],
 
-  finance: `💰 Your financial IQ is being tested — right now.
+  finance: [
+`💰 Your financial IQ is being tested — right now.
 
 Markets crash, crypto spikes, companies rise and fall — do you understand what's really happening with money?
 
 JaasX Brain Challenge makes finance fun, fast, and competitive. One question. Ten seconds. How smart is your money brain?
 
 💡 Play the full finance challenge and earn ONS tokens at jaasblog.online/quiz/brain`,
+  ],
 
-  tech: `💻 The tech world moves fast — can you keep up?
+  tech: [
+`💻 The tech world moves fast — can you keep up?
 
 AI breakthroughs, startup collapses, gadget launches, coding legends — if it's trending in tech, we're quizzing it.
 
 JaasX Brain Challenge keeps your tech knowledge razor-sharp with daily bite-sized challenges built from real headlines.
 
 💡 Play the full tech challenge and earn ONS tokens at jaasblog.online/quiz/brain`,
+  ],
 
-  entertainment: `🎬 Pop culture. Movies. Music. TV. All trending. All quizzed.
+  entertainment: [
+`🎬 Pop culture. Movies. Music. TV. All trending. All quizzed.
 
 Think you know your Oscars from your Grammys? Your Marvel from your DC? Your Billboard Hot 100 from your Spotify Wrapped?
 
 JaasX Brain Challenge puts your entertainment knowledge on trial — daily, fast, and totally addictive.
 
 💡 Play the full entertainment challenge and earn ONS tokens at jaasblog.online/quiz/brain`,
+  ],
 
-  news: `📰 The world is moving fast. Are you keeping up?
+  news: [
+`📰 The world is moving fast. Are you keeping up?
 
 From geopolitics to viral moments, election results to breaking headlines — JaasX Brain Challenge quizzes you on what's actually happening in the world today.
 
 Stay informed, stay sharp, and beat everyone else in the comments.
 
 💡 Play the full news challenge and earn ONS tokens at jaasblog.online/quiz/brain`,
+  ],
 
-  health: `🏥 How much do you really know about health and wellness?
+  health: [
+`🏥 How much do you really know about health and wellness?
 
 From medical breakthroughs to nutrition myths, mental health to fitness trends — JaasX Brain Challenge tests your health IQ with real questions from real headlines.
 
 One question. Ten seconds. Could save your life — or at least win an argument.
 
 💡 Play the full health challenge and earn ONS tokens at jaasblog.online/quiz/brain`,
+  ],
 
 };
 
@@ -237,7 +338,7 @@ function buildMetadata(quiz) {
   const nicheLabel = niche.charAt(0).toUpperCase() + niche.slice(1);
   const nicheNo    = quiz.niche_challenge_no || '';
   const quizNo     = quiz.quiz_no || '';
-  const nicheFixed = NICHE_DESC[niche] || NICHE_DESC.general;
+  const nicheFixed = pickVariant(NICHE_DESC[niche] || NICHE_DESC.general);
 
   // `explanation_1` is meant to be one short, satisfying sentence — but it's
   // LLM-generated per-puzzle content, so it isn't guaranteed to come back
@@ -337,11 +438,63 @@ function buildMetadata(quiz) {
   //    Full trending keywords line (context signal)
   //    Hashtags
   //
+  // ── Rotating boilerplate lines ──────────────────────────────────────────
+  // These were previously single static strings repeated verbatim on every
+  // video's description — now each picks from a handful of pre-written
+  // variants so the "above the fold" and CTA lines aren't byte-identical
+  // across the whole channel.
+  const openLine = pickVariant([
+    `🧠 Solve more puzzles: jaasblog.online/quiz/brain and earn real ONS tokens!`,
+    `🧠 Want more? Play the full puzzle at jaasblog.online/quiz/brain and earn real ONS tokens!`,
+    `🧠 New puzzle every day at jaasblog.online/quiz/brain — play free and earn ONS tokens!`,
+    `🧠 Play the interactive version at jaasblog.online/quiz/brain and start earning ONS tokens!`,
+    `🧠 There's a full playable version of this at jaasblog.online/quiz/brain — earn ONS tokens too!`,
+    `🧠 Prefer to play instead of watch? Head to jaasblog.online/quiz/brain and earn ONS tokens!`,
+    `🧠 Daily puzzles, real rewards — jaasblog.online/quiz/brain lets you earn ONS tokens too!`,
+    `🧠 Get the full challenge (and ONS tokens) at jaasblog.online/quiz/brain!`,
+  ]);
+  const usaLine = pickVariant([
+    `🇺🇸 Trending right now in the United States of America`,
+    `🇺🇸 One of today's top trending topics in the USA`,
+    `🇺🇸 Based on what's actually trending in America right now`,
+    `🇺🇸 Pulled from what's genuinely trending across the US today`,
+    `🇺🇸 A real topic making the rounds in America right now`,
+    `🇺🇸 Straight from today's US trending list`,
+    `🇺🇸 What people across America are talking about today`,
+  ]);
+  const answerCtaLine = pickVariant([
+    `⚡ Can YOU answer this? Drop your answer in the comments below!`,
+    `⚡ Think you've got it? Drop your answer in the comments!`,
+    `⚡ No skipping ahead — comment your answer before you scroll!`,
+    `⚡ Lock in your answer in the comments before you keep watching!`,
+    `⚡ Got it figured out? Say your answer in the comments!`,
+    `⚡ Comment your answer first — no cheating by scrolling down!`,
+    `⚡ Take your best guess and drop it in the comments below!`,
+    `⚡ Before you scroll: what's your answer? Comment it below!`,
+  ]);
+  const subscribeLine = pickVariant([
+    `📌 Like • Share • Subscribe → New challenge every day!`,
+    `📌 Enjoyed this? Like, share, and subscribe for a new challenge daily!`,
+    `📌 New brain teaser drops daily — subscribe so you don't miss one!`,
+    `📌 If this one got you, subscribe — a new one drops every day!`,
+    `📌 Subscribe for a fresh puzzle every single day!`,
+    `📌 Like this? There's a new one every day — subscribe to catch them all!`,
+    `📌 One puzzle a day, every day — subscribe so you never miss it!`,
+  ]);
+  const bellLine = pickVariant([
+    `🔔 Hit the bell so you never miss a challenge!`,
+    `🔔 Turn on notifications — today's challenge won't be the last!`,
+    `🔔 Bell icon = never missing a puzzle again.`,
+    `🔔 Notifications on = first to see tomorrow's puzzle!`,
+    `🔔 Tap the bell — a new challenge is always right around the corner!`,
+    `🔔 Don't miss tomorrow's puzzle — turn notifications on!`,
+  ]);
+
   const descriptionRaw = [
     // ── ABOVE THE FOLD ──
-    `🧠 Solve more puzzles: jaasblog.online/quiz/brain and earn real ONS tokens!`,
+    openLine,
     trendingSentence,                                          // ← top 3 keywords, line 2
-    `🇺🇸 Trending right now in the United States of America`,
+    usaLine,
     ``,
     // ── ABOVE SHOW MORE ──
     `Challenge ID: ${quizNo}`,
@@ -349,7 +502,7 @@ function buildMetadata(quiz) {
     ``,
     title,
     ``,
-    `⚡ Can YOU answer this? Drop your answer in the comments below!`,
+    answerCtaLine,
     ``,
     // ── BELOW SHOW MORE ──
     explanationSafe ? `📚 EXPLANATION:\n${explanationSafe}` : '',
@@ -358,8 +511,8 @@ function buildMetadata(quiz) {
     nicheFixed,
     `━━━━━━━━━━━━━━━━━━━━━━━━━`,
     ``,
-    `📌 Like • Share • Subscribe → New challenge every day!`,
-    `🔔 Hit the bell so you never miss a challenge!`,
+    subscribeLine,
+    bellLine,
     ``,
     rawTrendingLine,                                           // all keywords, below fold
     ``,

@@ -19,6 +19,10 @@ const cleanUrl = supabaseUrl ? supabaseUrl.replace(/\/$/, '') : null;
 if (!cleanUrl || !supabaseKey)     { console.error('[FATAL] Missing Supabase credentials'); process.exit(1); }
 if (!IG_ACCOUNT_ID || !IG_TOKEN)  { console.error('[FATAL] Missing Instagram credentials'); process.exit(1); }
 
+// Picks a random entry from an array of pre-written variants — see the same
+// helper in puzzle_publisher_youtube.js for the full rationale.
+function pickVariant(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
 // ─────────────────────────────────────────────
 // SUPABASE HELPERS  (same pattern as facebook publisher)
 // ─────────────────────────────────────────────
@@ -53,23 +57,53 @@ async function fetchSupabase(path_, opts = {}) {
 //  - Emojis increase engagement on mobile
 //  - Max caption: 2200 chars
 // ─────────────────────────────────────────────
+// Each niche now maps to an ARRAY of variants — buildCaption() picks one at
+// random via pickVariant() so IG captions aren't byte-identical across the
+// whole channel either (same fix as the YouTube/Facebook publishers).
+// niche is always 'brain' for this pipeline — IG_BRAIN_VARIANTS is the pool
+// actually used on every single Reel. Bumped to 10 variants.
+const IG_BRAIN_VARIANTS = [
+  `🧠 Think fast — can you crack this?\n\nOne brain-bending question. 10 seconds on the clock. Go!\n\n💡 Full challenge at jaasblog.online\n\n#BrainTeaser #QuizChallenge #MindGame #Trivia #BrainChallenge`,
+  `🧠 Most people get this wrong first try.\n\nJaasX drops a new puzzle daily — built to look easy, play tricky.\n\n💡 Full challenge → jaasblog.online\n\n#BrainTeaser #QuizChallenge #MindGame #Puzzle`,
+  `🧠 This looks simple. It usually isn't.\n\nOne quick puzzle, 10 seconds on the clock — give it a real shot.\n\n💡 Full version → jaasblog.online\n\n#BrainChallenge #QuizTime #MindGame #Trivia`,
+  `🧠 Can you answer this in 10 seconds?\n\nTest your brain on what's TRENDING right now — one question, one chance.\n\n💡 Play the full challenge → jaasblog.online\n\n#BrainChallenge #QuizTime #Trending #Trivia #Challenge`,
+  `🧠 New puzzle, every single day.\n\nSome are easy, some will genuinely stump you — only one way to find out which this is.\n\n💡 Play the full challenge → jaasblog.online\n\n#BrainTeaser #QuizChallenge #Puzzle #Trivia`,
+  `🧠 One question. Ten seconds. Go.\n\nQuick logic, everyday knowledge — lock in your answer before the clock runs out.\n\n💡 Full challenge → jaasblog.online\n\n#BrainChallenge #QuizTime #MindGame #DailyChallenge`,
+  `🧠 Smart people get tripped up by this one.\n\nA daily puzzle series built to reward careful thinking over quick guessing.\n\n💡 Full challenge → jaasblog.online\n\n#BrainTeaser #QuizChallenge #Trivia #Puzzle`,
+  `🧠 Slow down — this one rewards a second look.\n\nLooks obvious, plays a little sneaky. New one drops daily.\n\n💡 Full challenge → jaasblog.online\n\n#BrainChallenge #QuizTime #MindGame #Trending`,
+  `🧠 Here's today's challenge — think you can beat it?\n\nEveryday logic turned into a puzzle worth pausing for.\n\n💡 Full challenge → jaasblog.online\n\n#BrainTeaser #QuizChallenge #Puzzle #Trivia`,
+  `🧠 Stop scrolling — this one's worth 10 seconds.\n\nA fresh brain teaser daily, pulled from what's actually trending.\n\n💡 Full challenge → jaasblog.online\n\n#BrainChallenge #QuizTime #Trending #DailyChallenge`,
+];
+
 const NICHE_CAPTIONS = {
 
-  general: `🧠 Can you answer this in 10 seconds?\n\nTest your brain on what's TRENDING right now — one question, one chance.\n\n💡 Play the full challenge → jaasblog.online\n\n#BrainChallenge #QuizTime #Trending #Trivia #Challenge`,
+  general: IG_BRAIN_VARIANTS,
 
-  brain: `🧠 Think fast — can you crack this?\n\nOne brain-bending question. 10 seconds on the clock. Go!\n\n💡 Full challenge at jaasblog.online\n\n#BrainTeaser #QuizChallenge #MindGame #Trivia #BrainChallenge`,
+  brain: IG_BRAIN_VARIANTS,
 
-  sports: `🏆 Sports fans — how sharp is your game IQ?\n\nOne trending sports question. 10 seconds. Can you beat it?\n\n💡 Full sports challenge → jaasblog.online/quiz/sports\n\n#SportsQuiz #SportsTrivia #QuizChallenge #Trending #Sports`,
+  sports: [
+    `🏆 Sports fans — how sharp is your game IQ?\n\nOne trending sports question. 10 seconds. Can you beat it?\n\n💡 Full sports challenge → jaasblog.online/quiz/sports\n\n#SportsQuiz #SportsTrivia #QuizChallenge #Trending #Sports`,
+  ],
 
-  finance: `💰 How strong is your financial IQ?\n\nMarkets. Crypto. Stocks. One question from today's trends.\n\n💡 Full finance challenge → jaasblog.online/quiz/finance\n\n#FinanceQuiz #MoneyMindset #CryptoQuiz #StockMarket #Trending`,
+  finance: [
+    `💰 How strong is your financial IQ?\n\nMarkets. Crypto. Stocks. One question from today's trends.\n\n💡 Full finance challenge → jaasblog.online/quiz/finance\n\n#FinanceQuiz #MoneyMindset #CryptoQuiz #StockMarket #Trending`,
+  ],
 
-  tech: `💻 Can you keep up with today's tech world?\n\nOne trending tech question. 10 seconds to answer.\n\n💡 Full tech challenge → jaasblog.online/quiz/tech\n\n#TechQuiz #AIChallenge #TechTrending #Gadgets #Viral`,
+  tech: [
+    `💻 Can you keep up with today's tech world?\n\nOne trending tech question. 10 seconds to answer.\n\n💡 Full tech challenge → jaasblog.online/quiz/tech\n\n#TechQuiz #AIChallenge #TechTrending #Gadgets #Viral`,
+  ],
 
-  entertainment: `🎬 Pop culture. Movies. Music. TV. All trending.\n\nThink you know your entertainment? Prove it in 10 seconds.\n\n💡 Full challenge → jaasblog.online/quiz/entertainment\n\n#EntertainmentQuiz #PopCulture #MovieTrivia #MusicQuiz #TVQuiz`,
+  entertainment: [
+    `🎬 Pop culture. Movies. Music. TV. All trending.\n\nThink you know your entertainment? Prove it in 10 seconds.\n\n💡 Full challenge → jaasblog.online/quiz/entertainment\n\n#EntertainmentQuiz #PopCulture #MovieTrivia #MusicQuiz #TVQuiz`,
+  ],
 
-  news: `📰 The world is moving fast — are YOU keeping up?\n\nOne question from today's biggest headline.\n\n💡 Full news challenge → jaasblog.online/quiz/news\n\n#NewsQuiz #CurrentEvents #Trending #Viral #QuizChallenge`,
+  news: [
+    `📰 The world is moving fast — are YOU keeping up?\n\nOne question from today's biggest headline.\n\n💡 Full news challenge → jaasblog.online/quiz/news\n\n#NewsQuiz #CurrentEvents #Trending #Viral #QuizChallenge`,
+  ],
 
-  health: `🏥 How much do you REALLY know about health?\n\nOne trending health question. 10 seconds on the clock.\n\n💡 Full health challenge → jaasblog.online/quiz/health\n\n#HealthQuiz #WellnessChallenge #MedicalTrivia #HealthTips #Trending`,
+  health: [
+    `🏥 How much do you REALLY know about health?\n\nOne trending health question. 10 seconds on the clock.\n\n💡 Full health challenge → jaasblog.online/quiz/health\n\n#HealthQuiz #WellnessChallenge #MedicalTrivia #HealthTips #Trending`,
+  ],
 };
 
 // ─────────────────────────────────────────────
@@ -77,7 +111,7 @@ const NICHE_CAPTIONS = {
 // ─────────────────────────────────────────────
 function buildCaption(quiz) {
   const niche      = (quiz.niche || 'general').toLowerCase();
-  const nicheBlock = NICHE_CAPTIONS[niche] || NICHE_CAPTIONS.general;
+  const nicheBlock = pickVariant(NICHE_CAPTIONS[niche] || NICHE_CAPTIONS.general);
   const title      = (quiz.youtube_title || quiz.topic || '').trim();
   const quizNo     = quiz.quiz_no || '';
   const kwRaw      = (quiz.trend_keywords || '').split(',').map(t => t.trim()).filter(Boolean);
@@ -89,8 +123,11 @@ function buildCaption(quiz) {
     .filter(h => h.length > 2)
     .join(' ');
 
+  // Rotating hook emoji — previously a static "❓" on every single caption
+  const hookEmoji = pickVariant(['❓', '🤔', '👀', '🧠', '⚡', '💭', '🔥', '🎯']);
+
   const lines = [
-    title ? `❓ ${title}` : '',
+    title ? `${hookEmoji} ${title}` : '',
     ``,
     nicheBlock,
     ``,

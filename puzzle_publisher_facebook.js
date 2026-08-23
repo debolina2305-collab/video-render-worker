@@ -19,6 +19,11 @@ const cleanUrl = supabaseUrl ? supabaseUrl.replace(/\/$/, '') : null;
 if (!cleanUrl || !supabaseKey)   { console.error('[FATAL] Missing Supabase credentials'); process.exit(1); }
 if (!FB_PAGE_ID || !FB_PAGE_TOKEN) { console.error('[FATAL] Missing Facebook credentials'); process.exit(1); }
 
+// Picks a random entry from an array of pre-written variants — see the same
+// helper in puzzle_publisher_youtube.js for the full rationale (avoiding
+// byte-identical boilerplate across every post on the channel).
+function pickVariant(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
 // ─────────────────────────────────────────────
 // SUPABASE HELPERS  (identical pattern to worker11)
 // ─────────────────────────────────────────────
@@ -67,63 +72,150 @@ async function downloadVideo(videoUrl, destPath) {
 //  - clear CTA with link
 //  - hashtags at bottom (FB algorithm uses them)
 // ─────────────────────────────────────────────
-const NICHE_DESC = {
-
-  general: `🧠 Can you answer this in 10 seconds?
+// NOTE: same issue as puzzle_publisher_youtube.js — niche is always 'brain'
+// for this pipeline and there was no 'brain' key, so every FB Reel got the
+// exact same 'general' paragraph. Now an array; buildDescription() picks
+// one at random via pickVariant().
+// NOTE: niche is always 'brain' for this pipeline — FB_BRAIN_VARIANTS is
+// the pool actually used on every single post. Bumped to 10 variants.
+const FB_BRAIN_VARIANTS = [
+`🧠 Can you answer this in 10 seconds?
 
 Test your knowledge on what's TRENDING in America right now — one question, one chance, one winner.
 
 💡 Play the FULL challenge & earn ONS tokens → jaasblog.online
 
 #Quiz #Trivia #USAChallenge #Trending #TrendingNow #QuizTime #Challenge #Viral`,
+`🧠 Think you can beat this one?
 
-  sports: `🏆 Sports fans — how sharp is your game knowledge?
+A new brain challenge every day — built from what's actually trending, right now.
+
+💡 Play the full version & earn ONS tokens → jaasblog.online
+
+#Quiz #Trivia #BrainChallenge #Trending #QuizTime #Challenge #Viral`,
+`🧠 10 seconds. One question. Are you in?
+
+JaasX drops a fresh puzzle daily — some easy, some sneaky. This one's for you to find out.
+
+💡 Play the full challenge & earn ONS tokens → jaasblog.online
+
+#Quiz #Trivia #Puzzle #Trending #QuizTime #Challenge #Viral`,
+`🧠 Most people get this wrong the first time.
+
+Every day, a new puzzle built from real trending topics — think it through before you answer.
+
+💡 Play the full challenge & earn ONS tokens → jaasblog.online
+
+#Quiz #Trivia #BrainTeaser #Trending #QuizTime #Challenge #Viral`,
+`🧠 This one looks easy. It usually isn't.
+
+JaasX posts a brand-new brain challenge every single day — take your best shot.
+
+💡 Play the full challenge & earn ONS tokens → jaasblog.online
+
+#Quiz #Trivia #MindGame #Trending #QuizTime #Challenge #Viral`,
+`🧠 Stop scrolling — 10 seconds, one question.
+
+A fresh puzzle every day, pulled straight from what's trending right now.
+
+💡 Play the full challenge & earn ONS tokens → jaasblog.online
+
+#Quiz #Trivia #DailyChallenge #Trending #QuizTime #Viral`,
+`🧠 Smart people get tripped up by this one.
+
+JaasX Brain Challenge tests real-world knowledge, one quick question at a time.
+
+💡 Play the full challenge & earn ONS tokens → jaasblog.online
+
+#Quiz #Trivia #BrainChallenge #Trending #QuizTime #Viral`,
+`🧠 One puzzle. Ten seconds. No do-overs.
+
+A new brain teaser every day — some are quick wins, some are traps.
+
+💡 Play the full challenge & earn ONS tokens → jaasblog.online
+
+#Quiz #Trivia #Puzzle #Trending #QuizTime #Challenge`,
+`🧠 Here's today's challenge — can you crack it?
+
+Quick logic, everyday knowledge, one solid puzzle. Lock in your answer.
+
+💡 Play the full challenge & earn ONS tokens → jaasblog.online
+
+#Quiz #Trivia #BrainTeaser #Trending #QuizChallenge #Viral`,
+`🧠 Slow down — this one rewards a second look.
+
+Looks obvious, plays a little sneaky. New puzzle daily.
+
+💡 Play the full challenge & earn ONS tokens → jaasblog.online
+
+#Quiz #Trivia #MindGame #Trending #QuizTime #Challenge`,
+];
+
+const NICHE_DESC = {
+
+  general: FB_BRAIN_VARIANTS,
+
+  brain: FB_BRAIN_VARIANTS,
+
+  sports: [
+`🏆 Sports fans — how sharp is your game knowledge?
 
 One trending sports question. 10 seconds. Can you beat it?
 
 💡 Play the full sports challenge → jaasblog.online/quiz/sports
 
 #SportsQuiz #SportsTrivia #USASports #QuizChallenge #Trending #Sports #NFL #NBA #Soccer #Viral`,
+  ],
 
-  finance: `💰 Your financial IQ is being tested — RIGHT NOW.
+  finance: [
+`💰 Your financial IQ is being tested — RIGHT NOW.
 
 Markets. Crypto. Stocks. One question from today's trending headlines.
 
 💡 Play the full finance challenge → jaasblog.online/quiz/finance
 
 #FinanceQuiz #MoneyTrivia #CryptoQuiz #StockMarket #USAFinance #Trending #Viral #QuizChallenge`,
+  ],
 
-  tech: `💻 Can you keep up with today's tech world?
+  tech: [
+`💻 Can you keep up with today's tech world?
 
 One question. Trending right now in American tech. 10 seconds to answer.
 
 💡 Play the full tech challenge → jaasblog.online/quiz/tech
 
 #TechQuiz #AIChallenge #TechTrending #USATech #Gadgets #Viral #QuizTime #Trending`,
+  ],
 
-  entertainment: `🎬 Pop culture. Movies. Music. TV. All trending.
+  entertainment: [
+`🎬 Pop culture. Movies. Music. TV. All trending.
 
 Think you know your entertainment? Prove it in 10 seconds.
 
 💡 Play the full entertainment challenge → jaasblog.online/quiz/entertainment
 
 #EntertainmentQuiz #PopCulture #MovieTrivia #MusicQuiz #TVQuiz #Trending #Viral #USAEntertainment`,
+  ],
 
-  news: `📰 The world is moving fast — are YOU keeping up?
+  news: [
+`📰 The world is moving fast — are YOU keeping up?
 
 One question from today's biggest US news story.
 
 💡 Play the full news challenge → jaasblog.online/quiz/news
 
 #NewsQuiz #BreakingNews #USANews #CurrentEvents #Trending #Viral #QuizChallenge #TrendingNow`,
+  ],
 
-  health: `🏥 How much do you REALLY know about health?
+  health: [
+`🏥 How much do you REALLY know about health?
 
 One question from today's trending health headline. 10 seconds.
 
 💡 Play the full health challenge → jaasblog.online/quiz/health
 
 #HealthQuiz #WellnessChallenge #MedicalTrivia #USAHealth #Trending #Viral #QuizTime #HealthTips`,
+  ],
 
 };
 
@@ -145,7 +237,7 @@ One question from today's trending health headline. 10 seconds.
 // ─────────────────────────────────────────────
 function buildDescription(quiz) {
   const niche      = (quiz.niche || 'general').toLowerCase();
-  const nicheFixed = NICHE_DESC[niche] || NICHE_DESC.general;
+  const nicheFixed = pickVariant(NICHE_DESC[niche] || NICHE_DESC.general);
   const title      = (quiz.youtube_title || quiz.topic || '').trim();
   const quizNo     = quiz.quiz_no     || '';
   const nicheNo    = quiz.niche_challenge_no || '';
@@ -163,15 +255,28 @@ function buildDescription(quiz) {
     .filter(h => h.length > 2)
     .join(' ');
 
+  // Rotating hook prefix + CTA line — previously static strings repeated on
+  // every single post.
+  const hookEmoji = pickVariant(['❓', '🤔', '👀', '🧠', '⚡', '💭', '🔥', '🎯']);
+  const ctaLine = pickVariant([
+    `💡 Play the full challenge → jaasblog.online/quiz/${niche}`,
+    `💡 Want the interactive version? → jaasblog.online/quiz/${niche}`,
+    `💡 Full challenge + ONS tokens → jaasblog.online/quiz/${niche}`,
+    `💡 Play it for real (and earn ONS tokens) → jaasblog.online/quiz/${niche}`,
+    `💡 There's a playable version → jaasblog.online/quiz/${niche}`,
+    `💡 Prefer to play than watch? → jaasblog.online/quiz/${niche}`,
+    `💡 Get the full experience → jaasblog.online/quiz/${niche}`,
+  ]);
+
   const lines = [
     // ── Line 1: Hook (scroll-stopper) ──
-    title ? `❓ ${title}` : '',
+    title ? `${hookEmoji} ${title}` : '',
     ``,
     // ── Line 2: ALL trending keywords (FB algorithm reads this first) ──
     trendingSentence,
     ``,
     // ── Line 3: CTA with link ──
-    `💡 Play the full challenge → jaasblog.online/quiz/${niche}`,
+    ctaLine,
     ``,
     // ── Niche block ──
     nicheFixed,
