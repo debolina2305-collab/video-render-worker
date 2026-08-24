@@ -350,11 +350,18 @@ function buildHtml(quiz, svgHtml, ctaText = null, bgImageLocalPath = null) {
   // Background image overlay at 30% opacity — same curated R2 pool + visual
   // treatment as the template-based renderers' .topic-photo-overlay, just
   // inlined here since micro builds its own standalone HTML rather than
-  // using puzzle_template.html. z-index:-1 (not 0) is deliberate: micro's
-  // body has no separate .bg-anim wrapper div like the other renderers —
-  // content here is plain in-flow (non-positioned) elements, which paint
-  // ABOVE a positioned z-index:0 layer per normal CSS stacking order, so a
-  // negative z-index is what actually puts this behind the text/puzzle.
+  // using puzzle_template.html.
+  //
+  // IMPORTANT — z-index:0, NOT a negative value: body below has its own
+  // explicit `background` (two opaque gradients) AND `position:relative`.
+  // Giving a child z-index:-1 in that exact combination is a well-known CSS
+  // stacking gotcha: once a parent is positioned, its OWN background paints
+  // above any negative-z-index descendant, not below it — so a -1 overlay
+  // here would render completely hidden behind body's own gradient, not
+  // just faint. z-index:0 (or auto) keeps the overlay correctly BEHIND the
+  // real content below (.question-line, .puzzle-visual-wrap, etc. — DOM
+  // order breaks the tie since they all share the same effective stacking
+  // tier) while finally painting ABOVE body's own background as intended.
   const photoOverlayHtml = bgImageLocalPath
     ? `<div class="photo-overlay" style="background-image:url('file://${bgImageLocalPath}')"></div>`
     : '';
@@ -374,7 +381,7 @@ function buildHtml(quiz, svgHtml, ctaText = null, bgImageLocalPath = null) {
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body { width:${VIDEO_W}px; height:${VIDEO_H}px; overflow:hidden; background:#05070d; }
   .photo-overlay {
-    position:absolute; inset:0; z-index:-1;
+    position:absolute; inset:0; z-index:0;
     background-size:cover; background-position:center center; background-repeat:no-repeat;
     opacity:0.30; pointer-events:none; filter:blur(2px) saturate(0.8);
   }

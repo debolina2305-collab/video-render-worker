@@ -1230,6 +1230,9 @@ async function buildShortVideo(quiz, workDir) {
   border: 2.5px solid color-mix(in srgb, var(--accent-1) 45%, rgba(255,255,255,0.1)) !important;
   box-shadow: 0 8px 40px rgba(0,0,0,0.5),
               0 0 50px color-mix(in srgb, var(--accent-1) 30%, transparent) !important;
+  /* Reduced from the base template's 0.72 — see puzzle_render_medium.js for
+     the full rationale. */
+  background: rgba(10, 18, 36, 0.5) !important;
 }
 
 /* ── NO-INTRO VARIANT: remove the generic "{{question}}" text card from the

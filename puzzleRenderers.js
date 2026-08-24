@@ -214,22 +214,27 @@ function matchDigit(ox, oy, ch, o) {
   return { svg: parts.join(''), w: DW };
 }
 // Operators rendered in matchsticks.
+// Stick lengths here MUST match matchDigit's segment lengths exactly (same
+// hLen/vLen formula, same DW/p inputs) — previously these used a fixed 84px
+// regardless of mode, which was visibly shorter than the ~105-108px (standard)
+// or ~142-144px (thick) digit segments in the same equation, making operator
+// sticks look like a different, smaller size next to the digits.
 function matchOp(ox, oy, ch, o) {
-  const DH = o.thick ? 310 : 230, T = o.thick ? 38 : 24;
+  const DW = o.thick ? 160 : 120, DH = o.thick ? 310 : 230, T = o.thick ? 38 : 24, p = o.thick ? 8 : 6;
+  const hLen = DW - 2 * p;              // same formula as matchDigit's horizontal segments
+  const vLen = (DH / 2) - 1.6 * p;      // same formula as matchDigit's vertical segments
+  const W = DW;                          // operator's own layout box now matches a digit cell's width
   const midY = oy + DH/2 - T/2;
   if (ch === '+') {
-    const W = 100, hLen = 84;
     const h = matchstick(ox + (W - hLen)/2, midY, hLen, true, o);
-    const vLen = 84;
     const v = matchstick(ox + W/2 - T/2, oy + DH/2 - vLen/2, vLen, false, o);
     return { svg: h + v, w: W };
   }
   if (ch === '-') {
-    const W = 100, hLen = 84;
     return { svg: matchstick(ox + (W - hLen)/2, midY, hLen, true, o), w: W };
   }
   if (ch === '=') {
-    const W = 100, hLen = 84, gap = 34;
+    const gap = 34;
     const top = matchstick(ox + (W - hLen)/2, midY - gap/2 - T, hLen, true, o);
     const bot = matchstick(ox + (W - hLen)/2, midY + gap/2, hLen, true, o);
     return { svg: top + bot, w: W };
@@ -248,7 +253,7 @@ function renderMatchstick(spec, o) {
   const rowY   = o.thick ? 350  : 250;
   const GAP    = o.thick ? 36   : 26;
   const DW_dig = o.thick ? 160  : 120;
-  const DW_op  = o.thick ? 120  : 100;
+  const DW_op  = DW_dig; // operator sticks now match digit stick length (see matchOp) — same cell width
   const instrY = o.thick ? 196  : 170;
   const instrFS= o.thick ? 52   : 42;
   const cells  = eq.split('');

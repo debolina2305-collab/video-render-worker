@@ -1171,6 +1171,10 @@ async function buildShortVideo(quiz, workDir) {
   overflow:   visible !important;
   margin:     6px auto 4px !important;
   transform:  none !important;
+  /* Reduced from the base template's 0.72 — see puzzle_render_medium.js for
+     the full rationale (near-full-width card + compact layout meant the
+     background photo essentially never showed through at 0.72). */
+  background: rgba(10, 18, 36, 0.5) !important;
 }
 
 /* ── QUESTION TEXT: 60px on ALL screens ─────────────────────────────────

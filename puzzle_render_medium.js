@@ -1257,6 +1257,13 @@ async function buildMediumVideo(quiz, workDir) {
   border: 2.5px solid color-mix(in srgb, var(--accent-1) 45%, rgba(255,255,255,0.1)) !important;
   box-shadow: 0 8px 40px rgba(0,0,0,0.5),
               0 0 50px color-mix(in srgb, var(--accent-1) 30%, transparent) !important;
+  /* Reduced from the base template's 0.72 — at 94vw this card covers nearly
+     the whole screen in the compact short formats (unlike long, where it
+     tops out at 800px with visible margin around it), so at 0.72 opacity
+     the background photo essentially never showed through at all. 0.5
+     still gives the SVG diagram enough of a dark backing to read clearly
+     on any theme, while letting the photo actually be visible. */
+  background: rgba(10, 18, 36, 0.5) !important;
 }
 
 /* ── NO-INTRO VARIANT: remove the generic "{{question}}" text card from the
