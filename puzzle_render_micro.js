@@ -380,18 +380,32 @@ function buildHtml(quiz, svgHtml, ctaText = null, bgImageLocalPath = null) {
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body { width:${VIDEO_W}px; height:${VIDEO_H}px; overflow:hidden; background:#05070d; }
-  .photo-overlay {
-    position:absolute; inset:0; z-index:0;
-    background-size:cover; background-position:center center; background-repeat:no-repeat;
-    opacity:0.30; pointer-events:none; filter:blur(2px) saturate(0.8);
-  }
   body {
     font-family: 'Arial Black', Arial, Helvetica, sans-serif;
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    height:100%; width:100%; position:relative;
+  }
+  /* Explicit, non-negative, sibling-level z-index layers — no competing
+     "parent's own CSS background" anywhere, unlike the previous structure
+     where body itself carried both position:relative AND a background,
+     which put .photo-overlay's paint order at the mercy of a genuinely
+     ambiguous stacking-context edge case. This mirrors the proven-working
+     layering already used by puzzle_template.html (bg-anim=1, photo=3,
+     content=5) — just with different numbers. */
+  .bg-gradient {
+    position:absolute; inset:0; z-index:0;
     background:
       radial-gradient(circle at 50% 12%, color-mix(in srgb, ${accent} 22%, transparent), transparent 55%),
       linear-gradient(180deg, #0a0d16 0%, #05070d 60%, #050608 100%);
-    height:100%; width:100%; position:relative;
+  }
+  .photo-overlay {
+    position:absolute; inset:0; z-index:1;
+    background-size:cover; background-position:center center; background-repeat:no-repeat;
+    opacity:0.30; pointer-events:none; filter:blur(2px) saturate(0.8);
+  }
+  .content-wrap {
+    position:relative; z-index:2;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    width:100%; height:100%;
   }
 
   /* ── Question line — compact, above the puzzle ── */
@@ -588,11 +602,14 @@ function buildHtml(quiz, svgHtml, ctaText = null, bgImageLocalPath = null) {
 </style>
 </head>
 <body>
+  <div class="bg-gradient"></div>
   ${photoOverlayHtml}
-  <div class="question-line">${esc(question)}</div>
-  ${hint ? `<div class="hint-line">💡 HINT: ${esc(hint)}</div>` : ''}
-  <div class="puzzle-visual-wrap">${svgHtml}</div>
-  <div class="options-grid">${optionsHtml}</div>
+  <div class="content-wrap">
+    <div class="question-line">${esc(question)}</div>
+    ${hint ? `<div class="hint-line">💡 HINT: ${esc(hint)}</div>` : ''}
+    <div class="puzzle-visual-wrap">${svgHtml}</div>
+    <div class="options-grid">${optionsHtml}</div>
+  </div>
 
   <div class="countdown-badge" id="cdBadge">
     <div class="countdown-ring" id="cdRing"></div>
