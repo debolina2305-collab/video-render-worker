@@ -47,6 +47,7 @@ const execPromise = util.promisify(exec);
 const fs          = require('fs').promises;
 const path        = require('path');
 const puppeteer   = require('puppeteer');
+const { ctaVariantVars } = require('./cta_variants');
 const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
 const { v4: uuidv4 } = require('uuid');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
@@ -94,8 +95,14 @@ const VIDEO_H           = 1920;
 const AVATAR_SIZE       = Math.round(VIDEO_W * 0.20);   // 216px — top-strip circles
 const AVATAR_PAD_X      = 28;   // px from left/right frame edge to circle edge
 const AVATAR_PAD_Y      = 28;   // px from TOP frame edge to circle centre (top-strip layout)
-// TOP STRIP height = circle diameter + top pad + bottom pad
-const TOP_STRIP_H       = AVATAR_SIZE + AVATAR_PAD_Y * 2 + 20;  // ~320px
+// SHOW_AVATAR_STRIP: turns the whole top bar (human host circle | logo +
+// channel identity | dog mascot circle) off. When false, no host/dog media
+// is downloaded or composited, no strip HTML/CSS is injected, and every
+// screen just uses a small top safe-margin instead of reserving room for it.
+const SHOW_AVATAR_STRIP = false;
+// TOP STRIP height = circle diameter + top pad + bottom pad (only relevant
+// when the strip is actually shown — otherwise a small safe-area margin).
+const TOP_STRIP_H       = SHOW_AVATAR_STRIP ? (AVATAR_SIZE + AVATAR_PAD_Y * 2 + 20) : 40;
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────
 async function fetchSupabase(pathStr, opts = {}) {
@@ -1030,7 +1037,9 @@ async function buildMediumVideo(quiz, workDir) {
   // ── Dog MP4 clips (4 sections, all downloaded in parallel) ──────────
   // No GIFs needed — all dog animation is now driven by real MP4 clips
   // composited by FFmpeg into the dog circle slot, just like the host clips.
-  const [dogImgFile, dogIdleFile, dogSpeakingFile, dogCdFile, dogCta4File_d] = await Promise.all([
+  const [dogImgFile, dogIdleFile, dogSpeakingFile, dogCdFile, dogCta4File_d] = !SHOW_AVATAR_STRIP
+    ? [null, null, null, null, null]
+    : await Promise.all([
     avatarSet.dogImage    ? download(avatarSet.dogImage,    'av_dog_img')  : Promise.resolve(null),
     avatarSet.dogIdle     ? download(avatarSet.dogIdle,     'av_dog_idle') : Promise.resolve(null),
     avatarSet.dogSpeaking ? download(avatarSet.dogSpeaking, 'av_dog_spk')  : Promise.resolve(null),
@@ -1052,7 +1061,9 @@ async function buildMediumVideo(quiz, workDir) {
   // ── Host clip downloads (all share one dress_code) ────────────────
   console.log('[SHORT] Downloading host clips...');
   const dc = avatarSet.dressCode ?? 'na';
-  const [hostHookFile, hostSilentFile, hostCta4File] = await Promise.all([
+  const [hostHookFile, hostSilentFile, hostCta4File] = !SHOW_AVATAR_STRIP
+    ? [null, null, null]
+    : await Promise.all([
     download(avatarSet.hook,   `av_hook_d${dc}`),
     download(avatarSet.silent, `av_silent_d${dc}`),
     download(avatarSet.cta4,   `av_cta4_d${dc}`),
@@ -1127,6 +1138,7 @@ async function buildMediumVideo(quiz, workDir) {
     '{{cta2_text}}':       quiz.cta2_text || 'Play the full challenge!',
     '{{cta3_text}}':       quiz.cta3_text || 'Like, Share and Subscribe!',
     '{{cta4_text}}':       quiz.cta4_text || 'Write your answer in the comments!',
+    ...ctaVariantVars(quiz.id),
     '{{niche}}':           niche,
     '{{thumb_icon}}':      '❓',
     '{{thumb_badge_text}}':        '#Challenge',
@@ -1196,11 +1208,6 @@ async function buildMediumVideo(quiz, workDir) {
   // Inject logo and challenge ID into the top-strip identity column
   // done via page.evaluate() after page load (see below)
   for (const [k, v] of Object.entries(R)) html = html.split(k).join(String(v ?? ''));
-
-  // ── NO-INTRO VARIANT: last-slide subscribe pill reads "Follow and
-  // Subscribe" instead of just "Subscribe" (only affects this template
-  // copy in memory — puzzle_template.html on disk is untouched). ──
-  html = html.split('🔔 SUBSCRIBE').join('🔔 FOLLOW AND SUBSCRIBE');
 
   // ── Short-format CSS overrides ─────────────────────────────────────
   // IMPORTANT: The human circle is a PLACEHOLDER div that shows the slot.
@@ -1575,7 +1582,7 @@ async function buildMediumVideo(quiz, workDir) {
   margin-top: 4px !important;
 }
 </style>
-${AVATAR_CSS}`;
+${SHOW_AVATAR_STRIP ? AVATAR_CSS : ''}`;
 
   html = html.replace('</head>', `${shortCss}\n</head>`);
 
@@ -1598,7 +1605,13 @@ ${AVATAR_CSS}`;
   if (hasDogMp4) console.log('[SHORT] Dog: MP4 clip mode (CSS rig hidden)');
   else           console.log('[SHORT] Dog: CSS rig fallback mode (no dog MP4 clips in DB)');
 
-  html = html.replace('</body>', `${dogImgCssOverride}${AVATAR_STRIP_HTML}\n</body>`);
+  // Avatar strip (host circle | logo/identity | dog circle) is fully
+  // removed when SHOW_AVATAR_STRIP is false — no HTML injected, no CSS
+  // injected, and TOP_STRIP_H (above) already collapses to a small safe
+  // margin so every screen's padding-top shrinks accordingly.
+  if (SHOW_AVATAR_STRIP) {
+    html = html.replace('</body>', `${dogImgCssOverride}${AVATAR_STRIP_HTML}\n</body>`);
+  }
 
   const htmlPath = path.join(workDir, 'short_index.html');
   await fs.writeFile(htmlPath, html);

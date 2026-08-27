@@ -11,6 +11,9 @@
    Bumped up ~35% and given a solid dark backing + strong dual-tone glow so it
    reads clearly against any theme background instead of blending in. ===== */
 .persistent-logo {
+  /* Platform logo removed from every screen per feedback — kept in markup
+     (many {{LOGO_DATA_URI}} instances reference it) but never displayed. */
+  display:none !important;
   position:absolute; top:30px; left:50%;
   width:135px; height:135px; border-radius:50%; z-index:50;
   background:radial-gradient(circle, #ffffff 0%, #eceae4 60%, #dcd8cd 100%);
@@ -77,6 +80,9 @@
 
 /* ===== LOGO ===== */
 .logo-wrap {
+  /* Platform logo removed from the hook screen too — see .persistent-logo
+     note above. */
+  display:none !important;
   width:200px; height:200px; border-radius:50%;
   background:#05030f;
   border:4px solid color-mix(in srgb, var(--accent-1) 70%, transparent);
@@ -1095,9 +1101,9 @@
       <!-- CTA3: animated like/share/subscribe only. "Click link" is on the next dedicated CTA3 screen -->
       <div class="cta3-text" id="mi-cta3">
         <div class="cta3-actions">
-          <span class="cta3-action cta3-like">👍 LIKE</span>
-          <span class="cta3-action cta3-share">🔁 SHARE</span>
-          <span class="cta3-action cta3-sub">🔔 SUBSCRIBE</span>
+          <span class="cta3-action cta3-like">{{CTA_LIKE_ICON}} {{CTA_LIKE_TEXT}}</span>
+          <span class="cta3-action cta3-share">{{CTA_SHARE_ICON}} {{CTA_SHARE_TEXT}}</span>
+          <span class="cta3-action cta3-sub">{{CTA_SUB_ICON}} {{CTA_SUB_TEXT}}</span>
         </div>
       </div>
     </div>
@@ -1120,20 +1126,20 @@
     <div class="content" style="justify-content:center;gap:36px;">
 
       <!-- Like — appears first -->
-      <div class="cta-pill cta-pill-like" style="animation-delay:0.1s;">👍 LIKE</div>
+      <div class="cta-pill cta-pill-like" style="animation-delay:0.1s;">{{CTA_LIKE_ICON}} {{CTA_LIKE_TEXT}}</div>
 
       <!-- Share — appears second -->
-      <div class="cta-pill cta-pill-share" style="animation-delay:0.8s;">🔁 SHARE</div>
+      <div class="cta-pill cta-pill-share" style="animation-delay:0.8s;">{{CTA_SHARE_ICON}} {{CTA_SHARE_TEXT}}</div>
 
       <!-- Subscribe — appears third -->
-      <div class="cta-pill cta-pill-sub" style="animation-delay:1.5s;">🔔 SUBSCRIBE</div>
+      <div class="cta-pill cta-pill-sub" style="animation-delay:1.5s;">{{CTA_SUB_ICON}} {{CTA_SUB_TEXT}}</div>
 
       <!-- Divider line -->
       <div class="cta-divider" style="animation-delay:2.1s;"></div>
 
       <!-- CTA4 — appears last, gold accent, most prominent -->
       <div class="cta-combined-card cta-card-bottom" style="animation-delay:2.3s;">
-        <div class="cta-combined-icon cta4-accent">✍️</div>
+        <div class="cta-combined-icon cta4-accent">{{CTA4_ICON}}</div>
         <div class="cta-combined-text cta4-accent">{{cta4_text}}</div>
       </div>
 

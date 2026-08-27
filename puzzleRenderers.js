@@ -179,15 +179,26 @@ function fadeIn(innerSvg, delaySec, mode = 'rise', cx, cy) {
 // MATCHSTICK ENGINE (seven-segment sticks + operators)
 // ────────────────────────────────────────────────────────────────────────────
 // A "matchstick" = a wood body (rounded rect) + a red head at one end.
+// NOTE: fill is a SOLID color (C.wood), not a gradient url() reference.
+// Multiple puzzle screens can be present in the same rendered page at once
+// (short/medium/long workers keep several .screen elements in the DOM for
+// screen-recording), and each renderMatchstick() call emits its own <defs>
+// with the SAME id ("pzWood") via openSvg(). Duplicate ids across a single
+// document are invalid, and if the browser ever resolves url(#pzWood) against
+// a <defs> block that isn't the one physically nearest this element (or one
+// that's been unmounted between scene swaps), the fill silently falls back to
+// "none" — leaving only the thin 1.5px stroke visible, which is exactly the
+// "hollow outline" look reported on-device. A flat, solid fill has no such
+// dependency and always renders.
 function matchstick(x, y, len, horizontal, o) {
-  const T = o.thick ? 38 : 24;        // stick thickness (thick mode = more visible)
+  const T = o.thick ? 28 : 20;        // stick thickness — slimmer than before for a cleaner look
   const headR = T * 0.62;
   if (horizontal) {
-    const body = `<rect x="${x}" y="${y}" width="${len}" height="${T}" rx="${T/2}" fill="url(#pzWood)" stroke="${C.wood2}" stroke-width="1.5"/>`;
+    const body = `<rect x="${x}" y="${y}" width="${len}" height="${T}" rx="${T/2}" fill="${C.wood}" stroke="${C.wood2}" stroke-width="2"/>`;
     const head = `<circle cx="${x + len - headR*0.2}" cy="${y + T/2}" r="${headR}" fill="${C.flame}"/>`;
     return body + head;
   } else {
-    const body = `<rect x="${x}" y="${y}" width="${T}" height="${len}" rx="${T/2}" fill="url(#pzWood)" stroke="${C.wood2}" stroke-width="1.5"/>`;
+    const body = `<rect x="${x}" y="${y}" width="${T}" height="${len}" rx="${T/2}" fill="${C.wood}" stroke="${C.wood2}" stroke-width="2"/>`;
     const head = `<circle cx="${x + T/2}" cy="${y + headR*0.2}" r="${headR}" fill="${C.flame}"/>`;
     return body + head;
   }
@@ -198,7 +209,7 @@ const SEG = {
 };
 // Draw one seven-segment digit at cell origin (ox,oy). Cell = DW x DH.
 function matchDigit(ox, oy, ch, o) {
-  const DW = o.thick ? 160 : 120, DH = o.thick ? 310 : 230, T = o.thick ? 38 : 24, p = o.thick ? 8 : 6;
+  const DW = o.thick ? 160 : 120, DH = o.thick ? 310 : 230, T = o.thick ? 28 : 20, p = o.thick ? 8 : 6;
   const segs = SEG[ch] || '';
   const vLen = (DH / 2) - 1.6 * p;
   const hLen = DW - 2 * p;
@@ -220,7 +231,7 @@ function matchDigit(ox, oy, ch, o) {
 // or ~142-144px (thick) digit segments in the same equation, making operator
 // sticks look like a different, smaller size next to the digits.
 function matchOp(ox, oy, ch, o) {
-  const DW = o.thick ? 160 : 120, DH = o.thick ? 310 : 230, T = o.thick ? 38 : 24, p = o.thick ? 8 : 6;
+  const DW = o.thick ? 160 : 120, DH = o.thick ? 310 : 230, T = o.thick ? 28 : 20, p = o.thick ? 8 : 6;
   const hLen = DW - 2 * p;              // same formula as matchDigit's horizontal segments
   const vLen = (DH / 2) - 1.6 * p;      // same formula as matchDigit's vertical segments
   const W = DW;                          // operator's own layout box now matches a digit cell's width
@@ -248,7 +259,6 @@ function renderMatchstick(spec, o) {
   const eq = String(spec.equation || spec.display || '6+4=4').replace(/\s+/g, '');
   const instruction = spec.instruction || 'Move 1 matchstick to make it correct';
   // thick mode: bigger sticks, wider canvas, taller layout
-  const W      = o.thick ? 1080 : 960;
   const H      = o.thick ? 820  : 600;
   const rowY   = o.thick ? 350  : 250;
   const GAP    = o.thick ? 36   : 26;
@@ -259,6 +269,17 @@ function renderMatchstick(spec, o) {
   const cells  = eq.split('');
   const widths = cells.map(ch => (SEG[ch] ? DW_dig : DW_op));
   const totalW = widths.reduce((s, w) => s + w, 0) + GAP * (cells.length - 1);
+  // W used to be a fixed 960/1080px canvas regardless of equation length.
+  // Equations with two-digit numbers (e.g. "14+6=23", 7 characters) produce a
+  // totalW bigger than that fixed canvas, and since the SVG viewBox width was
+  // never adjusted to match, anything past the right edge was silently
+  // clipped by the viewport — the exact "the last digit is cut off" bug.
+  // Compute the canvas width FROM the content instead, with side margins,
+  // and never go narrower than the old baseline so short equations keep
+  // their original comfortable framing.
+  const SIDE_MARGIN = o.thick ? 90 : 70;
+  const MIN_W = o.thick ? 1080 : 960;
+  const W = Math.max(MIN_W, totalW + SIDE_MARGIN * 2);
   const startX = (W - totalW) / 2;
   let cx = startX;
   const body = [];

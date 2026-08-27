@@ -15,6 +15,7 @@ const execPromise = util.promisify(exec);
 const fs          = require('fs').promises;
 const path        = require('path');
 const puppeteer   = require('puppeteer');
+const { ctaVariantVars } = require('./cta_variants');
 const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
 const { v4: uuidv4 } = require('uuid');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
@@ -1440,6 +1441,7 @@ async function buildVideo(quiz, workDir) {
     '{{cta2_text}}':quiz.cta2_text||'Play real quiz and earn ONS tokens!',
     '{{cta3_text}}':quiz.cta3_text||'Like, Share & Challenge a friend! Subscribe!',
     '{{cta4_text}}':quiz.cta4_text||'Write your answer in the comments below!',
+    ...ctaVariantVars(quiz.id),
     '{{niche}}':niche,
     '{{thumb_icon}}':thumbIconFor(niche),
     '{{thumb_badge_text}}':pickThumbBadgeText(),
