@@ -1631,7 +1631,21 @@ ${SHOW_AVATAR_STRIP ? AVATAR_CSS : ''}`;
     console.log('[SHORT] Step 1+2 fallback: recording hook slide');
     await showScreen(page, '.hook-slide');
     const fbDur = 3.0;
-    const fb = await recordUiWithEvents(page, null, fbDur, workDir, 'sh_step12');
+    // IMPORTANT: recordUiWithEvents(page, null, ...) produces a clip with NO
+    // audio stream at all (`-an`). This clip is pushed as clips[0], and the
+    // FINAL ASSEMBLY concatenates every clip via ffmpeg's concat DEMUXER,
+    // which builds its output stream layout from the FIRST input. Every
+    // other clip in the video (Q+options, countdown, answer, CTA) has an
+    // AAC audio track — so a video-only first clip made the demuxer drop
+    // audio from the ENTIRE concatenated output, not just this segment.
+    // That's why disabling the avatar strip (which made this "no host
+    // clip" fallback path run on every render, instead of only on rows
+    // that happened to have no host assigned) silenced the whole video.
+    // Fix: always give this fallback clip a genuine SILENT audio track so
+    // its stream layout matches every other clip.
+    const fbSilence = path.join(workDir, 'sh_step12_silence.mp3');
+    await silence(fbDur, fbSilence);
+    const fb = await recordUiWithEvents(page, fbSilence, fbDur, workDir, 'sh_step12');
     let fbFinal = fb;
     if (dogIdleFile && await fileExists(dogIdleFile)) {
       try {
