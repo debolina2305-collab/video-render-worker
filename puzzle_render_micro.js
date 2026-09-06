@@ -98,10 +98,35 @@ const s3Client = R2_CONFIGURED ? new S3Client({
 }) : null;
 
 // ─── CONSTANTS ──────────────────────────────────────────────────────────────
-const VOICE_MAP = {
-  en: 'en-US-JennyNeural', hi: 'hi-IN-SwaraNeural',
-  es: 'es-ES-ElviraNeural', pt: 'pt-BR-FranciscaNeural'
+// ─── TTS VOICE POOL ─────────────────────────────────────────────────────
+// Was a single fixed voice per language (always the same female Jenny/Swara/
+// Elvira/Francisca voice on every video). Now a pool mixing male + female
+// edge-tts neural voices per language; pickVoice() draws ONE at random per
+// rendered video, and that single draw is reused for every TTS call in this
+// video (question, timer prompt, timeup, CTA, etc.) so narration doesn't
+// switch voice mid-video.
+const VOICE_POOL = {
+  en: [
+    'en-US-JennyNeural', 'en-US-AriaNeural', 'en-US-SaraNeural', 'en-US-MichelleNeural', // female
+    'en-US-GuyNeural', 'en-US-DavisNeural', 'en-US-TonyNeural', 'en-US-ChristopherNeural', // male
+  ],
+  hi: [
+    'hi-IN-SwaraNeural',   // female
+    'hi-IN-MadhurNeural',  // male
+  ],
+  es: [
+    'es-ES-ElviraNeural', 'es-ES-AbrilNeural', 'es-ES-IreneNeural', // female
+    'es-ES-AlvaroNeural', 'es-ES-DarioNeural', 'es-ES-TeoNeural',   // male
+  ],
+  pt: [
+    'pt-BR-FranciscaNeural', 'pt-BR-BrendaNeural', 'pt-BR-GiovannaNeural', // female
+    'pt-BR-AntonioNeural', 'pt-BR-FabioNeural', 'pt-BR-JulioNeural',       // male
+  ],
 };
+function pickVoice(lang) {
+  const pool = VOICE_POOL[lang] || VOICE_POOL.en;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
 const TTS_RATE          = '+8%';   // slightly snappier than default, keeps total near ~10s
 const CACHE_DIR         = '/tmp/puzzle_micro_cache';
 
@@ -689,7 +714,7 @@ async function buildAudioTrack(workDir, parts, totalDur) {
 // ─── MAIN BUILD ──────────────────────────────────────────────────────────────
 async function buildMicroVideo(quiz, workDir) {
   const lang  = quiz.lang_code || 'en';
-  const voice = VOICE_MAP[lang] || VOICE_MAP.en;
+  const voice = pickVoice(lang);
 
   // ── 1. Fetch audio from DB pools (intro_voices_5_sec, pause_audios, cta_5)
   //        and fall back to TTS if a pool returns nothing. Every timestamp
