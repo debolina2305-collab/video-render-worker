@@ -88,21 +88,27 @@ const s3Client = R2_CONFIGURED ? new S3Client({
 // video (question, timer prompt, timeup, CTA, etc.) so narration doesn't
 // switch voice mid-video.
 const VOICE_POOL = {
+  // Trimmed to ONLY voice names that are extremely well-established Azure
+  // Neural defaults (the ones every edge-tts tutorial/docs example lists) —
+  // after the wider pool caused a fully-silent video (an invalid voice name
+  // makes EVERY tts() call in that video fail and fall back to 1s silence,
+  // see the tts() fallback below). Run `edge-tts --list-voices` in your CI
+  // once to confirm, then re-expand this list with confirmed extra names.
   en: [
-    'en-US-JennyNeural', 'en-US-AriaNeural', 'en-US-SaraNeural', 'en-US-MichelleNeural', // female
-    'en-US-GuyNeural', 'en-US-DavisNeural', 'en-US-TonyNeural', 'en-US-ChristopherNeural', // male
+    'en-US-JennyNeural', 'en-US-AriaNeural',   // female
+    'en-US-GuyNeural', 'en-US-DavisNeural',    // male
   ],
   hi: [
     'hi-IN-SwaraNeural',   // female
     'hi-IN-MadhurNeural',  // male
   ],
   es: [
-    'es-ES-ElviraNeural', 'es-ES-AbrilNeural', 'es-ES-IreneNeural', // female
-    'es-ES-AlvaroNeural', 'es-ES-DarioNeural', 'es-ES-TeoNeural',   // male
+    'es-ES-ElviraNeural',  // female
+    'es-ES-AlvaroNeural',  // male
   ],
   pt: [
-    'pt-BR-FranciscaNeural', 'pt-BR-BrendaNeural', 'pt-BR-GiovannaNeural', // female
-    'pt-BR-AntonioNeural', 'pt-BR-FabioNeural', 'pt-BR-JulioNeural',       // male
+    'pt-BR-FranciscaNeural', // female
+    'pt-BR-AntonioNeural',   // male
   ],
 };
 function pickVoice(lang) {
@@ -442,7 +448,7 @@ async function tts(text, voice, out, fallbackSec = 1.5, rate = null) {
   const rateArg = rate ? ` --rate="${rate}"` : '';
   try {
     await withTimeout(execPromise(`edge-tts --voice "${voice}"${rateArg} --file "${tmp}" --write-media "${out}"`), TIMEOUT_TTS, 'tts');
-    if (!(await fileExists(out)) || (await audioDur(out)) === 0) { console.warn('[TTS WARN] empty output'); await silence(fallbackSec, out); }
+    if (!(await fileExists(out)) || (await audioDur(out)) === 0) { console.error(`[TTS] EMPTY output for voice "${voice}" — writing ${fallbackSec}s SILENCE instead of narration. Text was: "${t.slice(0,60)}..."`); await silence(fallbackSec, out); }
     else {
       const d = await audioDur(out);
       if (d > MAX_TTS_FALLBACK_SEC + 10) {
@@ -450,7 +456,7 @@ async function tts(text, voice, out, fallbackSec = 1.5, rate = null) {
       }
       await checkAndBoostVolume(out, `tts:"${t.slice(0,40)}"`);
     }
-  } catch (e) { console.warn(`[TTS WARN] ${e.message}`); await silence(fallbackSec, out); }
+  } catch (e) { console.error(`[TTS] FAILED for voice "${voice}": ${e.message} — writing ${fallbackSec}s SILENCE instead of narration.`); await silence(fallbackSec, out); }
   await fs.unlink(tmp).catch(()=>{});
 }
 

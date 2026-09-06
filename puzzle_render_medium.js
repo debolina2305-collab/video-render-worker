@@ -78,21 +78,27 @@ const s3Client = R2_CONFIGURED ? new S3Client({
 // video (question, timer prompt, timeup, CTA, etc.) so narration doesn't
 // switch voice mid-video.
 const VOICE_POOL = {
+  // Trimmed to ONLY voice names that are extremely well-established Azure
+  // Neural defaults (the ones every edge-tts tutorial/docs example lists) —
+  // after the wider pool caused a fully-silent video (an invalid voice name
+  // makes EVERY tts() call in that video fail and fall back to 1s silence,
+  // see the tts() fallback below). Run `edge-tts --list-voices` in your CI
+  // once to confirm, then re-expand this list with confirmed extra names.
   en: [
-    'en-US-JennyNeural', 'en-US-AriaNeural', 'en-US-SaraNeural', 'en-US-MichelleNeural', // female
-    'en-US-GuyNeural', 'en-US-DavisNeural', 'en-US-TonyNeural', 'en-US-ChristopherNeural', // male
+    'en-US-JennyNeural', 'en-US-AriaNeural',   // female
+    'en-US-GuyNeural', 'en-US-DavisNeural',    // male
   ],
   hi: [
     'hi-IN-SwaraNeural',   // female
     'hi-IN-MadhurNeural',  // male
   ],
   es: [
-    'es-ES-ElviraNeural', 'es-ES-AbrilNeural', 'es-ES-IreneNeural', // female
-    'es-ES-AlvaroNeural', 'es-ES-DarioNeural', 'es-ES-TeoNeural',   // male
+    'es-ES-ElviraNeural',  // female
+    'es-ES-AlvaroNeural',  // male
   ],
   pt: [
-    'pt-BR-FranciscaNeural', 'pt-BR-BrendaNeural', 'pt-BR-GiovannaNeural', // female
-    'pt-BR-AntonioNeural', 'pt-BR-FabioNeural', 'pt-BR-JulioNeural',       // male
+    'pt-BR-FranciscaNeural', // female
+    'pt-BR-AntonioNeural',   // male
   ],
 };
 function pickVoice(lang) {
@@ -394,6 +400,7 @@ async function tts(text, voice, outPath, retries = 3) {
       if (i < retries - 1) await new Promise(r => setTimeout(r, 1000));
     }
   }
+  console.error(`[TTS] ALL ${retries} attempts failed for voice "${voice}" — writing 1s SILENCE instead of narration. Text was: "${safe.slice(0,60)}..."`);
   await silence(1, outPath);
 }
 
