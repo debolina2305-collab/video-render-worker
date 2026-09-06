@@ -715,6 +715,7 @@ async function buildAudioTrack(workDir, parts, totalDur) {
 async function buildMicroVideo(quiz, workDir) {
   const lang  = quiz.lang_code || 'en';
   const voice = pickVoice(lang);
+  console.log(`[TTS] Voice picked for this video: ${voice} (lang=${lang})`);
 
   // ── 1. Fetch audio from DB pools (intro_voices_5_sec, pause_audios, cta_5)
   //        and fall back to TTS if a pool returns nothing. Every timestamp

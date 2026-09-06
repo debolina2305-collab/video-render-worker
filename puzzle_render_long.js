@@ -1267,6 +1267,7 @@ async function processJobs() {
 async function buildVideo(quiz, workDir) {
   const lang  = quiz.lang_code || 'en';
   const voice = pickVoice(lang);
+  console.log(`[TTS] Voice picked for this video: ${voice} (lang=${lang})`);
   const niche = quiz.niche || 'general';
 
   const question    = quiz.question_1       || '';
